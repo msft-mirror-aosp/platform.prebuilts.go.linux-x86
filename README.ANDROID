@@ -7,4 +7,8 @@ git checkout go1.4.2
 # so set it to a relative path anyways.  The build system will have to
 # set the correct absolute GOROOT.
 GOROOT_FINAL=./prebuilts/go/linux-x86 ./all.bash && ./race.bash
+
+# Build the Win64 go cross-compiler.
+GOROOT_FINAL=./prebuilts/go/linux-x86 GOOS=windows GOARCH=amd64 ./make.bash --no-clean
+
 cp -rp /tmp/go/* prebuilts/go/linux-x86
