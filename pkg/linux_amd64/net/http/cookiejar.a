@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     12643     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package cookiejar
@@ -121,7 +121,7 @@ package cookiejar
 
 $$
  _go_.6          0           0     0     644     125624    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13lderrors.a

@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     8078      `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package bytes
@@ -103,7 +103,7 @@ package bytes
 
 $$
 _go_.6          0           0     0     644     193105    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13lderrors.aio.aunicode/utf8.aunicode.a þ$"".(*Buffer).Bytes  À  ®dH‹%    H;awè    ëêHƒìH‹\$H‰$è    HÇD$(    HÇD$0    HÇD$8    H‹\$ H‰$è    H‹D$ H‹XH‰\$H‰$è    H‹D$ H‹XH‰\$H‰$Hƒ$è    H‹L$ H‹T$H‹AH9Âr9H‹	H‰ÖH‹T$H)ÆH)ÂHƒú t	H‰ÃHËH‰ÙH‰L$(H‰t$0H‰T$8è    HƒÄÃè    

@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     12422     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package syslog
@@ -150,7 +150,7 @@ package syslog
 
 $$
 _go_.6          0           0     0     644     84871     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13lderrors.a

@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     69862     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package rpc
@@ -590,7 +590,7 @@ package rpc
 
 $$
 _go_.6          0           0     0     644     399965    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldbufio.aencoding/gob.aerrors.aio.a

@@ -2,9 +2,9 @@ The go prebuilts in this directory were compiled with:
 
 git clone https://github.com/golang/go.git /tmp/go
 cd /tmp/go/src
-git checkout go1.4.1
+git checkout go1.4.2
 # Go can't handle a relative GOROOT, but we don't know the absolute path
 # so set it to a relative path anyways.  The build system will have to
 # set the correct absolute GOROOT.
-GOROOT_FINAL=./prebuilts/go/linux-x86 ./all.sh && ./race.sh
-cp -r /tmp/go/* prebuilts/go/linux-x86
+GOROOT_FINAL=./prebuilts/go/linux-x86 ./all.bash && ./race.bash
+cp -rp /tmp/go/* prebuilts/go/linux-x86

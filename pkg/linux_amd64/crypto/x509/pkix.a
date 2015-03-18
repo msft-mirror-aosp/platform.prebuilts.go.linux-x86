@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     24979     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package pkix
@@ -211,7 +211,7 @@ package pkix
 
 $$
  _go_.6          0           0     0     644     53104     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldencoding/asn1.amath/big.atime.a þ<"".(*Name).FillFromRDNSequence  À6  ¢6dH‹%    H„$0ÿÿÿH;Awè    ëâHìP  1ÀH¼$(  è    H‹œ$`  Hƒû „D  H‹H‹CH‹kH‰¬$   HÇD$H    H‰„$  H‰D$@H‰Œ$  H‰L$PH‹\$HH‹l$@H9ë}jH‹\$PHƒû „é  H‹H‹KH‹kH‰”$ø   H‰Œ$   H‰¬$  H‰¬$   Hƒù u2H‹\$PHƒÃH‰\$PH‹\$HHÿÃH‰\$HH‹\$HH‹l$@H9ë|–HÄP  ÃH‰”$€   Hƒù H‰Œ$ˆ   †e  H¬$(  H‰ïH‰Öè    H‹œ$X  Hƒû „9  H‹“È   H‹‹Ð   H‹›Ø   H‰”$à   H‰Œ$è   H‰œ$ð   H‰ØH)ËHƒû}OH    H‰$H‰”$È   H‰T$H‰Œ$Ð   H‰L$H‰„$Ø   H‰D$HÇD$    è    H‹T$(H‹L$0H‹D$8H‰ÎHÿÆH‰´$Ð   H‰„$Ø   H    H‰$H‰ÓH‰”$È   H‰ÍHkí(HëH‰\$Hœ$(  H‰\$è    H‹”$È   H‹Œ$Ð   H‹„$Ø   H‹œ$X  H‰$Hƒ<$ „)  H$È   H‰”$à   H‰T$H‰Œ$è   H‰L$H‰„$ð   H‰D$è    H5    H‰4$H´$@  Hl$H‰ïH¥H¥è    H‹|$H‰|$XH‹t$ H‰t$`¶\$(€û „þÿÿH‹Œ$(  H‰L$hH‹„$0  H‹œ$8  H‰\$xH‰D$pHƒø…d

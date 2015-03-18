@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     12354     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package ioutil
@@ -129,7 +129,7 @@ package ioutil
 
 $$
 _go_.6          0           0     0     644     72179     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldbytes.aio.aos.asort.async.apath/filepath.astrconv.atime.a ş"".readAll  À  ¢dH‹%    HD$ÈH;Awè    ëåHì¸   H‹œ$¸   H‰$è    HÇ„$Ø       HÇ„$à       HÇ„$è       HÇ„$ğ       HÇ„$ø       HÇ„$ğ       HÇ„$ø       HÇ„$Ø       HÇ„$à       HÇ„$è       H    H‰$HÇD$    H‹œ$Ğ   H‰\$è    H‹T$H‹L$ H‹D$(H‰”$ˆ   H‰Œ$   H‰„$˜   H    H‰$è    H‹D$H‰D$XH‰$HÇD$p   è    H‹|$XH‰ùHƒÿ „  1Àè    H‰$è    H‹\$XH‰$Hƒ<$ „ä  H‹œ$ˆ   H‰\$H‹œ$   H‰\$H‹œ$˜   H‰\$è    H‹L$XH‰L$HHÇD$`    HÇD$h    HL$`H‰L$PH‰$è    H‹L$PH-    H‰)H‰$Hƒ$è    H‹L$PH¬$ğ   H‰iQj è    YYH…À…5  H‹\$HH‰$H‹œ$À   H‰\$H‹œ$È   H‰\$è    H‹\$ H‰œ$ğ   H‹\$(H‰œ$ø   H‹D$HHÇD$p    HÇD$x    HÇ„$€       H‰D$@H‰$è    H‹D$@H‹XH‰\$8H‰$è    H‹D$@H‹XH‰\$0H‰$Hƒ$è    H‹T$@H‹t$0H‹JH9ÎruH‹H‰÷H‹t$8H)ÏH)ÎHƒş t	H‰ËHÓH‰ÚH‰T$pH‰|$xH‰´$€   H‰”$    H‰”$Ø   H‰¼$¨   H‰¼$à   H‰´$°   H‰´$è   è    è    HÄ¸   Ãè    è    è    HÄ¸   Ã‰%    éşÿÿ‰éåıÿÿ0
