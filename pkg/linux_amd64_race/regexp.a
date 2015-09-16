@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     11698     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package regexp
@@ -124,7 +124,7 @@ package regexp
 
 $$
 _go_.6          0           0     0     644     519723    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldio.aregexp/syntax.abytes.asort.aunicode.astrconv.astrings.async.aunicode/utf8.a ˛6"".(*machine).newInputBytes  †  òdHã%    H;awË    ÎÍHÉÏ(Hã\$(Hâ$Ë    H«D$P    H«D$X    Hã\$0Hâ$HÅ$∞   Ë    Hã\$0Hâ$HÉ<$ Ñú   HÅ$∞   Hã\$8Hâ\$Hã\$@Hâ\$Hã\$HHâ\$Ë    HãL$0HÉ˘ tbHÅ¡∞   HâL$ Hã    1ÌH9ËtHâL$XHâD$PË    HÉƒ(√Hç    Hâ$Hç    Hâ\$Hç    Hâ\$Ë    HãL$ HãD$Î∏âÎöâ%    ÈXˇˇˇ

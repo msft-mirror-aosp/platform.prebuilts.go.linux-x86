@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     19584     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package ecdsa
@@ -155,7 +155,7 @@ package ecdsa
 
 $$
 _go_.6          0           0     0     644     95840     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldcrypto.a"crypto/elliptic.aencoding/asn1.aio.amath/big.a ˛."".(*PrivateKey).Public  ¿  §dHã%    H;awË    ÎÍHÉÏHã\$Hâ$Ë    Hã\$HÉ˚ tHâ\$ Hç    Hâ\$Ë    HÉƒ√âÎ·

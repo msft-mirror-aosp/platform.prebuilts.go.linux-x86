@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     56397     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package httputil
@@ -463,7 +463,7 @@ package httputil
 
 $$
  _go_.6          0           0     0     644     240014    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldbufio.abytes.aerrors.a

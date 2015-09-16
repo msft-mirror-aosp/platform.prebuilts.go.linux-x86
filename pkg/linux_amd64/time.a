@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     9910      `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package time
@@ -141,7 +141,7 @@ package time
 
 $$
 _go_.6          0           0     0     644     449750    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13lderrors.asyscall.async.aruntime.a þ,"".startsWithLowerCase  À  ªdH‹%    H;awè    ëêH‹L$Hƒù uÆD$ ÃH‹\$Hƒù v¶+@€ýar@€ýzwÆD$ÃÆD$ ëøè    

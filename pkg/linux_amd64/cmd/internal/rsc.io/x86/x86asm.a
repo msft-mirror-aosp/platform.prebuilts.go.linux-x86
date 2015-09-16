@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     26902     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package x86asm
@@ -830,7 +830,7 @@ package x86asm
 
 $$
 _go_.6          0           0     0     644     493337    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ld"encoding/binary.aerrors.a

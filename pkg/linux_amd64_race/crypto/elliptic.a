@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     17362     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package elliptic
@@ -143,7 +143,7 @@ package elliptic
 
 $$
 _go_.6          0           0     0     644     375031    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldio.amath/big.async.a þ0"".(*CurveParams).Params  €  xdH‹%    H;awè    ëêHƒìH‹\$H‰$è    H‹\$H‰\$è    HƒÄÃ

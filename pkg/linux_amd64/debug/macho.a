@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     15406     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package macho
@@ -157,7 +157,7 @@ package macho
 
 $$
 _go_.6          0           0     0     644     272989    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ld"encoding/binary.a

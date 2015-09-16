@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     32505     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package objfile
@@ -280,7 +280,7 @@ package objfile
 
 $$
  _go_.6          0           0     0     644     321911    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldbufio.adebug/gosym.a"encoding/binary.a

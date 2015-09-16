@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     17362     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package elliptic
@@ -143,7 +143,7 @@ package elliptic
 
 $$
 _go_.6          0           0     0     644     284702    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldio.amath/big.async.a ş0"".(*CurveParams).Params     H‹\$H‰\$Ã     "".~r0 (type.*"".CurveParams "".curve  (type.*"".CurveParams   h  TgclocalsÂ·06cab038d51064a089bda21fa03e00f7 TgclocalsÂ·3280bececceccd33cb74587feedb1f9f   N/tmp/go/src/crypto/elliptic/elliptic.goş6"".(*CurveParams).IsOnCurve  À  ÀdH‹%    H;awè    ëêHƒì8H    H‰$è    H‹L$PH‹\$H‰$H‰L$H‰L$è    H‹D$H‰$H‰D$ H‰D$H‹\$@H‹+H‰l$è    H    H‰$è    H‹L$HH‹\$H‰$H‰L$H‰L$è    H‹D$H‰$H‰D$(H‰D$H‹\$HH‰\$è    H    H‰$è    H‹\$H‰$H‹\$HH‰\$HÇD$   è    H‹D$H‰$H‰D$0H‰D$H‹\$HH‰\$è    H‹D$(H‰$H‰D$H‹\$0H‰\$è    H‹D$(H‰$H‰D$H‹\$@H‹kH‰l$è    H‹D$(H‰$H‰D$H‹\$@H‹+H‰l$è    H‹\$(H‰$H‹\$ H‰\$è    H‹\$Hƒû t

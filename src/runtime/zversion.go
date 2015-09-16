@@ -3,5 +3,5 @@
 package runtime
 
 const defaultGoroot = `/tmp/go`
-const theVersion = `go1.4.1`
+const theVersion = `go1.4.2`
 var buildVersion = theVersion

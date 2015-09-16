@@ -1,6 +1,6 @@
 !<arch>
 __.PKGDEF       0           0     0     644     43168     `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 $$
 package x509
@@ -392,7 +392,7 @@ package x509
 
 $$
 _go_.6          0           0     0     644     594373    `
-go object linux amd64 go1.4.1 X:precisestack
+go object linux amd64 go1.4.2 X:precisestack
 
 !
   go13ldencoding/pem.acrypto/aes.acrypto/cipher.acrypto/des.acrypto/md5.aencoding/hex.aerrors.aio.astrings.acrypto/rsa.aencoding/asn1.amath/big.a$crypto/x509/pkix.a
