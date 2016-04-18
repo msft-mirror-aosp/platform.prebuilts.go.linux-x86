@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/link/internal/arm64/asm.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/arm64/asm.go
 
-//line /tmp/go/src/cmd/link/internal/arm64/asm.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/arm64/asm.go:1
 // Inferno utils/5l/asm.c
 // http://code.google.com/p/inferno-os/source/browse/utils/5l/asm.c
 //

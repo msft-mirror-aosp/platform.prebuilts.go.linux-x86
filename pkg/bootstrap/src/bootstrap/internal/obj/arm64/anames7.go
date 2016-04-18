@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/internal/obj/arm64/anames7.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/arm64/anames7.go
 
-//line /tmp/go/src/cmd/internal/obj/arm64/anames7.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/arm64/anames7.go:1
 package arm64
 
 var cnames7 = []string{
