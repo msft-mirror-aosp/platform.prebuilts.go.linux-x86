@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/link/internal/arm/obj.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/arm/obj.go
 
-//line /tmp/go/src/cmd/link/internal/arm/obj.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/arm/obj.go:1
 // Inferno utils/5l/obj.c
 // http://code.google.com/p/inferno-os/source/browse/utils/5l/obj.c
 //

@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/compile/internal/arm64/peep.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/arm64/peep.go
 
-//line /tmp/go/src/cmd/compile/internal/arm64/peep.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/arm64/peep.go:1
 // Derived from Inferno utils/6c/peep.c
 // http://code.google.com/p/inferno-os/source/browse/utils/6c/peep.c
 //
