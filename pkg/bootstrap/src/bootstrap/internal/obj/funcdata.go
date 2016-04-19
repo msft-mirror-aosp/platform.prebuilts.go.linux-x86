@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/internal/obj/funcdata.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/funcdata.go
 
-//line /tmp/go/src/cmd/internal/obj/funcdata.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/funcdata.go:1
 // Inferno utils/5c/list.c
 // http://code.google.com/p/inferno-os/source/browse/utils/5c/list.c
 //

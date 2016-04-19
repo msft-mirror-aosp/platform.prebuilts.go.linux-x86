@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/internal/obj/arm64/a.out.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/arm64/a.out.go
 
-//line /tmp/go/src/cmd/internal/obj/arm64/a.out.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/arm64/a.out.go:1
 // cmd/7c/7.out.h  from Vita Nuova.
 // https://code.google.com/p/ken-cc/source/browse/src/cmd/7c/7.out.h
 //
