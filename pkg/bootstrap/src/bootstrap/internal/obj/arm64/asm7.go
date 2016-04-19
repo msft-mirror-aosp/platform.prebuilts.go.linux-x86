@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/internal/obj/arm64/asm7.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/arm64/asm7.go
 
-//line /tmp/go/src/cmd/internal/obj/arm64/asm7.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/arm64/asm7.go:1
 // cmd/7l/asm.c, cmd/7l/asmout.c, cmd/7l/optab.c, cmd/7l/span.c, cmd/ld/sub.c, cmd/ld/mod.c, from Vita Nuova.
 // https://code.google.com/p/ken-cc/source/browse/
 //

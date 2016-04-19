@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/link/internal/x86/l.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/x86/l.go
 
-//line /tmp/go/src/cmd/link/internal/x86/l.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/x86/l.go:1
 // Inferno utils/8l/l.h
 // http://code.google.com/p/inferno-os/source/browse/utils/8l/l.h
 //

@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/internal/obj/ppc64/a.out.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/ppc64/a.out.go
 
-//line /tmp/go/src/cmd/internal/obj/ppc64/a.out.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/ppc64/a.out.go:1
 // cmd/9c/9.out.h from Vita Nuova.
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
