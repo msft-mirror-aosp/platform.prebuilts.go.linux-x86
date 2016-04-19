@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/compile/internal/arm64/galign.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/arm64/galign.go
 
-//line /tmp/go/src/cmd/compile/internal/arm64/galign.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/arm64/galign.go:1
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.

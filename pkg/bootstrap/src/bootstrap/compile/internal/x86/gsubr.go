@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/compile/internal/x86/gsubr.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/x86/gsubr.go
 
-//line /tmp/go/src/cmd/compile/internal/x86/gsubr.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/x86/gsubr.go:1
 // Derived from Inferno utils/8c/txt.c
 // http://code.google.com/p/inferno-os/source/browse/utils/8c/txt.c
 //

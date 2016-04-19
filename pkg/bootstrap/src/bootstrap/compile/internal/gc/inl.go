@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/compile/internal/gc/inl.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/gc/inl.go
 
-//line /tmp/go/src/cmd/compile/internal/gc/inl.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/gc/inl.go:1
 // Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.

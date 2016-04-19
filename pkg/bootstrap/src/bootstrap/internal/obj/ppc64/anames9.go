@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/internal/obj/ppc64/anames9.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/ppc64/anames9.go
 
-//line /tmp/go/src/cmd/internal/obj/ppc64/anames9.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/ppc64/anames9.go:1
 package ppc64
 
 var cnames9 = []string{
