@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/link/internal/ld/ldmacho.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/ld/ldmacho.go
 
-//line /tmp/go/src/cmd/link/internal/ld/ldmacho.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/ld/ldmacho.go:1
 package ld
 
 import (

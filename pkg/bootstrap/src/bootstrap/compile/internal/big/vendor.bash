@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/compile/internal/big/vendor.bash
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/big/vendor.bash
 
-//line /tmp/go/src/cmd/compile/internal/big/vendor.bash:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/big/vendor.bash:1
 #!/usr/bin/env bash
 
 # Copyright 2015 The Go Authors.  All rights reserved.

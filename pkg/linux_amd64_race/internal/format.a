@@ -1,7 +1,7 @@
 !<arch>
 __.PKGDEF       0           0     0     644     11455     `
 go object linux amd64 go1.5.1 X:none
-build id "c6becaa196d6e9205ed6e8af6352644618a92b44"
+build id "a43f7f422f13d7f1952b6dc45d2d2229eff613f2"
 
 $$
 package format
@@ -112,7 +112,7 @@ package format
 	func (@"sync".rÂ·1 *@"sync".rlocker) Unlock ()
 
 $$
- _go_.o          0           0     0     644     19609     `
+ _go_.o          0           0     0     644     19699     `
 go object linux amd64 go1.5.1 X:none
 
 !
@@ -150,7 +150,7 @@ HÿÀH‰D$HHH‰$è    H‹”$¨   H‹l$HH*Æ}H‹Œ$°   H‹„$¸   H‰T$xH‰”$À   H‰Œ$€   H‰
   $runtime.panicslice   ®
   (runtime.racefuncexit   È
   0runtime.morestack_noctxt   À°  :"".autotmp_0023  type.int "".autotmp_0022  type.[]uint8 "".autotmp_0021  type.int "".autotmp_0020  type.[]uint8 "".autotmp_0019  type.[]uint8 "".autotmp_0018 Ÿtype.int "".autotmp_0017 type.[]uint8 "".autotmp_0016 _type.[]uint8 "".autotmp_0015  type.error "".autotmp_0014  "type.*go/ast.File "".autotmp_0013  type.[]uint8 "".autotmp_0012  type.[]uint8 "".autotmp_0011  type.bool "".autotmp_0010  type.string "".autotmp_0009  type.error "".autotmp_0008  "type.*go/ast.File "".autotmp_0007  type.[]uint8 "".autotmp_0005 type.string "".autotmp_0002 /type.[]uint8 "".fsrc ¿type.[]uint8 "".psrc ïtype.[]uint8 "".err  type.error "".indentAdj type.int "".sourceAdj €>type.func([]uint8, int) []uint8 "".file p"type.*go/ast.File "".fragmentOk `type.bool "".src 0type.[]uint8 "".filename type.string "".fset  ,type.*go/token.FileSet @°¶¯°W¯°„¯°/¯° ğ p4xw,Áoè¸LI
-K@=‘¾+/\i \ +‚˜dz y‚z –IÉ™# TgclocalsÂ·900ec4cbeb96e621f7b40dd9d5a5fac9 TgclocalsÂ·35abb1adb287497051fbab87089b43cd   J/tmp/go/src/internal/format/format.goş"".Format   7  œ7dH‹%    H„$ÿÿÿH;A†©  Hìp  H‹œ$p  H‰$è    H‹´$   H‹Œ$˜  1ÛH‰œ$È  H‰œ$Ğ  H‰œ$Ø  1ÛH‰œ$à  H‰œ$è  H‹œ$ˆ  1íH9ë…(  H    H‰$è    H‹D$H‰„$¨   H‰$HÇD$p   è    H‹œ$¨   H‰œ$    H‹œ$€  H‰œ$˜   H‹    1íH9è„•  Hœ$°  H‰$H‹Œ$    H‰„$è   H‰D$H‰Œ$ğ   H‰L$H‹„$x  H‰D$H‹Œ$˜   H    H‰„$Ø   H‰D$ H‰Œ$à   H‰L$(è    H‹D$0H‹L$8H‰Œ$Ğ   H‰„$È   Hƒø t71ÛH‰œ$È  H‰œ$Ğ  H‰œ$Ø  H‰„$à  H‰Œ$è  è    HÄp  ÃH‹„$¨   1ÛH‰œ$ø   H‰œ$   H‰œ$  H‰„$ˆ   H‰$Hƒ$è    H‹„$ˆ   H‹hH‰l$xH‰$è    H‹œ$ˆ   H‹l$xL‹CL‹KL9ÅwbL‹I)èI)éIƒù tM*L‰”$ø   L‰”$È  L‰„$   L‰„$Ğ  L‰Œ$  L‰Œ$Ø  1ÛH‰œ$à  H‰œ$è  è    HÄp  Ãè    H    H‰$H    H‰\$H    H‰\$è    H‹D$é9şÿÿHÇD$`    1ÀH‰D$HH9ğÀ   H9ğƒñ
+K@=‘¾+/\i \ +‚˜dz y‚z –IÉ™# TgclocalsÂ·900ec4cbeb96e621f7b40dd9d5a5fac9 TgclocalsÂ·35abb1adb287497051fbab87089b43cd   hprebuilts/go/linux-x86/src/internal/format/format.goş"".Format   7  œ7dH‹%    H„$ÿÿÿH;A†©  Hìp  H‹œ$p  H‰$è    H‹´$   H‹Œ$˜  1ÛH‰œ$È  H‰œ$Ğ  H‰œ$Ø  1ÛH‰œ$à  H‰œ$è  H‹œ$ˆ  1íH9ë…(  H    H‰$è    H‹D$H‰„$¨   H‰$HÇD$p   è    H‹œ$¨   H‰œ$    H‹œ$€  H‰œ$˜   H‹    1íH9è„•  Hœ$°  H‰$H‹Œ$    H‰„$è   H‰D$H‰Œ$ğ   H‰L$H‹„$x  H‰D$H‹Œ$˜   H    H‰„$Ø   H‰D$ H‰Œ$à   H‰L$(è    H‹D$0H‹L$8H‰Œ$Ğ   H‰„$È   Hƒø t71ÛH‰œ$È  H‰œ$Ğ  H‰œ$Ø  H‰„$à  H‰Œ$è  è    HÄp  ÃH‹„$¨   1ÛH‰œ$ø   H‰œ$   H‰œ$  H‰„$ˆ   H‰$Hƒ$è    H‹„$ˆ   H‹hH‰l$xH‰$è    H‹œ$ˆ   H‹l$xL‹CL‹KL9ÅwbL‹I)èI)éIƒù tM*L‰”$ø   L‰”$È  L‰„$   L‰„$Ğ  L‰Œ$  L‰Œ$Ø  1ÛH‰œ$à  H‰œ$è  è    HÄp  Ãè    H    H‰$H    H‰\$H    H‰\$è    H‹D$é9şÿÿHÇD$`    1ÀH‰D$HH9ğÀ   H9ğƒñ
   HH‰$è    H‹t$HH‹”$   H‹Œ$˜  H9Öƒ¿
   H1¶+@€ı „¢
   @€ı	„˜
@@ -217,14 +217,14 @@ uH‰ÃHÿÃH‰\$`HÿÀH‰D$HH9ğŒ@ÿÿÿ1ÿH‹\$`H‹¬$¨  H9ë‡ú	  I‰ÚH‰¬$h  H‰Œ$X  H‰¼$( 
 		ê/­*abÇƒ
 ´st2
  Œ .~ê@*9Æ
- ëÒHê@‡£Š…¥ogk TgclocalsÂ·4109eb2926e8c9bac72d5f76c97afdf0 TgclocalsÂ·7d1df5bd7ec0bef5cea1af8d6d8d942f   J/tmp/go/src/internal/format/format.goş"".IsSpace  À  ¢dH‹%    H;av;HƒìH‹\$H‰$è    ¶D$< t<	t<
+ ëÒHê@‡£Š…¥ogk TgclocalsÂ·4109eb2926e8c9bac72d5f76c97afdf0 TgclocalsÂ·7d1df5bd7ec0bef5cea1af8d6d8d942f   hprebuilts/go/linux-x86/src/internal/format/format.goş"".IsSpace  À  ¢dH‹%    H;av;HƒìH‹\$H‰$è    ¶D$< t<	t<
 t<”D$è    HƒÄÃÆD$ëïè    ë¯
       :
   *runtime.racefuncenter   t
   (runtime.racefuncexit   –
   0runtime.morestack_noctxt      "".~r1 type.bool "".b  type.uint8 / `  Ä
  
- D TgclocalsÂ·23e8278e2b69a3a75fa59b23c49ed6ad TgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb   J/tmp/go/src/internal/format/format.goş"".Parse.func1  À  ¦dH‹%    H;a†¶   HƒìHH‹\$HH‰$è    1ÛH‰\$pH‰\$xH‰œ$€   H‹\$hH‹l$XL‹D$`HƒÃ
+ D TgclocalsÂ·23e8278e2b69a3a75fa59b23c49ed6ad TgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb   hprebuilts/go/linux-x86/src/internal/format/format.goş"".Parse.func1  À  ¦dH‹%    H;a†¶   HƒìHH‹\$HH‰$è    1ÛH‰\$pH‰\$xH‰œ$€   H‹\$hH‹l$XL‹D$`HƒÃ
 H9ëwqL‹L$PH)İI)ØIƒø tML‰L$PL‰$H‰l$XH‰l$L‰D$`L‰D$è    H‹T$H‹L$ H‹D$(H‰T$0H‰T$pH‰L$8H‰L$xH‰D$@H‰„$€   è    HƒÄHÃè    è    é-ÿÿÿ
       B
   *runtime.racefuncenter   ˆ
@@ -232,7 +232,7 @@ H9ëwqL‹L$PH)İI)ØIƒø tML‰L$PL‰$H‰l$XH‰l$L‰D$`L‰D$è    H‹T$H‹L$ H‹D$(H‰T$0
   (runtime.racefuncexit   †
   $runtime.panicslice   ”
   0runtime.morestack_noctxt   p  "".autotmp_0073 /type.[]uint8 "".~r2 @type.[]uint8 "".indent 0type.int "".src  type.[]uint8 ª à V9-R   ˜
- TgclocalsÂ·e164b25facb10da87beb89b155f2475e TgclocalsÂ·f56b2291fa344104975cb6587be42b9b   J/tmp/go/src/internal/format/format.goş"".Parse.func2  €  údH‹%    H;a†à   HƒìHH‹\$HH‰$è    H‹D$h1ÛH‰\$pH‰\$xH‰œ$€   Hƒø }1ÀH‰ÃH‰D$hH‹l$XL‹D$`HÑãHƒÃH9ë‡„   L‹L$PH)İI)ØIƒø tMH‰ëHƒëL9Ãw\L‰L$PL‰$H‰\$XH‰\$L‰D$`L‰D$è    H‹T$H‹L$ H‹D$(H‰T$0H‰T$pH‰L$8H‰L$xH‰D$@H‰„$€   è    HƒÄHÃè    è    è    éÿÿÿ
+ TgclocalsÂ·e164b25facb10da87beb89b155f2475e TgclocalsÂ·f56b2291fa344104975cb6587be42b9b   hprebuilts/go/linux-x86/src/internal/format/format.goş"".Parse.func2  €  údH‹%    H;a†à   HƒìHH‹\$HH‰$è    H‹D$h1ÛH‰\$pH‰\$xH‰œ$€   Hƒø }1ÀH‰ÃH‰D$hH‹l$XL‹D$`HÑãHƒÃH9ë‡„   L‹L$PH)İI)ØIƒø tMH‰ëHƒëL9Ãw\L‰L$PL‰$H‰\$XH‰\$L‰D$`L‰D$è    H‹T$H‹L$ H‹D$(H‰T$0H‰T$pH‰L$8H‰L$xH‰D$@H‰„$€   è    HƒÄHÃè    è    è    éÿÿÿ
       B
   *runtime.racefuncenter   Î
   bytes.TrimSpace   ¸
@@ -242,7 +242,7 @@ H9ëwqL‹L$PH)İI)ØIƒø tML‰L$PL‰$H‰l$XH‰l$L‰D$`L‰D$è    H‹T$H‹L$ H‹D$(H‰T$0
   0runtime.morestack_noctxt   p  
 "".autotmp_0077 /type.[]uint8 "".autotmp_0075  type.int "".~r2 @type.[]uint8 "".indent 0type.int "".src  type.[]uint8 Í € 0†>
 7R   »
- TgclocalsÂ·e164b25facb10da87beb89b155f2475e TgclocalsÂ·f56b2291fa344104975cb6587be42b9b   J/tmp/go/src/internal/format/format.goş"".init     œdH‹%    H;a†±   HƒìH‹\$H‰$è    H    H‰$è    ¶    €û t-H    H‰$è    ¶    €ûu
+ TgclocalsÂ·e164b25facb10da87beb89b155f2475e TgclocalsÂ·f56b2291fa344104975cb6587be42b9b   hprebuilts/go/linux-x86/src/internal/format/format.goş"".init     œdH‹%    H;a†±   HƒìH‹\$H‰$è    H    H‰$è    ¶    €û t-H    H‰$è    ¶    €ûu
 è    HƒÄÃè    H    H‰$è    Æ    è    è    è    è    è    è    H    H‰$è    Æ    è    HƒÄÃè    é2ÿÿÿ0
       B
   *runtime.racefuncenter   P  "".initdoneÂ·   b
@@ -260,7 +260,7 @@ H9ëwqL‹L$PH)İI)ØIƒø tML‰L$PL‰$H‰l$XH‰l$L‰D$`L‰D$è    H‹T$H‹L$ H‹D$(H‰T$0
   "runtime.racewrite   ê "".initdoneÂ·   ö
   (runtime.racefuncexit   Š
   0runtime.morestack_noctxt       O\ Ğ 
-ÈĞ   ° TgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb TgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb   J/tmp/go/src/internal/format/format.goşDgo.string.hdr."expected 'package'"                       <go.string."expected 'package'"   ş<go.string."expected 'package'" 0  &expected 'package'  ş4go.string.hdr."package p;"             
+ÈĞ   ° TgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb TgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb   hprebuilts/go/linux-x86/src/internal/format/format.goşDgo.string.hdr."expected 'package'"                       <go.string."expected 'package'"   ş<go.string."expected 'package'" 0  &expected 'package'  ş4go.string.hdr."package p;"             
           ,go.string."package p;"   ş,go.string."package p;"    package p;  şHgo.string.hdr."expected declaration"                       @go.string."expected declaration"   ş@go.string."expected declaration" 0  *expected declaration  şJgo.string.hdr."package p; func _() {"                       Bgo.string."package p; func _() {"   şBgo.string."package p; func _() {" 0  ,package p; func _() {  şTgclocalsÂ·35abb1adb287497051fbab87089b43cd H  H           @              	      şTgclocalsÂ·900ec4cbeb96e621f7b40dd9d5a5fac9 H  H           ‹           ş0>go.itab.*bytes.Buffer.io.Writer     şTgclocalsÂ·7d1df5bd7ec0bef5cea1af8d6d8d942f €  €              8                	          @   X          şTgclocalsÂ·4109eb2926e8c9bac72d5f76c97afdf0 €  €               d                                 şTgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb           şTgclocalsÂ·23e8278e2b69a3a75fa59b23c49ed6ad              şTgclocalsÂ·f56b2291fa344104975cb6587be42b9b                    şTgclocalsÂ·e164b25facb10da87beb89b155f2475e                  şTgclocalsÂ·f56b2291fa344104975cb6587be42b9b                    şTgclocalsÂ·e164b25facb10da87beb89b155f2475e                  şTgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb           şTgclocalsÂ·33cdeccccebe80329f1fdbee7f5874cb           ş0"".initdoneÂ·  type.uint8   ş"".ParseÂ·f              "".Parse   ş"".FormatÂ·f              "".Format   ş"".IsSpaceÂ·f              "".IsSpace   ş""".Parse.func1Â·f              "".Parse.func1   ş""".Parse.func2Â·f              "".Parse.func2   ş"".initÂ·f              "".init   ş"runtime.gcbits.01    ş.go.string.hdr."[]uint8"                       &go.string."[]uint8"   ş&go.string."[]uint8"   []uint8  ştype.[]uint8                   ß~.8                                                         0   runtime.algarray   @  "runtime.gcbits.01   P  .go.string.hdr."[]uint8"   p  *go.weak.type.*[]uint8   €  "runtime.zerovalue     type.uint8   ş6go.typelink.[]uint8	[]uint8              type.[]uint8   şTgo.string.hdr."func([]uint8, int) []uint8"                       Lgo.string."func([]uint8, int) []uint8"   şLgo.string."func([]uint8, int) []uint8" @  6func([]uint8, int) []uint8  ş>type.func([]uint8, int) []uint8 °  °              ±¿9k 3                                                                                                                            0€  runtime.algarray   @  "runtime.gcbits.01   P  Tgo.string.hdr."func([]uint8, int) []uint8"   p  Pgo.weak.type.*func([]uint8, int) []uint8   €  "runtime.zerovalue    € >type.func([]uint8, int) []uint8   Ğ  >type.func([]uint8, int) []uint8   €  type.[]uint8     type.int      type.[]uint8   ş‚go.typelink.func([]uint8, int) []uint8	func([]uint8, int) []uint8              >type.func([]uint8, int) []uint8   ş.go.string.hdr."runtime"                       &go.string."runtime"   ş&go.string."runtime"   runtime  ş,go.importpath.runtime.                       &go.string."runtime"   ş*go.string.hdr."bytes"                       "go.string."bytes"   ş"go.string."bytes"   bytes  ş(go.importpath.bytes.                       "go.string."bytes"   ş,go.string.hdr."go/ast"                       $go.string."go/ast"   ş$go.string."go/ast"   go/ast  ş*go.importpath.go/ast.                       $go.string."go/ast"   ş0go.string.hdr."go/token"                       (go.string."go/token"   ş(go.string."go/token"    go/token  ş.go.importpath.go/token.                       (go.string."go/token"   ş.go.string.hdr."strings"                       &go.string."strings"   ş&go.string."strings"   strings  ş,go.importpath.strings.                       &go.string."strings"   ş2go.string.hdr."go/parser"             	          *go.string."go/parser"   ş*go.string."go/parser"    go/parser  ş0go.importpath.go/parser.             	          *go.string."go/parser"   ş4go.string.hdr."go/printer"             
           ,go.string."go/printer"   ş,go.string."go/printer"    go/printer  ş2go.importpath.go/printer.             
           ,go.string."go/printer"   ş"runtime.zerovalue      ÿÿgo13ld 

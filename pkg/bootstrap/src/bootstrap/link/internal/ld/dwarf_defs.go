@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/link/internal/ld/dwarf_defs.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/ld/dwarf_defs.go
 
-//line /tmp/go/src/cmd/link/internal/ld/dwarf_defs.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/link/internal/ld/dwarf_defs.go:1
 // Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
