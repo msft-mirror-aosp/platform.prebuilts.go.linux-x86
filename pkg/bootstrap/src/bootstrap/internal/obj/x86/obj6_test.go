@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/internal/obj/x86/obj6_test.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/x86/obj6_test.go
 
-//line /tmp/go/src/cmd/internal/obj/x86/obj6_test.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/x86/obj6_test.go:1
 package x86_test
 
 import (

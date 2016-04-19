@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/internal/obj/x86/obj6.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/x86/obj6.go
 
-//line /tmp/go/src/cmd/internal/obj/x86/obj6.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/internal/obj/x86/obj6.go:1
 // Inferno utils/6l/pass.c
 // http://code.google.com/p/inferno-os/source/browse/utils/6l/pass.c
 //

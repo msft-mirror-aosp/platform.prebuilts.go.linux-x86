@@ -1,6 +1,6 @@
-// Do not edit. Bootstrap copy of /tmp/go/src/cmd/compile/internal/x86/reg.go
+// Do not edit. Bootstrap copy of /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/x86/reg.go
 
-//line /tmp/go/src/cmd/compile/internal/x86/reg.go:1
+//line /usr/local/google/buildbot/src/android/build-tools/out/obj/go/src/cmd/compile/internal/x86/reg.go:1
 // Derived from Inferno utils/6c/reg.c
 // http://code.google.com/p/inferno-os/source/browse/utils/6c/reg.c
 //
