@@ -10,7 +10,7 @@
 //	Portions Copyright © 2004,2006 Bruce Ellis
 //	Portions Copyright © 2005-2007 C H Forsyth (forsyth@terzarima.net)
 //	Revisions Copyright © 2000-2008 Lucent Technologies Inc. and others
-//	Portions Copyright © 2009 The Go Authors.  All rights reserved.
+//	Portions Copyright © 2009 The Go Authors. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -208,6 +208,7 @@ const (
 	C_DACON /* $n(REG) where int32 < n */
 	C_SBRA
 	C_LBRA
+	C_LBRAPIC
 	C_SAUTO
 	C_LAUTO
 	C_SEXT
@@ -223,6 +224,9 @@ const (
 	C_ANY
 	C_GOK
 	C_ADDR
+	C_GOTADDR
+	C_TLS_LE
+	C_TLS_IE
 	C_TEXTSIZE
 
 	C_NCLASS /* must be the last */
@@ -341,8 +345,10 @@ const (
 	AFSUBS
 	AFSUBSCC
 	AMOVMW
+	ALBAR
 	ALSW
 	ALWAR
+	ALWSYNC
 	AMOVWBR
 	AMOVB
 	AMOVBU
@@ -400,6 +406,7 @@ const (
 	ASRAW
 	ASRAWCC
 	ASRWCC
+	ASTBCCC
 	ASTSW
 	ASTWCCC
 	ASUB
@@ -479,6 +486,8 @@ const (
 	/* AFCFIW; AFCFIWCC */
 	AFCFID
 	AFCFIDCC
+	AFCFIDU
+	AFCFIDUCC
 	AFCTID
 	AFCTIDCC
 	AFCTIDZ
