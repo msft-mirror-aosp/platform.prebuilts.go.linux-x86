@@ -85,8 +85,6 @@ var Anames = []string{
 	"SWI",
 	"MULA",
 	"WORD",
-	"BCASE",
-	"CASE",
 	"MULL",
 	"MULAL",
 	"MULLU",
