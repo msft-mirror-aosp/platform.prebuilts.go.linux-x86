@@ -39,11 +39,12 @@ func (t *TypeImpl) IsStruct() bool         { return t.struct_ }
 func (t *TypeImpl) IsInterface() bool      { return t.inter }
 func (t *TypeImpl) IsMemory() bool         { return false }
 func (t *TypeImpl) IsFlags() bool          { return false }
+func (t *TypeImpl) IsTuple() bool          { return false }
 func (t *TypeImpl) IsVoid() bool           { return false }
 func (t *TypeImpl) String() string         { return t.Name }
 func (t *TypeImpl) SimpleString() string   { return t.Name }
 func (t *TypeImpl) ElemType() Type         { return t.Elem_ }
-func (t *TypeImpl) PtrTo() Type            { panic("not implemented") }
+func (t *TypeImpl) PtrTo() Type            { return TypeBytePtr }
 func (t *TypeImpl) NumFields() int         { panic("not implemented") }
 func (t *TypeImpl) FieldType(i int) Type   { panic("not implemented") }
 func (t *TypeImpl) FieldOff(i int) int64   { panic("not implemented") }
