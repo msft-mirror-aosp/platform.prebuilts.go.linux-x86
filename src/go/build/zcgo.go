@@ -2,6 +2,8 @@
 
 package build
 
+const defaultCGO_ENABLED = ""
+
 var cgoEnabled = map[string]bool{
 	"android/386": true,
 	"android/amd64": true,
@@ -18,8 +20,10 @@ var cgoEnabled = map[string]bool{
 	"linux/amd64": true,
 	"linux/arm": true,
 	"linux/arm64": true,
+	"linux/mips": true,
 	"linux/mips64": true,
 	"linux/mips64le": true,
+	"linux/mipsle": true,
 	"linux/ppc64le": true,
 	"linux/s390x": true,
 	"netbsd/386": true,
