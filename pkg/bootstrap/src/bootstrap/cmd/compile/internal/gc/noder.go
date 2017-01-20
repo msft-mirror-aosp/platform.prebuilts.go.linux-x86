@@ -37,6 +37,7 @@ func parseFile(filename string) {
 	}
 
 	if nsyntaxerrors == 0 {
+		// Always run testdclstack here, even when debug_dclstack is not set, as a sanity measure.
 		testdclstack()
 	}
 }
