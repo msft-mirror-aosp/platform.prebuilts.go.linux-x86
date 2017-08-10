@@ -3,7 +3,7 @@
 package sys
 
 const DefaultGoroot = `./prebuilts/go/linux-x86`
-const TheVersion = `go1.9rc1`
+const TheVersion = `go1.9rc2`
 const Goexperiment = ``
 const StackGuardMultiplier = 1
 
