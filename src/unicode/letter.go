@@ -46,7 +46,7 @@ type Range32 struct {
 
 // CaseRange represents a range of Unicode code points for simple (one
 // code point to one code point) case conversion.
-// The range runs from Lo to Hi inclusive, with a fixed stride of 1.  Deltas
+// The range runs from Lo to Hi inclusive, with a fixed stride of 1. Deltas
 // are the number to add to the code point to reach the code point for a
 // different case for that character. They may be negative. If zero, it
 // means the character is in the corresponding case. There is a special
@@ -308,7 +308,7 @@ func (special SpecialCase) ToLower(r rune) rune {
 }
 
 // caseOrbit is defined in tables.go as []foldPair. Right now all the
-// entries fit in uint16, so use uint16.  If that changes, compilation
+// entries fit in uint16, so use uint16. If that changes, compilation
 // will fail (the constants in the composite literal will not fit in uint16)
 // and the types here can change to uint32.
 type foldPair struct {
@@ -320,6 +320,7 @@ type foldPair struct {
 // the Unicode-defined simple case folding. Among the code points
 // equivalent to rune (including rune itself), SimpleFold returns the
 // smallest rune > r if one exists, or else the smallest rune >= 0.
+// If r is not a valid Unicode code point, SimpleFold(r) returns r.
 //
 // For example:
 //	SimpleFold('A') = 'a'
@@ -331,7 +332,13 @@ type foldPair struct {
 //
 //	SimpleFold('1') = '1'
 //
+//	SimpleFold(-2) = -2
+//
 func SimpleFold(r rune) rune {
+	if r < 0 || r > MaxRune {
+		return r
+	}
+
 	if int(r) < len(asciiFold) {
 		return rune(asciiFold[r])
 	}

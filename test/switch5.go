@@ -9,8 +9,6 @@
 
 package main
 
-import "fmt"
-
 func f0(x int) {
 	switch x {
 	case 0:
@@ -19,7 +17,7 @@ func f0(x int) {
 
 	switch x {
 	case 0:
-	case int(0): // ERROR "duplicate case 0 in switch"
+	case int(0): // ERROR "duplicate case int.0. .value 0. in switch"
 	}
 }
 
@@ -46,30 +44,9 @@ func f3(e interface{}) {
 	case 0: // ERROR "duplicate case 0 in switch"
 	case int64(0):
 	case float32(10):
-	case float32(10): // ERROR "duplicate case float32\(10\) in switch"
+	case float32(10): // ERROR "duplicate case float32\(10\) .value 10. in switch"
 	case float64(10):
-	case float64(10): // ERROR "duplicate case float64\(10\) in switch"
-	}
-}
-
-func f4(e interface{}) {
-	switch e.(type) {
-	case int:
-	case int: // ERROR "duplicate case int in type switch"
-	case int64:
-	case error: // ERROR "duplicate case error in type switch"
-	case error:
-	case fmt.Stringer:
-	case fmt.Stringer: // ERROR "duplicate case fmt.Stringer in type switch"
-	case struct {
-		i int "tag1"
-	}:
-	case struct {
-		i int "tag2"
-	}:
-	case struct {
-		i int "tag1"
-	}: // ERROR "duplicate case struct { i int .tag1. } in type switch"
+	case float64(10): // ERROR "duplicate case float64\(10\) .value 10. in switch"
 	}
 }
 
@@ -77,5 +54,41 @@ func f5(a [1]int) {
 	switch a {
 	case [1]int{0}:
 	case [1]int{0}: // OK -- see issue 15896
+	}
+}
+
+// Ensure duplicate const bool clauses are accepted.
+func f6() int {
+	switch {
+	case 0 == 0:
+		return 0
+	case 1 == 1: // Intentionally OK, even though a duplicate of the above const true
+		return 1
+	}
+	return 2
+}
+
+// Ensure duplicates in ranges are detected (issue #17517).
+func f7(a int) {
+	switch a {
+	case 0:
+	case 0, 1: // ERROR "duplicate case 0"
+	case 1, 2, 3, 4: // ERROR "duplicate case 1"
+	}
+}
+
+// Ensure duplicates with simple literals are printed as they were
+// written, not just their values. Particularly useful for runes.
+func f8(r rune) {
+	const x = 10
+	switch r {
+	case 33, 33: // ERROR "duplicate case 33 in switch"
+	case 34, '"': // ERROR "duplicate case '"' .value 34. in switch"
+	case 35, rune('#'): // ERROR "duplicate case rune.'#'. .value 35. in switch"
+	case 36, rune(36): // ERROR "duplicate case rune.36. .value 36. in switch"
+	case 37, '$'+1: // ERROR "duplicate case '\$' \+ 1 .value 37. in switch"
+	case 'b':
+	case 'a', 'b', 'c', 'd': // ERROR "duplicate case 'b' .value 98."
+	case x, x: // ERROR "duplicate case x .value 10."
 	}
 }

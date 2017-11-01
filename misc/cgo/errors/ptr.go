@@ -322,6 +322,35 @@ var ptrTests = []ptrTest{
 		body: `p := &C.s{}; defer C.f(p); p.p = new(C.int)`,
 		fail: true,
 	},
+	{
+		// Check a pointer to a union if the union has any
+		// pointer fields.
+		name:    "union1",
+		c:       `typedef union { char **p; unsigned long i; } u; void f(u *pu) {}`,
+		imports: []string{"unsafe"},
+		body:    `var b C.char; p := &b; C.f((*C.u)(unsafe.Pointer(&p)))`,
+		fail:    true,
+	},
+	{
+		// Don't check a pointer to a union if the union does
+		// not have any pointer fields.
+		// Like ptrdata1 above, the uintptr represents an
+		// integer that happens to have the same
+		// representation as a pointer.
+		name:    "union2",
+		c:       `typedef union { unsigned long i; } u; void f(u *pu) {}`,
+		imports: []string{"unsafe"},
+		body:    `var b C.char; p := &b; C.f((*C.u)(unsafe.Pointer(&p)))`,
+		fail:    false,
+	},
+	{
+		// Issue #21306.
+		name:    "preempt-during-call",
+		c:       `void f() {}`,
+		imports: []string{"runtime", "sync"},
+		body:    `var wg sync.WaitGroup; wg.Add(100); for i := 0; i < 100; i++ { go func(i int) { for j := 0; j < 100; j++ { C.f(); runtime.GOMAXPROCS(i) }; wg.Done() }(i) }; wg.Wait()`,
+		fail:    false,
+	},
 }
 
 func main() {

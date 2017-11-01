@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-// File represents an open file descriptor.
-type File struct {
-	*file
+// fixLongPath is a noop on non-Windows platforms.
+func fixLongPath(path string) string {
+	return path
 }
 
 // file is the real representation of *File.
@@ -35,7 +35,9 @@ func (f *File) Fd() uintptr {
 	return uintptr(f.fd)
 }
 
-// NewFile returns a new File with the given file descriptor and name.
+// NewFile returns a new File with the given file descriptor and
+// name. The returned value will be nil if fd is not a valid file
+// descriptor.
 func NewFile(fd uintptr, name string) *File {
 	fdi := int(fd)
 	if fdi < 0 {
@@ -135,21 +137,21 @@ func OpenFile(name string, flag int, perm FileMode) (*File, error) {
 // Close closes the File, rendering it unusable for I/O.
 // It returns an error, if any.
 func (f *File) Close() error {
-	if f == nil {
-		return ErrInvalid
+	if err := f.checkValid("close"); err != nil {
+		return err
 	}
 	return f.file.close()
 }
 
 func (file *file) close() error {
-	if file == nil || file.fd < 0 {
+	if file == nil || file.fd == badFd {
 		return ErrInvalid
 	}
 	var err error
 	if e := syscall.Close(file.fd); e != nil {
 		err = &PathError{"close", file.name, e}
 	}
-	file.fd = -1 // so it can't be closed again
+	file.fd = badFd // so it can't be closed again
 
 	// no need for a finalizer anymore
 	runtime.SetFinalizer(file, nil)
@@ -194,9 +196,7 @@ func (f *File) Truncate(size int64) error {
 
 const chmodMask = uint32(syscall.DMAPPEND | syscall.DMEXCL | syscall.DMTMP | ModePerm)
 
-// Chmod changes the mode of the file to mode.
-// If there is an error, it will be of type *PathError.
-func (f *File) Chmod(mode FileMode) error {
+func (f *File) chmod(mode FileMode) error {
 	if f == nil {
 		return ErrInvalid
 	}
@@ -244,14 +244,22 @@ func (f *File) Sync() error {
 // read reads up to len(b) bytes from the File.
 // It returns the number of bytes read and an error, if any.
 func (f *File) read(b []byte) (n int, err error) {
-	return fixCount(syscall.Read(f.fd, b))
+	n, e := fixCount(syscall.Read(f.fd, b))
+	if n == 0 && len(b) > 0 && e == nil {
+		return 0, io.EOF
+	}
+	return n, e
 }
 
 // pread reads len(b) bytes from the File starting at byte offset off.
 // It returns the number of bytes read and the error, if any.
 // EOF is signaled by a zero count with err set to nil.
 func (f *File) pread(b []byte, off int64) (n int, err error) {
-	return fixCount(syscall.Pread(f.fd, b, off))
+	n, e := fixCount(syscall.Pread(f.fd, b, off))
+	if n == 0 && len(b) > 0 && e == nil {
+		return 0, io.EOF
+	}
+	return n, e
 }
 
 // write writes len(b) bytes to the File.
@@ -365,10 +373,8 @@ func rename(oldname, newname string) error {
 	return nil
 }
 
-// Chmod changes the mode of the named file to mode.
-// If the file is a symbolic link, it changes the mode of the link's target.
-// If there is an error, it will be of type *PathError.
-func Chmod(name string, mode FileMode) error {
+// See docs in file.go:Chmod.
+func chmod(name string, mode FileMode) error {
 	var d syscall.Dir
 
 	odir, e := dirstat(name)
@@ -468,7 +474,31 @@ func (f *File) Chown(uid, gid int) error {
 	return &PathError{"chown", f.name, syscall.EPLAN9}
 }
 
-// TempDir returns the default directory to use for temporary files.
-func TempDir() string {
+func tempDir() string {
 	return "/tmp"
+}
+
+// Chdir changes the current working directory to the file,
+// which must be a directory.
+// If there is an error, it will be of type *PathError.
+func (f *File) Chdir() error {
+	if err := f.checkValid("chdir"); err != nil {
+		return err
+	}
+	if e := syscall.Fchdir(f.fd); e != nil {
+		return &PathError{"chdir", f.name, e}
+	}
+	return nil
+}
+
+// checkValid checks whether f is valid for use.
+// If not, it returns an appropriate error, perhaps incorporating the operation name op.
+func (f *File) checkValid(op string) error {
+	if f == nil {
+		return ErrInvalid
+	}
+	if f.fd == badFd {
+		return &PathError{op, f.name, ErrClosed}
+	}
+	return nil
 }

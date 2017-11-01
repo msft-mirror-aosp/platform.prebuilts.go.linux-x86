@@ -4,10 +4,7 @@
 
 package types
 
-import (
-	"sort"
-	"sync"
-)
+import "sort"
 
 // A Type represents a type of Go.
 // All types implement the Type interface.
@@ -121,10 +118,8 @@ func (s *Slice) Elem() Type { return s.elem }
 
 // A Struct represents a struct type.
 type Struct struct {
-	fields      []*Var
-	tags        []string  // field tags; nil if there are no tags
-	offsets     []int64   // field offsets in bytes, lazily initialized
-	offsetsOnce sync.Once // for threadsafe lazy initialization of offsets
+	fields []*Var
+	tags   []string // field tags; nil if there are no tags
 }
 
 // NewStruct returns a new struct with the given fields and corresponding field tags.
@@ -399,7 +394,7 @@ func NewNamed(obj *TypeName, underlying Type, methods []*Func) *Named {
 	return typ
 }
 
-// TypeName returns the type name for the named type t.
+// Obj returns the type name for the named type t.
 func (t *Named) Obj() *TypeName { return t.obj }
 
 // NumMethods returns the number of explicit methods whose receiver is named type t.

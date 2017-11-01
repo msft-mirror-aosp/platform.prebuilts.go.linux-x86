@@ -4,7 +4,10 @@
 
 package ssa
 
-import "fmt"
+import (
+	"cmd/compile/internal/types"
+	"fmt"
+)
 
 // A place that an ssa variable can reside.
 type Location interface {
@@ -14,8 +17,9 @@ type Location interface {
 // A Register is a machine register, like %rax.
 // They are numbered densely from 0 (for each architecture).
 type Register struct {
-	Num  int32
-	name string
+	num    int32
+	objNum int16 // register number from cmd/internal/obj/$ARCH
+	name   string
 }
 
 func (r *Register) Name() string {
@@ -25,14 +29,27 @@ func (r *Register) Name() string {
 // A LocalSlot is a location in the stack frame.
 // It is (possibly a subpiece of) a PPARAM, PPARAMOUT, or PAUTO ONAME node.
 type LocalSlot struct {
-	N    GCNode // an ONAME *gc.Node representing a variable on the stack
-	Type Type   // type of slot
-	Off  int64  // offset of slot in N
+	N    GCNode      // an ONAME *gc.Node representing a variable on the stack
+	Type *types.Type // type of slot
+	Off  int64       // offset of slot in N
 }
 
 func (s LocalSlot) Name() string {
 	if s.Off == 0 {
-		return fmt.Sprintf("%s[%s]", s.N, s.Type)
+		return fmt.Sprintf("%v[%v]", s.N, s.Type)
 	}
-	return fmt.Sprintf("%s+%d[%s]", s.N, s.Off, s.Type)
+	return fmt.Sprintf("%v+%d[%v]", s.N, s.Off, s.Type)
+}
+
+type LocPair [2]Location
+
+func (t LocPair) Name() string {
+	n0, n1 := "nil", "nil"
+	if t[0] != nil {
+		n0 = t[0].Name()
+	}
+	if t[1] != nil {
+		n1 = t[1].Name()
+	}
+	return fmt.Sprintf("<%s,%s>", n0, n1)
 }

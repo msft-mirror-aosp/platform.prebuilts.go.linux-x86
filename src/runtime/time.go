@@ -31,6 +31,7 @@ var timers struct {
 	created      bool
 	sleeping     bool
 	rescheduling bool
+	sleepUntil   int64
 	waitnote     note
 	t            []*timer
 }
@@ -50,7 +51,12 @@ func timeSleep(ns int64) {
 		return
 	}
 
-	t := new(timer)
+	t := getg().timer
+	if t == nil {
+		t = new(timer)
+		getg().timer = t
+	}
+	*t = timer{}
 	t.when = nanotime() + ns
 	t.f = goroutineReady
 	t.arg = getg()
@@ -88,12 +94,12 @@ func addtimer(t *timer) {
 	unlock(&timers.lock)
 }
 
-// Add a timer to the heap and start or kick the timer proc.
-// If the new timer is earlier than any of the others.
+// Add a timer to the heap and start or kick timerproc if the new timer is
+// earlier than any of the others.
 // Timers are locked.
 func addtimerLocked(t *timer) {
 	// when must never be negative; otherwise timerproc will overflow
-	// during its delta calculation and never expire other runtime·timers.
+	// during its delta calculation and never expire other runtime timers.
 	if t.when < 0 {
 		t.when = 1<<63 - 1
 	}
@@ -150,7 +156,7 @@ func deltimer(t *timer) bool {
 
 // Timerproc runs the time-driven events.
 // It sleeps until the next event in the timers heap.
-// If addtimer inserts a new earlier event, addtimer1 wakes timerproc early.
+// If addtimer inserts a new earlier event, it wakes timerproc early.
 func timerproc() {
 	timers.gp = getg()
 	for {
@@ -204,6 +210,7 @@ func timerproc() {
 		}
 		// At least one timer pending. Sleep until then.
 		timers.sleeping = true
+		timers.sleepUntil = now + delta
 		noteclear(&timers.waitnote)
 		unlock(&timers.lock)
 		notetsleepg(&timers.waitnote, delta)
@@ -292,8 +299,8 @@ func siftdownTimer(i int) {
 
 // Entry points for net, time to call nanotime.
 
-//go:linkname net_runtimeNano net.runtimeNano
-func net_runtimeNano() int64 {
+//go:linkname poll_runtimeNano internal/poll.runtimeNano
+func poll_runtimeNano() int64 {
 	return nanotime()
 }
 
@@ -301,3 +308,5 @@ func net_runtimeNano() int64 {
 func time_runtimeNano() int64 {
 	return nanotime()
 }
+
+var startNano int64 = nanotime()

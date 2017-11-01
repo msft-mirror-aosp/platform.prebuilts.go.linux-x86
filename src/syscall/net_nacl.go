@@ -6,6 +6,8 @@
 // The simulation is not particularly tied to NaCl,
 // but other systems have real networks.
 
+// All int64 times are UnixNanos.
+
 package syscall
 
 import (
@@ -48,6 +50,22 @@ func (t *timer) start(q *queue, deadline int64) {
 
 func (t *timer) stop() {
 	stopTimer(&t.r)
+}
+
+func (t *timer) reset(q *queue, deadline int64) {
+	if t.r.f != nil {
+		t.stop()
+	}
+	if deadline == 0 {
+		return
+	}
+	if t.r.f == nil {
+		t.q = q
+		t.r.f = timerExpired
+		t.r.arg = t
+	}
+	t.r.when = deadline
+	startTimer(&t.r)
 }
 
 func timerExpired(i interface{}, seq uintptr) {
@@ -159,6 +177,11 @@ func (sa *SockaddrInet4) copy() Sockaddr {
 
 func (sa *SockaddrInet4) key() interface{} { return *sa }
 
+func isIPv4Localhost(sa Sockaddr) bool {
+	sa4, ok := sa.(*SockaddrInet4)
+	return ok && sa4.Addr == [4]byte{127, 0, 0, 1}
+}
+
 type SockaddrInet6 struct {
 	Port   int
 	ZoneId uint32
@@ -233,9 +256,11 @@ type queue struct {
 	sync.Mutex
 	canRead  sync.Cond
 	canWrite sync.Cond
-	r        int // total read index
-	w        int // total write index
-	m        int // index mask
+	rtimer   *timer // non-nil if in read
+	wtimer   *timer // non-nil if in write
+	r        int    // total read index
+	w        int    // total write index
+	m        int    // index mask
 	closed   bool
 }
 
@@ -259,9 +284,11 @@ func (q *queue) waitRead(n int, deadline int64) (int, error) {
 	}
 	var t timer
 	t.start(q, deadline)
+	q.rtimer = &t
 	for q.w-q.r == 0 && !q.closed && !t.expired {
 		q.canRead.Wait()
 	}
+	q.rtimer = nil
 	t.stop()
 	m := q.w - q.r
 	if m == 0 && t.expired {
@@ -281,9 +308,11 @@ func (q *queue) waitWrite(n int, deadline int64) (int, error) {
 	}
 	var t timer
 	t.start(q, deadline)
+	q.wtimer = &t
 	for q.w-q.r > q.m && !q.closed && !t.expired {
 		q.canWrite.Wait()
 	}
+	q.wtimer = nil
 	t.stop()
 	m := q.m + 1 - (q.w - q.r)
 	if m == 0 && t.expired {
@@ -577,6 +606,14 @@ func (f *netFile) connect(sa Sockaddr) error {
 		return EISCONN
 	}
 	l, ok := net.listener[netAddr{f.proto, f.sotype, sa.key()}]
+	if !ok {
+		// If we're dialing 127.0.0.1 but found nothing, try
+		// 0.0.0.0 also. (Issue 20611)
+		if isIPv4Localhost(sa) {
+			sa = &SockaddrInet4{Port: sa.(*SockaddrInet4).Port}
+			l, ok = net.listener[netAddr{f.proto, f.sotype, sa.key()}]
+		}
+	}
 	if !ok || l.listenerClosed() {
 		net.Unlock()
 		return ECONNREFUSED
@@ -871,6 +908,13 @@ func SetReadDeadline(fd int, t int64) error {
 		return err
 	}
 	atomic.StoreInt64(&f.rddeadline, t)
+	if bq := f.rd; bq != nil {
+		bq.Lock()
+		if timer := bq.rtimer; timer != nil {
+			timer.reset(&bq.queue, t)
+		}
+		bq.Unlock()
+	}
 	return nil
 }
 
@@ -884,6 +928,13 @@ func SetWriteDeadline(fd int, t int64) error {
 		return err
 	}
 	atomic.StoreInt64(&f.wrdeadline, t)
+	if bq := f.wr; bq != nil {
+		bq.Lock()
+		if timer := bq.wtimer; timer != nil {
+			timer.reset(&bq.queue, t)
+		}
+		bq.Unlock()
+	}
 	return nil
 }
 

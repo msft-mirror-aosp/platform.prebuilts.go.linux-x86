@@ -9,11 +9,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -151,8 +153,11 @@ func (t *tester) run() {
 	}
 
 	t.timeoutScale = 1
-	if t.goarch == "arm" || t.goos == "windows" {
+	switch t.goarch {
+	case "arm":
 		t.timeoutScale = 2
+	case "mips", "mipsle", "mips64", "mips64le":
+		t.timeoutScale = 4
 	}
 	if s := os.Getenv("GO_TEST_TIMEOUT_SCALE"); s != "" {
 		t.timeoutScale, err = strconv.Atoi(s)
@@ -259,7 +264,7 @@ var (
 
 func (t *tester) registerStdTest(pkg string) {
 	testName := "go_test:" + pkg
-	if t.runRx == nil || t.runRx.MatchString(testName) {
+	if t.runRx == nil || t.runRx.MatchString(testName) == t.runRxWant {
 		stdMatches = append(stdMatches, pkg)
 	}
 	t.tests = append(t.tests, distTest{
@@ -295,7 +300,7 @@ func (t *tester) registerStdTest(pkg string) {
 
 func (t *tester) registerRaceBenchTest(pkg string) {
 	testName := "go_test_bench:" + pkg
-	if t.runRx == nil || t.runRx.MatchString(testName) {
+	if t.runRx == nil || t.runRx.MatchString(testName) == t.runRxWant {
 		benchMatches = append(benchMatches, pkg)
 	}
 	t.tests = append(t.tests, distTest{
@@ -327,7 +332,48 @@ func (t *tester) registerRaceBenchTest(pkg string) {
 	})
 }
 
+// stdOutErrAreTerminals is defined in test_linux.go, to report
+// whether stdout & stderr are terminals.
+var stdOutErrAreTerminals func() bool
+
 func (t *tester) registerTests() {
+	if strings.HasSuffix(os.Getenv("GO_BUILDER_NAME"), "-vetall") {
+		// Run vet over std and cmd and call it quits.
+		for k := range cgoEnabled {
+			osarch := k
+			t.tests = append(t.tests, distTest{
+				name:    "vet/" + osarch,
+				heading: "go vet std cmd",
+				fn: func(dt *distTest) error {
+					t.addCmd(dt, "src/cmd/vet/all", "go", "run", "main.go", "-p="+osarch)
+					return nil
+				},
+			})
+		}
+		return
+	}
+
+	// This test needs its stdout/stderr to be terminals, so we don't run it from cmd/go's tests.
+	// See issue 18153.
+	if t.goos == "linux" {
+		t.tests = append(t.tests, distTest{
+			name:    "cmd_go_test_terminal",
+			heading: "cmd/go terminal test",
+			fn: func(dt *distTest) error {
+				t.runPending(dt)
+				if !stdOutErrAreTerminals() {
+					fmt.Println("skipping terminal test; stdout/stderr not terminals")
+					return nil
+				}
+				cmd := exec.Command("go", "test")
+				cmd.Dir = filepath.Join(os.Getenv("GOROOT"), "src/cmd/go/testdata/testterminal18153")
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				return cmd.Run()
+			},
+		})
+	}
+
 	// Fast path to avoid the ~1 second of `go list std cmd` when
 	// the caller lists specific tests to run. (as the continuous
 	// build coordinator does).
@@ -351,7 +397,7 @@ func (t *tester) registerTests() {
 		if !t.race {
 			cmd.Args = append(cmd.Args, "cmd")
 		}
-		all, err := cmd.CombinedOutput()
+		all, err := cmd.Output()
 		if err != nil {
 			log.Fatalf("Error running go list std cmd: %v, %s", err, all)
 		}
@@ -361,7 +407,9 @@ func (t *tester) registerTests() {
 		}
 		if t.race {
 			for _, pkg := range pkgs {
-				t.registerRaceBenchTest(pkg)
+				if t.packageHasBenchmarks(pkg) {
+					t.registerRaceBenchTest(pkg)
+				}
 			}
 		}
 	}
@@ -380,8 +428,55 @@ func (t *tester) registerTests() {
 				cmd := t.addCmd(dt, "src", "go", "test", "-short", t.timeout(300), t.tags(), "runtime", "-cpu=1,2,4")
 				// We set GOMAXPROCS=2 in addition to -cpu=1,2,4 in order to test runtime bootstrap code,
 				// creation of first goroutines and first garbage collections in the parallel setting.
-				cmd.Env = mergeEnvLists([]string{"GOMAXPROCS=2"}, os.Environ())
+				cmd.Env = append(os.Environ(), "GOMAXPROCS=2")
 				return nil
+			},
+		})
+	}
+
+	// On the builders only, test that a moved GOROOT still works.
+	// Fails on iOS because CC_FOR_TARGET refers to clangwrap.sh
+	// in the unmoved GOROOT.
+	// Fails on Android with an exec format error.
+	// Fails on plan9 with "cannot find GOROOT" (issue #21016).
+	if os.Getenv("GO_BUILDER_NAME") != "" && t.goos != "android" && !t.iOS() && t.goos != "plan9" {
+		t.tests = append(t.tests, distTest{
+			name:    "moved_goroot",
+			heading: "moved GOROOT",
+			fn: func(dt *distTest) error {
+				t.runPending(dt)
+				moved := t.goroot + "-moved"
+				if err := os.Rename(t.goroot, moved); err != nil {
+					if t.goos == "windows" {
+						// Fails on Windows (with "Access is denied") if a process
+						// or binary is in this directory. For instance, using all.bat
+						// when run from c:\workdir\go\src fails here
+						// if GO_BUILDER_NAME is set. Our builders invoke tests
+						// a different way which happens to work when sharding
+						// tests, but we should be tolerant of the non-sharded
+						// all.bat case.
+						log.Printf("skipping test on Windows")
+						return nil
+					}
+					return err
+				}
+
+				// Run `go test fmt` in the moved GOROOT.
+				cmd := exec.Command(filepath.Join(moved, "bin", "go"), "test", "fmt")
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				// Don't set GOROOT in the environment.
+				for _, e := range os.Environ() {
+					if !strings.HasPrefix(e, "GOROOT=") {
+						cmd.Env = append(cmd.Env, e)
+					}
+				}
+				err := cmd.Run()
+
+				if rerr := os.Rename(moved, t.goroot); rerr != nil {
+					log.Fatalf("failed to restore GOROOT: %v", rerr)
+				}
+				return err
 			},
 		})
 	}
@@ -391,19 +486,12 @@ func (t *tester) registerTests() {
 	// release on a system that does not have a C compiler
 	// installed and still build Go programs (that don't use cgo).
 	for _, pkg := range cgoPackages {
-
-		// Internal linking is not currently supported on Dragonfly.
-		if t.goos == "dragonfly" {
+		if !t.internalLink() {
 			break
 		}
 
 		// ARM libgcc may be Thumb, which internal linking does not support.
 		if t.goarch == "arm" {
-			break
-		}
-
-		// Darwin/Android ARM64 fails with internal linking.
-		if (t.goos == "darwin" || t.goos == "android") && t.goarch == "arm64" {
 			break
 		}
 
@@ -417,6 +505,21 @@ func (t *tester) registerTests() {
 			heading: "Testing without libgcc.",
 			fn: func(dt *distTest) error {
 				t.addCmd(dt, "src", "go", "test", "-short", "-ldflags=-linkmode=internal -libgcc=none", t.tags(), pkg, t.runFlag(run))
+				return nil
+			},
+		})
+	}
+
+	// Test internal linking of PIE binaries where it is supported.
+	if t.goos == "linux" && t.goarch == "amd64" && !isAlpineLinux() {
+		// Issue 18243: We don't have a way to set the default
+		// dynamic linker used in internal linking mode. So
+		// this test is skipped on Alpine.
+		t.tests = append(t.tests, distTest{
+			name:    "pie_internal",
+			heading: "internal linking of -buildmode=pie",
+			fn: func(dt *distTest) error {
+				t.addCmd(dt, "src", "go", "test", "reflect", "-short", "-buildmode=pie", "-ldflags=-linkmode=internal", t.timeout(60), t.tags(), t.runFlag(""))
 				return nil
 			},
 		})
@@ -502,7 +605,7 @@ func (t *tester) registerTests() {
 			})
 		}
 		if t.supportedBuildmode("c-archive") {
-			t.registerHostTest("testcarchive", "misc/cgo/testcarchive", "carchive_test.go")
+			t.registerHostTest("testcarchive", "../misc/cgo/testcarchive", "misc/cgo/testcarchive", "carchive_test.go")
 		}
 		if t.supportedBuildmode("c-shared") {
 			t.registerTest("testcshared", "../misc/cgo/testcshared", "./test.bash")
@@ -510,10 +613,13 @@ func (t *tester) registerTests() {
 		if t.supportedBuildmode("shared") {
 			t.registerTest("testshared", "../misc/cgo/testshared", "go", "test")
 		}
+		if t.supportedBuildmode("plugin") {
+			t.registerTest("testplugin", "../misc/cgo/testplugin", "./test.bash")
+		}
 		if t.gohostos == "linux" && t.goarch == "amd64" {
 			t.registerTest("testasan", "../misc/cgo/testasan", "go", "run", "main.go")
 		}
-		if t.gohostos == "linux" && t.goarch == "amd64" {
+		if t.goos == "linux" && t.goarch == "amd64" {
 			t.registerTest("testsanitizers", "../misc/cgo/testsanitizers", "./test.bash")
 		}
 		if t.hasBash() && t.goos != "android" && !t.iOS() && t.gohostos != "windows" {
@@ -536,7 +642,13 @@ func (t *tester) registerTests() {
 		t.registerTest("bench_go1", "../test/bench/go1", "go", "test", t.timeout(600), t.runFlag(""))
 	}
 	if t.goos != "android" && !t.iOS() {
-		const nShards = 5
+		// Only start multiple test dir shards on builders,
+		// where they get distributed to multiple machines.
+		// See issue 20141.
+		nShards := 1
+		if os.Getenv("GO_BUILDER_NAME") != "" {
+			nShards = 10
+		}
 		for shard := 0; shard < nShards; shard++ {
 			shard := shard
 			t.tests = append(t.tests, distTest{
@@ -649,7 +761,7 @@ func (t *tester) extLink() bool {
 		"darwin-arm", "darwin-arm64",
 		"dragonfly-386", "dragonfly-amd64",
 		"freebsd-386", "freebsd-amd64", "freebsd-arm",
-		"linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-mips64", "linux-mips64le",
+		"linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-mips64", "linux-mips64le", "linux-mips", "linux-mipsle", "linux-s390x",
 		"netbsd-386", "netbsd-amd64",
 		"openbsd-386", "openbsd-amd64",
 		"windows-386", "windows-amd64":
@@ -667,6 +779,35 @@ func (t *tester) extLink() bool {
 	return false
 }
 
+func (t *tester) internalLink() bool {
+	if t.gohostos == "dragonfly" {
+		// linkmode=internal fails on dragonfly since errno is a TLS relocation.
+		return false
+	}
+	if t.gohostarch == "ppc64le" {
+		// linkmode=internal fails on ppc64le because cmd/link doesn't
+		// handle the TOC correctly (issue 15409).
+		return false
+	}
+	if t.goos == "android" {
+		return false
+	}
+	if t.goos == "darwin" && (t.goarch == "arm" || t.goarch == "arm64") {
+		return false
+	}
+	// Internally linking cgo is incomplete on some architectures.
+	// https://golang.org/issue/10373
+	// https://golang.org/issue/14449
+	if t.goarch == "arm64" || t.goarch == "mips64" || t.goarch == "mips64le" || t.goarch == "mips" || t.goarch == "mipsle" {
+		return false
+	}
+	if isAlpineLinux() {
+		// Issue 18243.
+		return false
+	}
+	return true
+}
+
 func (t *tester) supportedBuildmode(mode string) bool {
 	pair := t.goos + "-" + t.goarch
 	switch mode {
@@ -676,7 +817,8 @@ func (t *tester) supportedBuildmode(mode string) bool {
 		}
 		switch pair {
 		case "darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
-			"linux-amd64", "linux-386", "windows-amd64", "windows-386":
+			"linux-amd64", "linux-386", "linux-ppc64le",
+			"windows-amd64", "windows-386":
 			return true
 		}
 		return false
@@ -694,44 +836,56 @@ func (t *tester) supportedBuildmode(mode string) bool {
 			return true
 		}
 		return false
+	case "plugin":
+		if os.Getenv("GO_BUILDER_NAME") == "linux-amd64-noopt" {
+			// Skip the plugin tests on noopt. They're
+			// causing build failures potentially
+			// obscuring other issues. This is hopefully a
+			// temporary workaround. See golang.org/issue/17937.
+			return false
+		}
+
+		// linux-arm64 is missing because it causes the external linker
+		// to crash, see https://golang.org/issue/17138
+		switch pair {
+		case "linux-386", "linux-amd64", "linux-arm", "linux-s390x":
+			return true
+		}
+		return false
 	default:
 		log.Fatalf("internal error: unknown buildmode %s", mode)
 		return false
 	}
 }
 
-func (t *tester) registerHostTest(name, dirBanner, pkg string) {
+func (t *tester) registerHostTest(name, heading, dir, pkg string) {
 	t.tests = append(t.tests, distTest{
 		name:    name,
-		heading: dirBanner,
+		heading: heading,
 		fn: func(dt *distTest) error {
 			t.runPending(dt)
-			return t.runHostTest(dirBanner, pkg)
+			return t.runHostTest(dir, pkg)
 		},
 	})
 }
 
-func (t *tester) runHostTest(dirBanner, pkg string) error {
-	env := mergeEnvLists([]string{"GOARCH=" + t.gohostarch, "GOOS=" + t.gohostos}, os.Environ())
-	defer os.Remove(filepath.Join(t.goroot, dirBanner, "test.test"))
-	cmd := t.dirCmd(dirBanner, "go", "test", t.tags(), "-c", "-o", "test.test", pkg)
-	cmd.Env = env
+func (t *tester) runHostTest(dir, pkg string) error {
+	defer os.Remove(filepath.Join(t.goroot, dir, "test.test"))
+	cmd := t.dirCmd(dir, "go", "test", t.tags(), "-c", "-o", "test.test", pkg)
+	cmd.Env = append(os.Environ(), "GOARCH="+t.gohostarch, "GOOS="+t.gohostos)
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	return t.dirCmd(dirBanner, "./test.test").Run()
+	return t.dirCmd(dir, "./test.test").Run()
 }
 
 func (t *tester) cgoTest(dt *distTest) error {
-	env := mergeEnvLists([]string{"GOTRACEBACK=2"}, os.Environ())
+	env := append(os.Environ(), "GOTRACEBACK=2")
 
 	cmd := t.addCmd(dt, "misc/cgo/test", "go", "test", t.tags(), "-ldflags", "-linkmode=auto", t.runFlag(""))
 	cmd.Env = env
 
-	if t.gohostos != "dragonfly" && t.gohostarch != "ppc64le" && t.goos != "android" && (t.goos != "darwin" || t.goarch != "arm") {
-		// linkmode=internal fails on dragonfly since errno is a TLS relocation.
-		// linkmode=internal fails on ppc64le because cmd/link doesn't
-		// handle the TOC correctly (issue 15409).
+	if t.internalLink() {
 		cmd := t.addCmd(dt, "misc/cgo/test", "go", "test", "-ldflags", "-linkmode=internal", t.runFlag(""))
 		cmd.Env = env
 	}
@@ -752,7 +906,7 @@ func (t *tester) cgoTest(dt *distTest) error {
 	case "android-arm",
 		"dragonfly-386", "dragonfly-amd64",
 		"freebsd-386", "freebsd-amd64", "freebsd-arm",
-		"linux-386", "linux-amd64", "linux-arm", "linux-s390x",
+		"linux-386", "linux-amd64", "linux-arm", "linux-ppc64le", "linux-s390x",
 		"netbsd-386", "netbsd-amd64":
 
 		cmd := t.addCmd(dt, "misc/cgo/test", "go", "test", "-ldflags", "-linkmode=external")
@@ -961,12 +1115,12 @@ func (t *tester) cgoTestSO(dt *distTest, testpath string) error {
 		if t.goos == "darwin" {
 			s = "DYLD_LIBRARY_PATH"
 		}
-		cmd.Env = mergeEnvLists([]string{s + "=."}, os.Environ())
+		cmd.Env = append(os.Environ(), s+"=.")
 
 		// On FreeBSD 64-bit architectures, the 32-bit linker looks for
 		// different environment variables.
 		if t.goos == "freebsd" && t.gohostarch == "386" {
-			cmd.Env = mergeEnvLists([]string{"LD_32_LIBRARY_PATH=."}, cmd.Env)
+			cmd.Env = append(cmd.Env, "LD_32_LIBRARY_PATH=.")
 		}
 	}
 	return cmd.Run()
@@ -983,9 +1137,19 @@ func (t *tester) hasBash() bool {
 func (t *tester) raceDetectorSupported() bool {
 	switch t.gohostos {
 	case "linux", "darwin", "freebsd", "windows":
-		return t.cgoEnabled && t.goarch == "amd64" && t.gohostos == t.goos
+		// The race detector doesn't work on Alpine Linux:
+		// golang.org/issue/14481
+		return t.cgoEnabled && t.goarch == "amd64" && t.gohostos == t.goos && !isAlpineLinux()
 	}
 	return false
+}
+
+func isAlpineLinux() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	fi, err := os.Lstat("/etc/alpine-release")
+	return err == nil && fi.Mode().IsRegular()
 }
 
 func (t *tester) runFlag(rx string) string {
@@ -996,22 +1160,21 @@ func (t *tester) runFlag(rx string) string {
 }
 
 func (t *tester) raceTest(dt *distTest) error {
-	t.addCmd(dt, "src", "go", "test", "-race", "-i", "runtime/race", "flag", "os/exec")
+	t.addCmd(dt, "src", "go", "test", "-race", "-i", "runtime/race", "flag", "os", "os/exec")
 	t.addCmd(dt, "src", "go", "test", "-race", t.runFlag("Output"), "runtime/race")
-	t.addCmd(dt, "src", "go", "test", "-race", "-short", t.runFlag("TestParse|TestEcho"), "flag", "os/exec")
+	t.addCmd(dt, "src", "go", "test", "-race", "-short", t.runFlag("TestParse|TestEcho|TestStdinCloseRace|TestClosedPipeRace"), "flag", "os", "os/exec")
 	// We don't want the following line, because it
 	// slows down all.bash (by 10 seconds on my laptop).
 	// The race builder should catch any error here, but doesn't.
 	// TODO(iant): Figure out how to catch this.
 	// t.addCmd(dt, "src", "go", "test", "-race", "-run=TestParallelTest", "cmd/go")
 	if t.cgoEnabled {
-		env := mergeEnvLists([]string{"GOTRACEBACK=2"}, os.Environ())
 		cmd := t.addCmd(dt, "misc/cgo/test", "go", "test", "-race", "-short", t.runFlag(""))
-		cmd.Env = env
+		cmd.Env = append(os.Environ(), "GOTRACEBACK=2")
 	}
 	if t.extLink() {
 		// Test with external linking; see issue 9133.
-		t.addCmd(dt, "src", "go", "test", "-race", "-short", "-ldflags=-linkmode=external", t.runFlag("TestParse|TestEcho"), "flag", "os/exec")
+		t.addCmd(dt, "src", "go", "test", "-race", "-short", "-ldflags=-linkmode=external", t.runFlag("TestParse|TestEcho|TestStdinCloseRace"), "flag", "os/exec")
 	}
 	return nil
 }
@@ -1026,7 +1189,7 @@ func (t *tester) testDirTest(dt *distTest, shard, shards int) error {
 	runtest.Do(func() {
 		const exe = "runtest.exe" // named exe for Windows, but harmless elsewhere
 		cmd := t.dirCmd("test", "go", "build", "-o", exe, "run.go")
-		cmd.Env = mergeEnvLists([]string{"GOOS=" + t.gohostos, "GOARCH=" + t.gohostarch, "GOMAXPROCS="}, os.Environ())
+		cmd.Env = append(os.Environ(), "GOOS="+t.gohostos, "GOARCH="+t.gohostarch)
 		runtest.exe = filepath.Join(cmd.Dir, exe)
 		if err := cmd.Run(); err != nil {
 			runtest.err = err
@@ -1049,27 +1212,44 @@ func (t *tester) testDirTest(dt *distTest, shard, shards int) error {
 	return nil
 }
 
-// mergeEnvLists merges the two environment lists such that
-// variables with the same name in "in" replace those in "out".
-// out may be mutated.
-func mergeEnvLists(in, out []string) []string {
-NextVar:
-	for _, inkv := range in {
-		k := strings.SplitAfterN(inkv, "=", 2)[0]
-		for i, outkv := range out {
-			if strings.HasPrefix(outkv, k) {
-				out[i] = inkv
-				continue NextVar
-			}
-		}
-		out = append(out, inkv)
-	}
-	return out
-}
-
 // cgoPackages is the standard packages that use cgo.
 var cgoPackages = []string{
 	"crypto/x509",
 	"net",
 	"os/user",
+}
+
+var funcBenchmark = []byte("\nfunc Benchmark")
+
+// packageHasBenchmarks reports whether pkg has benchmarks.
+// On any error, it conservatively returns true.
+//
+// This exists just to eliminate work on the builders, since compiling
+// a test in race mode just to discover it has no benchmarks costs a
+// second or two per package, and this function returns false for
+// about 100 packages.
+func (t *tester) packageHasBenchmarks(pkg string) bool {
+	pkgDir := filepath.Join(t.goroot, "src", pkg)
+	d, err := os.Open(pkgDir)
+	if err != nil {
+		return true // conservatively
+	}
+	defer d.Close()
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return true // conservatively
+	}
+	for _, name := range names {
+		if !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		slurp, err := ioutil.ReadFile(filepath.Join(pkgDir, name))
+		if err != nil {
+			return true // conservatively
+		}
+		if bytes.Contains(slurp, funcBenchmark) {
+			return true
+		}
+	}
+	return false
 }

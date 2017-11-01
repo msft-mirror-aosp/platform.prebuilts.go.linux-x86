@@ -5,113 +5,13 @@
 package ld
 
 // Reading of Go object files.
-//
-// Originally, Go object files were Plan 9 object files, but no longer.
-// Now they are more like standard object files, in that each symbol is defined
-// by an associated memory image (bytes) and a list of relocations to apply
-// during linking. We do not (yet?) use a standard file format, however.
-// For now, the format is chosen to be as simple as possible to read and write.
-// It may change for reasons of efficiency, or we may even switch to a
-// standard file format if there are compelling benefits to doing so.
-// See golang.org/s/go13linker for more background.
-//
-// The file format is:
-//
-//	- magic header: "\x00\x00go17ld"
-//	- byte 1 - version number
-//	- sequence of strings giving dependencies (imported packages)
-//	- empty string (marks end of sequence)
-//	- sequence of symbol references used by the defined symbols
-//	- byte 0xff (marks end of sequence)
-//	- sequence of integer lengths:
-//		- total data length
-//		- total number of relocations
-//		- total number of pcdata
-//		- total number of automatics
-//		- total number of funcdata
-//		- total number of files
-//	- data, the content of the defined symbols
-//	- sequence of defined symbols
-//	- byte 0xff (marks end of sequence)
-//	- magic footer: "\xff\xffgo17ld"
-//
-// All integers are stored in a zigzag varint format.
-// See golang.org/s/go12symtab for a definition.
-//
-// Data blocks and strings are both stored as an integer
-// followed by that many bytes.
-//
-// A symbol reference is a string name followed by a version.
-//
-// A symbol points to other symbols using an index into the symbol
-// reference sequence. Index 0 corresponds to a nil LSym* pointer.
-// In the symbol layout described below "symref index" stands for this
-// index.
-//
-// Each symbol is laid out as the following fields (taken from LSym*):
-//
-//	- byte 0xfe (sanity check for synchronization)
-//	- type [int]
-//	- name & version [symref index]
-//	- flags [int]
-//		1 dupok
-//	- size [int]
-//	- gotype [symref index]
-//	- p [data block]
-//	- nr [int]
-//	- r [nr relocations, sorted by off]
-//
-// If type == STEXT, there are a few more fields:
-//
-//	- args [int]
-//	- locals [int]
-//	- nosplit [int]
-//	- flags [int]
-//		1<<0 leaf
-//		1<<1 C function
-//		1<<2 function may call reflect.Type.Method
-//	- nlocal [int]
-//	- local [nlocal automatics]
-//	- pcln [pcln table]
-//
-// Each relocation has the encoding:
-//
-//	- off [int]
-//	- siz [int]
-//	- type [int]
-//	- add [int]
-//	- sym [symref index]
-//
-// Each local has the encoding:
-//
-//	- asym [symref index]
-//	- offset [int]
-//	- type [int]
-//	- gotype [symref index]
-//
-// The pcln table has the encoding:
-//
-//	- pcsp [data block]
-//	- pcfile [data block]
-//	- pcline [data block]
-//	- npcdata [int]
-//	- pcdata [npcdata data blocks]
-//	- nfuncdata [int]
-//	- funcdata [nfuncdata symref index]
-//	- funcdatasym [nfuncdata ints]
-//	- nfile [int]
-//	- file [nfile symref index]
-//
-// The file layout and meaning of type integers are architecture-independent.
-//
-// TODO(rsc): The file format is good for a first pass but needs work.
-//	- There are SymID in the object file that should really just be strings.
 
 import (
 	"bufio"
 	"bytes"
 	"cmd/internal/bio"
-	"cmd/internal/obj"
+	"cmd/internal/dwarf"
+	"cmd/internal/objabi"
 	"crypto/sha1"
 	"encoding/base64"
 	"io"
@@ -121,42 +21,45 @@ import (
 )
 
 const (
-	startmagic = "\x00\x00go17ld"
-	endmagic   = "\xff\xffgo17ld"
+	startmagic = "\x00\x00go19ld"
+	endmagic   = "\xff\xffgo19ld"
 )
 
 var emptyPkg = []byte(`"".`)
 
 // objReader reads Go object files.
 type objReader struct {
-	rd   *bufio.Reader
-	ctxt *Link
-	pkg  string
-	pn   string
-	// List of symbol references for the file being read.
-	dupSym *LSym
+	rd              *bufio.Reader
+	ctxt            *Link
+	lib             *Library
+	pn              string
+	dupSym          *Symbol
+	localSymVersion int
 
 	// rdBuf is used by readString and readSymName as scratch for reading strings.
 	rdBuf []byte
 
-	refs        []*LSym
+	// List of symbol references for the file being read.
+	refs        []*Symbol
 	data        []byte
 	reloc       []Reloc
 	pcdata      []Pcdata
 	autom       []Auto
-	funcdata    []*LSym
+	funcdata    []*Symbol
 	funcdataoff []int64
-	file        []*LSym
+	file        []*Symbol
 }
 
-func LoadObjFile(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string) {
+func LoadObjFile(ctxt *Link, f *bio.Reader, lib *Library, length int64, pn string) {
+
 	start := f.Offset()
 	r := &objReader{
-		rd:     f.Reader,
-		pkg:    pkg,
-		ctxt:   ctxt,
-		pn:     pn,
-		dupSym: &LSym{Name: ".dup"},
+		rd:              f.Reader,
+		lib:             lib,
+		ctxt:            ctxt,
+		pn:              pn,
+		dupSym:          &Symbol{Name: ".dup"},
+		localSymVersion: ctxt.Syms.IncVersion(),
 	}
 	r.loadObjFile()
 	if f.Offset() != start+length {
@@ -165,8 +68,7 @@ func LoadObjFile(ctxt *Link, f *bio.Reader, pkg string, length int64, pn string)
 }
 
 func (r *objReader) loadObjFile() {
-	// Increment context version, versions are used to differentiate static files in different packages
-	r.ctxt.IncVersion()
+	pkg := objabi.PathToPrefix(r.lib.Pkg)
 
 	// Magic header
 	var buf [8]uint8
@@ -187,11 +89,14 @@ func (r *objReader) loadObjFile() {
 		if lib == "" {
 			break
 		}
-		addlib(r.ctxt, r.pkg, r.pn, lib)
+		l := addlib(r.ctxt, pkg, r.pn, lib)
+		if l != nil {
+			r.lib.imports = append(r.lib.imports, l)
+		}
 	}
 
 	// Symbol references
-	r.refs = []*LSym{nil} // zeroth ref is nil
+	r.refs = []*Symbol{nil} // zeroth ref is nil
 	for {
 		c, err := r.rd.Peek(1)
 		if err != nil {
@@ -240,33 +145,40 @@ func (r *objReader) readSlices() {
 	n = r.readInt()
 	r.autom = make([]Auto, n)
 	n = r.readInt()
-	r.funcdata = make([]*LSym, n)
+	r.funcdata = make([]*Symbol, n)
 	r.funcdataoff = make([]int64, n)
 	n = r.readInt()
-	r.file = make([]*LSym, n)
+	r.file = make([]*Symbol, n)
 }
 
 // Symbols are prefixed so their content doesn't get confused with the magic footer.
 const symPrefix = 0xfe
 
 func (r *objReader) readSym() {
-	if c, err := r.rd.ReadByte(); c != symPrefix || err != nil {
+	var c byte
+	var err error
+	if c, err = r.rd.ReadByte(); c != symPrefix || err != nil {
 		log.Fatalln("readSym out of sync")
 	}
-	t := r.readInt()
+	if c, err = r.rd.ReadByte(); err != nil {
+		log.Fatalln("error reading input: ", err)
+	}
+	t := abiSymKindToSymKind[c]
 	s := r.readSymIndex()
 	flags := r.readInt()
 	dupok := flags&1 != 0
 	local := flags&2 != 0
+	makeTypelink := flags&4 != 0
 	size := r.readInt()
 	typ := r.readSymIndex()
 	data := r.readData()
 	nreloc := r.readInt()
+	pkg := objabi.PathToPrefix(r.lib.Pkg)
 	isdup := false
 
-	var dup *LSym
-	if s.Type != 0 && s.Type != obj.SXREF {
-		if (t == obj.SDATA || t == obj.SBSS || t == obj.SNOPTRBSS) && len(data) == 0 && nreloc == 0 {
+	var dup *Symbol
+	if s.Type != 0 && s.Type != SXREF {
+		if (t == SDATA || t == SBSS || t == SNOPTRBSS) && len(data) == 0 && nreloc == 0 {
 			if s.Size < int64(size) {
 				s.Size = int64(size)
 			}
@@ -276,10 +188,10 @@ func (r *objReader) readSym() {
 			return
 		}
 
-		if (s.Type == obj.SDATA || s.Type == obj.SBSS || s.Type == obj.SNOPTRBSS) && len(s.P) == 0 && len(s.R) == 0 {
+		if (s.Type == SDATA || s.Type == SBSS || s.Type == SNOPTRBSS) && len(s.P) == 0 && len(s.R) == 0 {
 			goto overwrite
 		}
-		if s.Type != obj.SBSS && s.Type != obj.SNOPTRBSS && !dupok && !s.Attr.DuplicateOK() {
+		if s.Type != SBSS && s.Type != SNOPTRBSS && !dupok && !s.Attr.DuplicateOK() {
 			log.Fatalf("duplicate symbol %s (types %d and %d) in %s and %s", s.Name, s.Type, t, s.File, r.pn)
 		}
 		if len(s.P) > 0 {
@@ -290,24 +202,25 @@ func (r *objReader) readSym() {
 	}
 
 overwrite:
-	s.File = r.pkg
+	s.File = pkg
 	if dupok {
 		s.Attr |= AttrDuplicateOK
 	}
-	if t == obj.SXREF {
+	if t == SXREF {
 		log.Fatalf("bad sxref")
 	}
 	if t == 0 {
 		log.Fatalf("missing type for %s in %s", s.Name, r.pn)
 	}
-	if t == obj.SBSS && (s.Type == obj.SRODATA || s.Type == obj.SNOPTRBSS) {
-		t = int(s.Type)
+	if t == SBSS && (s.Type == SRODATA || s.Type == SNOPTRBSS) {
+		t = s.Type
 	}
-	s.Type = int16(t)
+	s.Type = t
 	if s.Size < int64(size) {
 		s.Size = int64(size)
 	}
 	s.Attr.Set(AttrLocal, local)
+	s.Attr.Set(AttrMakeTypelink, makeTypelink)
 	if typ != nil {
 		s.Gotype = typ
 	}
@@ -325,14 +238,14 @@ overwrite:
 			s.R[i] = Reloc{
 				Off:  r.readInt32(),
 				Siz:  r.readUint8(),
-				Type: r.readInt32(),
+				Type: objabi.RelocType(r.readInt32()),
 				Add:  r.readInt64(),
 				Sym:  r.readSymIndex(),
 			}
 		}
 	}
 
-	if s.Type == obj.STEXT {
+	if s.Type == STEXT {
 		s.FuncInfo = new(FuncInfo)
 		pc := s.FuncInfo
 
@@ -344,6 +257,9 @@ overwrite:
 		flags := r.readInt()
 		if flags&(1<<2) != 0 {
 			s.Attr |= AttrReflectMethod
+		}
+		if flags&(1<<3) != 0 {
+			s.Attr |= AttrShared
 		}
 		n := r.readInt()
 		pc.Autom = r.autom[:n:n]
@@ -363,6 +279,7 @@ overwrite:
 		pc.Pcsp.P = r.readData()
 		pc.Pcfile.P = r.readData()
 		pc.Pcline.P = r.readData()
+		pc.Pcinline.P = r.readData()
 		n = r.readInt()
 		pc.Pcdata = r.pcdata[:n:n]
 		if !isdup {
@@ -392,13 +309,60 @@ overwrite:
 		for i := 0; i < n; i++ {
 			pc.File[i] = r.readSymIndex()
 		}
+		n = r.readInt()
+		pc.InlTree = make([]InlinedCall, n)
+		for i := 0; i < n; i++ {
+			pc.InlTree[i].Parent = r.readInt32()
+			pc.InlTree[i].File = r.readSymIndex()
+			pc.InlTree[i].Line = r.readInt32()
+			pc.InlTree[i].Func = r.readSymIndex()
+		}
 
-		if !isdup {
+		if !dupok {
 			if s.Attr.OnList() {
 				log.Fatalf("symbol %s listed multiple times", s.Name)
 			}
 			s.Attr |= AttrOnList
-			r.ctxt.Textp = append(r.ctxt.Textp, s)
+			r.lib.textp = append(r.lib.textp, s)
+		} else {
+			// there may ba a dup in another package
+			// put into a temp list and add to text later
+			if !isdup {
+				r.lib.dupTextSyms = append(r.lib.dupTextSyms, s)
+			} else {
+				r.lib.dupTextSyms = append(r.lib.dupTextSyms, dup)
+			}
+		}
+	}
+	if s.Type == SDWARFINFO {
+		r.patchDWARFName(s)
+	}
+}
+
+func (r *objReader) patchDWARFName(s *Symbol) {
+	// This is kind of ugly. Really the package name should not
+	// even be included here.
+	if s.Size < 1 || s.P[0] != dwarf.DW_ABRV_FUNCTION {
+		return
+	}
+	e := bytes.IndexByte(s.P, 0)
+	if e == -1 {
+		return
+	}
+	p := bytes.Index(s.P[:e], emptyPkg)
+	if p == -1 {
+		return
+	}
+	pkgprefix := []byte(objabi.PathToPrefix(r.lib.Pkg) + ".")
+	patched := bytes.Replace(s.P[:e], emptyPkg, pkgprefix, -1)
+
+	s.P = append(patched, s.P[e:]...)
+	delta := int64(len(s.P)) - s.Size
+	s.Size = int64(len(s.P))
+	for i := range s.R {
+		r := &s.R[i]
+		if r.Off > int32(e) {
+			r.Off += int32(delta)
 		}
 	}
 }
@@ -417,12 +381,12 @@ func (r *objReader) readRef() {
 	name := r.readSymName()
 	v := r.readInt()
 	if v != 0 && v != 1 {
-		log.Fatalf("invalid symbol version %d", v)
+		log.Fatalf("invalid symbol version for %q: %d", name, v)
 	}
 	if v == 1 {
-		v = r.ctxt.Version
+		v = r.localSymVersion
 	}
-	s := Linklookup(r.ctxt, name, v)
+	s := r.ctxt.Syms.Lookup(name, v)
 	r.refs = append(r.refs, s)
 
 	if s == nil || v != 0 {
@@ -433,7 +397,7 @@ func (r *objReader) readRef() {
 		if err != nil {
 			log.Panicf("failed to parse $-symbol %s: %v", s.Name, err)
 		}
-		s.Type = obj.SRODATA
+		s.Type = SRODATA
 		s.Attr |= AttrLocal
 		switch s.Name[:5] {
 		case "$f32.":
@@ -522,7 +486,7 @@ func (r *objReader) readData() []byte {
 
 // readSymName reads a symbol name, replacing all "". with pkg.
 func (r *objReader) readSymName() string {
-	pkg := r.pkg
+	pkg := objabi.PathToPrefix(r.lib.Pkg)
 	n := r.readInt()
 	if n == 0 {
 		r.readInt64()
@@ -553,7 +517,7 @@ func (r *objReader) readSymName() string {
 			}
 			r.rdBuf = adjName[:0] // in case 2*n wasn't enough
 
-			if DynlinkingGo() {
+			if Buildmode == BuildmodeShared || *FlagLinkshared {
 				// These types are included in the symbol
 				// table when dynamically linking. To keep
 				// binary size down, we replace the names
@@ -564,8 +528,10 @@ func (r *objReader) readSymName() string {
 				// the symbol is not decodable.
 				//
 				// Leave type.runtime. symbols alone, because
-				// other parts of the linker manipulates them.
-				if strings.HasPrefix(s, "type.") && !strings.HasPrefix(s, "type.runtime.") {
+				// other parts of the linker manipulates them,
+				// and also symbols whose names would not be
+				// shortened by this process.
+				if len(s) > 14 && strings.HasPrefix(s, "type.") && !strings.HasPrefix(s, "type.runtime.") {
 					hash := sha1.Sum([]byte(s))
 					prefix := "type."
 					if s[5] == '.' {
@@ -584,7 +550,7 @@ func (r *objReader) readSymName() string {
 }
 
 // Reads the index of a symbol reference and resolves it to a symbol
-func (r *objReader) readSymIndex() *LSym {
+func (r *objReader) readSymIndex() *Symbol {
 	i := r.readInt()
 	return r.refs[i]
 }

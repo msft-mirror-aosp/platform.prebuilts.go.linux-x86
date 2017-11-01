@@ -96,6 +96,11 @@ func cgoLookupPort(ctx context.Context, network, service string) (port int, err 
 
 func cgoLookupServicePort(hints *C.struct_addrinfo, network, service string) (port int, err error) {
 	s := C.CString(service)
+	// Lowercase the service name in the C-allocated memory.
+	for i := 0; i < len(service); i++ {
+		bp := (*byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + uintptr(i)))
+		*bp = lowerASCII(*bp)
+	}
 	var res *C.struct_addrinfo
 	defer C.free(unsafe.Pointer(s))
 	gerrno, err := C.getaddrinfo(nil, s, hints, &res)
@@ -187,7 +192,7 @@ func cgoLookupIPCNAME(name string) (addrs []IPAddr, cname string, err error) {
 			addrs = append(addrs, addr)
 		case C.AF_INET6:
 			sa := (*syscall.RawSockaddrInet6)(unsafe.Pointer(r.ai_addr))
-			addr := IPAddr{IP: copyIP(sa.Addr[:]), Zone: zoneToString(int(sa.Scope_id))}
+			addr := IPAddr{IP: copyIP(sa.Addr[:]), Zone: zoneCache.name(int(sa.Scope_id))}
 			addrs = append(addrs, addr)
 		}
 	}
@@ -312,7 +317,7 @@ func cgoSockaddr(ip IP, zone string) (*C.struct_sockaddr, C.socklen_t) {
 		return cgoSockaddrInet4(ip4), C.socklen_t(syscall.SizeofSockaddrInet4)
 	}
 	if ip6 := ip.To16(); ip6 != nil {
-		return cgoSockaddrInet6(ip6, zoneToInt(zone)), C.socklen_t(syscall.SizeofSockaddrInet6)
+		return cgoSockaddrInet6(ip6, zoneCache.index(zone)), C.socklen_t(syscall.SizeofSockaddrInet6)
 	}
 	return nil, 0
 }

@@ -198,6 +198,10 @@ func main() {
 		goarch = runtime.GOARCH
 	}
 
+	// Frame pointer is on by default now.
+	// golang.org/issue/18317.
+	return
+
 	version, err := exec.Command("go", "tool", "compile", "-V").Output()
 	if err != nil {
 		bug()
@@ -261,6 +265,8 @@ TestCases:
 		var buf bytes.Buffer
 		ptrSize := 4
 		switch goarch {
+		case "mips", "mipsle":
+			fmt.Fprintf(&buf, "#define CALL JAL\n#define REGISTER (R0)\n")
 		case "mips64", "mips64le":
 			ptrSize = 8
 			fmt.Fprintf(&buf, "#define CALL JAL\n#define REGISTER (R0)\n")
@@ -305,13 +311,13 @@ TestCases:
 				// Instead of rewriting the test cases above, adjust
 				// the first stack frame to use up the extra bytes.
 				if i == 0 {
-					size += (720 - 128) - 128
+					size += (880 - 128) - 128
 					// Noopt builds have a larger stackguard.
 					// See ../src/cmd/dist/buildruntime.go:stackGuardMultiplier
-					// This increase is included in obj.StackGuard
+					// This increase is included in objabi.StackGuard
 					for _, s := range strings.Split(os.Getenv("GO_GCFLAGS"), " ") {
 						if s == "-N" {
-							size += 720
+							size += 880
 						}
 					}
 				}

@@ -4,6 +4,11 @@
 
 package ssa
 
+import (
+	"cmd/compile/internal/types"
+	"cmd/internal/src"
+)
+
 // dse does dead-store elimination on the Function.
 // Dead stores are those which are unconditionally followed by
 // another store to the same location, with no intervening load.
@@ -14,8 +19,7 @@ func dse(f *Func) {
 	defer f.retSparseSet(loadUse)
 	storeUse := f.newSparseSet(f.NumValues())
 	defer f.retSparseSet(storeUse)
-	shadowed := f.newSparseSet(f.NumValues())
-	defer f.retSparseSet(shadowed)
+	shadowed := newSparseMap(f.NumValues()) // TODO: cache
 	for _, b := range f.Blocks {
 		// Find all the stores in this block. Categorize their uses:
 		//  loadUse contains stores which are used by a subsequent load.
@@ -59,7 +63,7 @@ func dse(f *Func) {
 				continue
 			}
 			if last != nil {
-				b.Fatalf("two final stores - simultaneous live stores %s %s", last, v)
+				b.Fatalf("two final stores - simultaneous live stores %s %s", last.LongString(), v.LongString())
 			}
 			last = v
 		}
@@ -81,17 +85,23 @@ func dse(f *Func) {
 			shadowed.clear()
 		}
 		if v.Op == OpStore || v.Op == OpZero {
-			if shadowed.contains(v.Args[0].ID) {
+			var sz int64
+			if v.Op == OpStore {
+				sz = v.Aux.(*types.Type).Size()
+			} else { // OpZero
+				sz = v.AuxInt
+			}
+			if shadowedSize := int64(shadowed.get(v.Args[0].ID)); shadowedSize != -1 && shadowedSize >= sz {
 				// Modify store into a copy
 				if v.Op == OpStore {
 					// store addr value mem
 					v.SetArgs1(v.Args[2])
 				} else {
 					// zero addr mem
-					sz := v.Args[0].Type.ElemType().Size()
-					if v.AuxInt != sz {
+					typesz := v.Args[0].Type.ElemType().Size()
+					if sz != typesz {
 						f.Fatalf("mismatched zero/store sizes: %d and %d [%s]",
-							v.AuxInt, sz, v.LongString())
+							sz, typesz, v.LongString())
 					}
 					v.SetArgs1(v.Args[1])
 				}
@@ -99,12 +109,19 @@ func dse(f *Func) {
 				v.AuxInt = 0
 				v.Op = OpCopy
 			} else {
-				shadowed.add(v.Args[0].ID)
+				if sz > 0x7fffffff { // work around sparseMap's int32 value type
+					sz = 0x7fffffff
+				}
+				shadowed.set(v.Args[0].ID, int32(sz), src.NoXPos)
 			}
 		}
 		// walk to previous store
 		if v.Op == OpPhi {
-			continue // At start of block.  Move on to next block.
+			// At start of block.  Move on to next block.
+			// The memory phi, if it exists, is always
+			// the first logical store in the block.
+			// (Even if it isn't the first in the current b.Values order.)
+			continue
 		}
 		for _, a := range v.Args {
 			if a.Block == b && a.Type.IsMemory() {

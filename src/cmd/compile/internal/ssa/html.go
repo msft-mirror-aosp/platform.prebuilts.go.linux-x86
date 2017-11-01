@@ -6,6 +6,7 @@ package ssa
 
 import (
 	"bytes"
+	"cmd/internal/src"
 	"fmt"
 	"html"
 	"io"
@@ -14,15 +15,15 @@ import (
 
 type HTMLWriter struct {
 	Logger
-	*os.File
+	w io.WriteCloser
 }
 
 func NewHTMLWriter(path string, logger Logger, funcname string) *HTMLWriter {
 	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		logger.Fatalf(0, "%v", err)
+		logger.Fatalf(src.NoXPos, "%v", err)
 	}
-	html := HTMLWriter{File: out, Logger: logger}
+	html := HTMLWriter{w: out, Logger: logger}
 	html.start(funcname)
 	return &html
 }
@@ -141,13 +142,13 @@ dd.ssa-prog {
 <script type="text/javascript">
 // ordered list of all available highlight colors
 var highlights = [
-    "highlight-yellow",
     "highlight-aquamarine",
     "highlight-coral",
     "highlight-lightpink",
     "highlight-lightsteelblue",
     "highlight-palegreen",
-    "highlight-lightgray"
+    "highlight-lightgray",
+    "highlight-yellow"
 ];
 
 // state: which value is highlighted this color?
@@ -263,8 +264,6 @@ function toggle_visibility(id) {
 </script>
 
 </head>`)
-	// TODO: Add javascript click handlers for blocks
-	// to outline that block across all phases
 	w.WriteString("<body>")
 	w.WriteString("<h1>")
 	w.WriteString(html.EscapeString(name))
@@ -274,9 +273,10 @@ function toggle_visibility(id) {
 <div id="help">
 
 <p>
-Click on a value or block to toggle highlighting of that value/block and its uses.
-Values and blocks are highlighted by ID, which may vary across passes.
-(TODO: Fix this.)
+Click on a value or block to toggle highlighting of that value/block
+and its uses.  (Values and blocks are highlighted by ID, and IDs of
+dead items may be reused, so not all highlights necessarily correspond
+to the clicked item.)
 </p>
 
 <p>
@@ -297,11 +297,11 @@ func (w *HTMLWriter) Close() {
 	if w == nil {
 		return
 	}
-	w.WriteString("</tr>")
-	w.WriteString("</table>")
-	w.WriteString("</body>")
-	w.WriteString("</html>")
-	w.File.Close()
+	io.WriteString(w.w, "</tr>")
+	io.WriteString(w.w, "</table>")
+	io.WriteString(w.w, "</body>")
+	io.WriteString(w.w, "</html>")
+	w.w.Close()
 }
 
 // WriteFunc writes f in a column headed by title.
@@ -326,14 +326,14 @@ func (w *HTMLWriter) WriteColumn(title string, html string) {
 }
 
 func (w *HTMLWriter) Printf(msg string, v ...interface{}) {
-	if _, err := fmt.Fprintf(w.File, msg, v...); err != nil {
-		w.Fatalf(0, "%v", err)
+	if _, err := fmt.Fprintf(w.w, msg, v...); err != nil {
+		w.Fatalf(src.NoXPos, "%v", err)
 	}
 }
 
 func (w *HTMLWriter) WriteString(s string) {
-	if _, err := w.File.WriteString(s); err != nil {
-		w.Fatalf(0, "%v", err)
+	if _, err := io.WriteString(w.w, s); err != nil {
+		w.Fatalf(src.NoXPos, "%v", err)
 	}
 }
 
@@ -341,7 +341,8 @@ func (v *Value) HTML() string {
 	// TODO: Using the value ID as the class ignores the fact
 	// that value IDs get recycled and that some values
 	// are transmuted into other values.
-	return fmt.Sprintf("<span class=\"%[1]s ssa-value\">%[1]s</span>", v.String())
+	s := v.String()
+	return fmt.Sprintf("<span class=\"%s ssa-value\">%s</span>", s, s)
 }
 
 func (v *Value) LongHTML() string {
@@ -359,7 +360,7 @@ func (v *Value) LongHTML() string {
 	}
 	r := v.Block.Func.RegAlloc
 	if int(v.ID) < len(r) && r[v.ID] != nil {
-		s += " : " + r[v.ID].Name()
+		s += " : " + html.EscapeString(r[v.ID].Name())
 	}
 	s += "</span>"
 	return s
@@ -369,7 +370,8 @@ func (b *Block) HTML() string {
 	// TODO: Using the value ID as the class ignores the fact
 	// that value IDs get recycled and that some values
 	// are transmuted into other values.
-	return fmt.Sprintf("<span class=\"%[1]s ssa-block\">%[1]s</span>", html.EscapeString(b.String()))
+	s := html.EscapeString(b.String())
+	return fmt.Sprintf("<span class=\"%s ssa-block\">%s</span>", s, s)
 }
 
 func (b *Block) LongHTML() string {
@@ -467,5 +469,9 @@ func (p htmlFuncPrinter) endDepCycle() {
 }
 
 func (p htmlFuncPrinter) named(n LocalSlot, vals []*Value) {
-	// TODO
+	fmt.Fprintf(p.w, "<li>name %s: ", n.Name())
+	for _, val := range vals {
+		fmt.Fprintf(p.w, "%s ", val.HTML())
+	}
+	fmt.Fprintf(p.w, "</li>")
 }
