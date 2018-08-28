@@ -2,6 +2,6 @@
 
 package sys
 
-const TheVersion = `go1.10`
+const TheVersion = `go1.11`
 const Goexperiment = ``
 const StackGuardMultiplier = 1
