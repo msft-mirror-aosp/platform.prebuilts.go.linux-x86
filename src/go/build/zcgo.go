@@ -25,6 +25,7 @@ var cgoEnabled = map[string]bool{
 	"linux/mips64le": true,
 	"linux/mipsle": true,
 	"linux/ppc64le": true,
+	"linux/riscv64": true,
 	"linux/s390x": true,
 	"netbsd/386": true,
 	"netbsd/amd64": true,
