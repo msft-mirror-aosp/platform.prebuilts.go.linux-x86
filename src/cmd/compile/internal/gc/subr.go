@@ -159,7 +159,9 @@ func yyerror(format string, args ...interface{}) {
 }
 
 func Warn(fmt_ string, args ...interface{}) {
-	Warnl(lineno, fmt_, args...)
+	adderr(lineno, fmt_, args...)
+
+	hcrash()
 }
 
 func Warnl(line src.XPos, fmt_ string, args ...interface{}) {
@@ -304,20 +306,20 @@ func nodl(pos src.XPos, op Op, nleft, nright *Node) *Node {
 	switch op {
 	case OCLOSURE, ODCLFUNC:
 		var x struct {
-			n Node
-			f Func
+			Node
+			Func
 		}
-		n = &x.n
-		n.Func = &x.f
+		n = &x.Node
+		n.Func = &x.Func
 	case ONAME:
 		Fatalf("use newname instead")
 	case OLABEL, OPACK:
 		var x struct {
-			n Node
-			m Name
+			Node
+			Name
 		}
-		n = &x.n
-		n.Name = &x.m
+		n = &x.Node
+		n.Name = &x.Name
 	default:
 		n = new(Node)
 	}
@@ -345,13 +347,13 @@ func newnamel(pos src.XPos, s *types.Sym) *Node {
 	}
 
 	var x struct {
-		n Node
-		m Name
-		p Param
+		Node
+		Name
+		Param
 	}
-	n := &x.n
-	n.Name = &x.m
-	n.Name.Param = &x.p
+	n := &x.Node
+	n.Name = &x.Name
+	n.Name.Param = &x.Param
 
 	n.Op = ONAME
 	n.Pos = pos
@@ -414,6 +416,12 @@ func nodintconst(v int64) *Node {
 	return nodlit(Val{u})
 }
 
+func nodfltconst(v *Mpflt) *Node {
+	u := newMpflt()
+	u.Set(v)
+	return nodlit(Val{u})
+}
+
 func nodnil() *Node {
 	return nodlit(Val{new(NilVal)})
 }
@@ -427,9 +435,10 @@ func nodstr(s string) *Node {
 }
 
 // treecopy recursively copies n, with the exception of
-// ONAME, OLITERAL, OTYPE, and ONONAME leaves.
-// If pos.IsKnown(), it sets the source position of newly
-// allocated nodes to pos.
+// ONAME, OLITERAL, OTYPE, and non-iota ONONAME leaves.
+// Copies of iota ONONAME nodes are assigned the current
+// value of iota_. If pos.IsKnown(), it sets the source
+// position of newly allocated nodes to pos.
 func treecopy(n *Node, pos src.XPos) *Node {
 	if n == nil {
 		return nil
@@ -526,6 +535,26 @@ func methtype(t *types.Type) *types.Type {
 		return t
 	}
 	return nil
+}
+
+// Are t1 and t2 equal struct types when field names are ignored?
+// For deciding whether the result struct from g can be copied
+// directly when compiling f(g()).
+func eqtypenoname(t1 *types.Type, t2 *types.Type) bool {
+	if t1 == nil || t2 == nil || !t1.IsStruct() || !t2.IsStruct() {
+		return false
+	}
+
+	if t1.NumFields() != t2.NumFields() {
+		return false
+	}
+	for i, f1 := range t1.FieldSlice() {
+		f2 := t2.Field(i)
+		if !types.Identical(f1.Type, f2.Type) {
+			return false
+		}
+	}
+	return true
 }
 
 // Is type src assignment compatible to type dst?
@@ -1171,7 +1200,7 @@ func lookdot0(s *types.Sym, t *types.Type, save **types.Field, ignorecase bool) 
 	c := 0
 	if u.IsStruct() || u.IsInterface() {
 		for _, f := range u.Fields().Slice() {
-			if f.Sym == s || (ignorecase && f.IsMethod() && strings.EqualFold(f.Sym.Name, s.Name)) {
+			if f.Sym == s || (ignorecase && f.Type.Etype == TFUNC && f.Type.Recv() != nil && strings.EqualFold(f.Sym.Name, s.Name)) {
 				if save != nil {
 					*save = f
 				}
@@ -1411,7 +1440,7 @@ func expandmeth(t *types.Type) {
 		}
 
 		// dotpath may have dug out arbitrary fields, we only want methods.
-		if !f.IsMethod() {
+		if f.Type.Etype != TFUNC || f.Type.Recv() == nil {
 			continue
 		}
 
@@ -1572,7 +1601,7 @@ func genwrapper(rcvr *types.Type, method *types.Field, newnam *types.Sym) {
 	if rcvr.IsPtr() && rcvr.Elem() == method.Type.Recv().Type && rcvr.Elem().Sym != nil {
 		inlcalls(fn)
 	}
-	escapeImpl()([]*Node{fn}, false)
+	escAnalyze([]*Node{fn}, false)
 
 	Curfn = nil
 	funccompile(fn)
@@ -1622,7 +1651,7 @@ func ifacelookdot(s *types.Sym, t *types.Type, ignorecase bool) (m *types.Field,
 		}
 	}
 
-	if !m.IsMethod() {
+	if m.Type.Etype != TFUNC || m.Type.Recv() == nil {
 		yyerror("%v.%v is a field, not a method", t, s)
 		return nil, followptr
 	}
@@ -1818,6 +1847,18 @@ func isbadimport(path string, allowSpace bool) bool {
 	}
 
 	return false
+}
+
+func checknil(x *Node, init *Nodes) {
+	x = walkexpr(x, nil) // caller has not done this yet
+	if x.Type.IsInterface() {
+		x = nod(OITAB, x, nil)
+		x = typecheck(x, ctxExpr)
+	}
+
+	n := nod(OCHECKNIL, x, nil)
+	n.SetTypecheck(1)
+	init.Append(n)
 }
 
 // Can this type be stored directly in an interface word?

@@ -145,17 +145,16 @@ func TestFuncAddress(t *testing.T) {
 
 				isFuncSym := strings.HasSuffix(test.input, "(SB)") &&
 					// Ignore static symbols.
-					!strings.Contains(test.input, "<>")
+					!strings.Contains(test.input, "<>") &&
+					// Ignore symbols with offsets.
+					!strings.Contains(test.input, "+")
 
 				wantName := ""
 				if isFuncSym {
-					// Strip $|* and (SB) and +Int.
+					// Strip $|* and (SB).
 					wantName = test.output[:len(test.output)-4]
 					if strings.HasPrefix(wantName, "$") || strings.HasPrefix(wantName, "*") {
 						wantName = wantName[1:]
-					}
-					if i := strings.Index(wantName, "+"); i >= 0 {
-						wantName = wantName[:i]
 					}
 				}
 				if ok != isFuncSym || name != wantName {

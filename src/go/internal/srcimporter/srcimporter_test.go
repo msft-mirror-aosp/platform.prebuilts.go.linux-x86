@@ -81,10 +81,10 @@ func TestImportStdLib(t *testing.T) {
 		t.Skip("no source code available")
 	}
 
-	if testing.Short() && testenv.Builder() == "" {
-		t.Skip("skipping in -short mode")
-	}
 	dt := maxTime
+	if testing.Short() && testenv.Builder() == "" {
+		dt = 500 * time.Millisecond
+	}
 	nimports, _ := walkDir(t, "", time.Now().Add(dt)) // installed packages
 	t.Logf("tested %d imports", nimports)
 }
@@ -99,7 +99,7 @@ var importedObjectTests = []struct {
 	{"math.Pi", "const Pi untyped float"},
 	{"math.Sin", "func Sin(x float64) float64"},
 	{"math/big.Int", "type Int struct{neg bool; abs nat}"},
-	{"golang.org/x/text/unicode/norm.MaxSegmentSize", "const MaxSegmentSize untyped int"},
+	{"internal/x/text/unicode/norm.MaxSegmentSize", "const MaxSegmentSize untyped int"},
 }
 
 func TestImportedTypes(t *testing.T) {
@@ -108,12 +108,12 @@ func TestImportedTypes(t *testing.T) {
 	}
 
 	for _, test := range importedObjectTests {
-		i := strings.LastIndex(test.name, ".")
-		if i < 0 {
+		s := strings.Split(test.name, ".")
+		if len(s) != 2 {
 			t.Fatal("invalid test data format")
 		}
-		importPath := test.name[:i]
-		objName := test.name[i+1:]
+		importPath := s[0]
+		objName := s[1]
 
 		pkg, err := importer.ImportFrom(importPath, ".", 0)
 		if err != nil {

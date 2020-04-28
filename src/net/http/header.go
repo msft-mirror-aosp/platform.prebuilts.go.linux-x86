@@ -78,23 +78,12 @@ func (h Header) write(w io.Writer, trace *httptrace.ClientTrace) error {
 	return h.writeSubset(w, nil, trace)
 }
 
-// Clone returns a copy of h or nil if h is nil.
-func (h Header) Clone() Header {
-	if h == nil {
-		return nil
-	}
-
-	// Find total number of values.
-	nv := 0
-	for _, vv := range h {
-		nv += len(vv)
-	}
-	sv := make([]string, nv) // shared backing array for headers' values
+func (h Header) clone() Header {
 	h2 := make(Header, len(h))
 	for k, vv := range h {
-		n := copy(sv, vv)
-		h2[k] = sv[:n:n]
-		sv = sv[n:]
+		vv2 := make([]string, len(vv))
+		copy(vv2, vv)
+		h2[k] = vv2
 	}
 	return h2
 }

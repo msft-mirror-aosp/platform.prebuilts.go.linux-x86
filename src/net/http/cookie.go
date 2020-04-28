@@ -48,7 +48,6 @@ const (
 	SameSiteDefaultMode SameSite = iota + 1
 	SameSiteLaxMode
 	SameSiteStrictMode
-	SameSiteNoneMode
 )
 
 // readSetCookies parses all "Set-Cookie" values from
@@ -106,8 +105,6 @@ func readSetCookies(h Header) []*Cookie {
 					c.SameSite = SameSiteLaxMode
 				case "strict":
 					c.SameSite = SameSiteStrictMode
-				case "none":
-					c.SameSite = SameSiteNoneMode
 				default:
 					c.SameSite = SameSiteDefaultMode
 				}
@@ -171,12 +168,8 @@ func (c *Cookie) String() string {
 	if c == nil || !isCookieNameValid(c.Name) {
 		return ""
 	}
-	// extraCookieLength derived from typical length of cookie attributes
-	// see RFC 6265 Sec 4.1.
-	const extraCookieLength = 110
 	var b strings.Builder
-	b.Grow(len(c.Name) + len(c.Value) + len(c.Domain) + len(c.Path) + extraCookieLength)
-	b.WriteString(c.Name)
+	b.WriteString(sanitizeCookieName(c.Name))
 	b.WriteRune('=')
 	b.WriteString(sanitizeCookieValue(c.Value))
 
@@ -220,8 +213,6 @@ func (c *Cookie) String() string {
 	switch c.SameSite {
 	case SameSiteDefaultMode:
 		b.WriteString("; SameSite")
-	case SameSiteNoneMode:
-		b.WriteString("; SameSite=None")
 	case SameSiteLaxMode:
 		b.WriteString("; SameSite=Lax")
 	case SameSiteStrictMode:
@@ -235,28 +226,25 @@ func (c *Cookie) String() string {
 //
 // if filter isn't empty, only cookies of that name are returned
 func readCookies(h Header, filter string) []*Cookie {
-	lines := h["Cookie"]
-	if len(lines) == 0 {
+	lines, ok := h["Cookie"]
+	if !ok {
 		return []*Cookie{}
 	}
 
-	cookies := make([]*Cookie, 0, len(lines)+strings.Count(lines[0], ";"))
+	cookies := []*Cookie{}
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-
-		var part string
-		for len(line) > 0 { // continue since we have rest
-			if splitIndex := strings.Index(line, ";"); splitIndex > 0 {
-				part, line = line[:splitIndex], line[splitIndex+1:]
-			} else {
-				part, line = line, ""
-			}
-			part = strings.TrimSpace(part)
-			if len(part) == 0 {
+		parts := strings.Split(strings.TrimSpace(line), ";")
+		if len(parts) == 1 && parts[0] == "" {
+			continue
+		}
+		// Per-line attributes
+		for i := 0; i < len(parts); i++ {
+			parts[i] = strings.TrimSpace(parts[i])
+			if len(parts[i]) == 0 {
 				continue
 			}
-			name, val := part, ""
-			if j := strings.Index(part, "="); j >= 0 {
+			name, val := parts[i], ""
+			if j := strings.Index(name, "="); j >= 0 {
 				name, val = name[:j], name[j+1:]
 			}
 			if !isCookieNameValid(name) {

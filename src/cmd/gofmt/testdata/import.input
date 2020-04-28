@@ -8,9 +8,6 @@ import (
 	"io"
 )
 
-import("fmt"
-"math")
-
 import (
 	"fmt"
 

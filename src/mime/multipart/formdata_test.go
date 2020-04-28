@@ -176,11 +176,7 @@ func (r *failOnReadAfterErrorReader) Read(p []byte) (n int, err error) {
 // TestReadForm_NonFileMaxMemory asserts that the ReadForm maxMemory limit is applied
 // while processing non-file form data as well as file form data.
 func TestReadForm_NonFileMaxMemory(t *testing.T) {
-	n := 10<<20 + 25
-	if testing.Short() {
-		n = 10<<10 + 25
-	}
-	largeTextValue := strings.Repeat("1", n)
+	largeTextValue := strings.Repeat("1", (10<<20)+25)
 	message := `--MyBoundary
 Content-Disposition: form-data; name="largetext"
 
@@ -200,9 +196,6 @@ Content-Disposition: form-data; name="largetext"
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.maxMemory == 0 && testing.Short() {
-				t.Skip("skipping in -short mode")
-			}
 			b := strings.NewReader(testBody)
 			r := NewReader(b, boundary)
 			f, err := r.ReadForm(tc.maxMemory)

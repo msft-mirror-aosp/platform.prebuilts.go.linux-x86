@@ -15,7 +15,6 @@ import (
 	"log"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 )
 
@@ -34,8 +33,6 @@ type objWriter struct {
 	nAutom    int
 	nFuncdata int
 	nFile     int
-
-	pkgpath string // the package import path (escaped), "" if unknown
 }
 
 func (w *objWriter) addLengths(s *LSym) {
@@ -74,16 +71,15 @@ func (w *objWriter) writeLengths() {
 	w.writeInt(int64(w.nFile))
 }
 
-func newObjWriter(ctxt *Link, b *bufio.Writer, pkgpath string) *objWriter {
+func newObjWriter(ctxt *Link, b *bufio.Writer) *objWriter {
 	return &objWriter{
-		ctxt:    ctxt,
-		wr:      b,
-		pkgpath: objabi.PathToPrefix(pkgpath),
+		ctxt: ctxt,
+		wr:   b,
 	}
 }
 
-func WriteObjFile(ctxt *Link, b *bufio.Writer, pkgpath string) {
-	w := newObjWriter(ctxt, b, pkgpath)
+func WriteObjFile(ctxt *Link, b *bufio.Writer) {
+	w := newObjWriter(ctxt, b)
 
 	// Magic header
 	w.wr.WriteString("\x00go112ld")
@@ -108,7 +104,7 @@ func WriteObjFile(ctxt *Link, b *bufio.Writer, pkgpath string) {
 		// As they are created during Progedit, two symbols can be switched between
 		// two different compilations. Therefore, BuildID will be different.
 		// TODO: find a better place and optimize to only sort TOC symbols
-		sort.Slice(ctxt.Data, func(i, j int) bool {
+		SortSlice(ctxt.Data, func(i, j int) bool {
 			return ctxt.Data[i].Name < ctxt.Data[j].Name
 		})
 	}
@@ -174,10 +170,6 @@ func (w *objWriter) writeRef(s *LSym, isPath bool) {
 	w.wr.WriteByte(symPrefix)
 	if isPath {
 		w.writeString(filepath.ToSlash(s.Name))
-	} else if w.pkgpath != "" {
-		// w.pkgpath is already escaped.
-		n := strings.Replace(s.Name, "\"\".", w.pkgpath+".", -1)
-		w.writeString(n)
 	} else {
 		w.writeString(s.Name)
 	}
@@ -238,9 +230,6 @@ func (w *objWriter) writeSymDebug(s *LSym) {
 	if s.NoSplit() {
 		fmt.Fprintf(ctxt.Bso, "nosplit ")
 	}
-	if s.TopFrame() {
-		fmt.Fprintf(ctxt.Bso, "topframe ")
-	}
 	fmt.Fprintf(ctxt.Bso, "size=%d", s.Size)
 	if s.Type == objabi.STEXT {
 		fmt.Fprintf(ctxt.Bso, " args=%#x locals=%#x", uint64(s.Func.Args), uint64(s.Func.Locals))
@@ -263,7 +252,7 @@ func (w *objWriter) writeSymDebug(s *LSym) {
 	for i := 0; i < len(s.P); i += 16 {
 		fmt.Fprintf(ctxt.Bso, "\t%#04x", uint(i))
 		j := i
-		for ; j < i+16 && j < len(s.P); j++ {
+		for j = i; j < i+16 && j < len(s.P); j++ {
 			fmt.Fprintf(ctxt.Bso, " %02x", s.P[j])
 		}
 		for ; j < i+16; j++ {
@@ -352,9 +341,6 @@ func (w *objWriter) writeSym(s *LSym) {
 	}
 	if ctxt.Flag_shared {
 		flags |= 1 << 3
-	}
-	if s.TopFrame() {
-		flags |= 1 << 4
 	}
 	w.writeInt(flags)
 	w.writeInt(int64(len(s.Func.Autom)))
@@ -479,11 +465,6 @@ func (c dwCtxt) AddAddress(s dwarf.Sym, data interface{}, value int64) {
 		ls.WriteInt(c.Link, ls.Size, size, value)
 	}
 }
-func (c dwCtxt) AddCURelativeAddress(s dwarf.Sym, data interface{}, value int64) {
-	ls := s.(*LSym)
-	rsym := data.(*LSym)
-	ls.WriteCURelativeAddr(c.Link, ls.Size, rsym, value)
-}
 func (c dwCtxt) AddSectionOffset(s dwarf.Sym, size int, t interface{}, ofs int64) {
 	panic("should be used only in the linker")
 }
@@ -591,19 +572,18 @@ func (ctxt *Link) populateDWARF(curfn interface{}, s *LSym, myimportpath string)
 	dwctxt := dwCtxt{ctxt}
 	filesym := ctxt.fileSymbol(s)
 	fnstate := &dwarf.FnState{
-		Name:          s.Name,
-		Importpath:    myimportpath,
-		Info:          info,
-		Filesym:       filesym,
-		Loc:           loc,
-		Ranges:        ranges,
-		Absfn:         absfunc,
-		StartPC:       s,
-		Size:          s.Size,
-		External:      !s.Static(),
-		Scopes:        scopes,
-		InlCalls:      inlcalls,
-		UseBASEntries: ctxt.UseBASEntries,
+		Name:       s.Name,
+		Importpath: myimportpath,
+		Info:       info,
+		Filesym:    filesym,
+		Loc:        loc,
+		Ranges:     ranges,
+		Absfn:      absfunc,
+		StartPC:    s,
+		Size:       s.Size,
+		External:   !s.Static(),
+		Scopes:     scopes,
+		InlCalls:   inlcalls,
 	}
 	if absfunc != nil {
 		err = dwarf.PutAbstractFunc(dwctxt, fnstate)
@@ -644,14 +624,13 @@ func (ctxt *Link) DwarfAbstractFunc(curfn interface{}, s *LSym, myimportpath str
 	dwctxt := dwCtxt{ctxt}
 	filesym := ctxt.fileSymbol(s)
 	fnstate := dwarf.FnState{
-		Name:          s.Name,
-		Importpath:    myimportpath,
-		Info:          absfn,
-		Filesym:       filesym,
-		Absfn:         absfn,
-		External:      !s.Static(),
-		Scopes:        scopes,
-		UseBASEntries: ctxt.UseBASEntries,
+		Name:       s.Name,
+		Importpath: myimportpath,
+		Info:       absfn,
+		Filesym:    filesym,
+		Absfn:      absfn,
+		External:   !s.Static(),
+		Scopes:     scopes,
 	}
 	if err := dwarf.PutAbstractFunc(dwctxt, &fnstate); err != nil {
 		ctxt.Diag("emitting DWARF for %s failed: %v", s.Name, err)

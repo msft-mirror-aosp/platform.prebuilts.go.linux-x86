@@ -1421,7 +1421,8 @@ func encFuzzDec(rng *rand.Rand, in interface{}) error {
 // This does some "fuzz testing" by attempting to decode a sequence of random bytes.
 func TestFuzz(t *testing.T) {
 	if !*doFuzzTests {
-		t.Skipf("disabled; run with -gob.fuzz to enable")
+		t.Logf("disabled; run with -gob.fuzz to enable")
+		return
 	}
 
 	// all possible inputs
@@ -1440,7 +1441,8 @@ func TestFuzz(t *testing.T) {
 
 func TestFuzzRegressions(t *testing.T) {
 	if !*doFuzzTests {
-		t.Skipf("disabled; run with -gob.fuzz to enable")
+		t.Logf("disabled; run with -gob.fuzz to enable")
+		return
 	}
 
 	// An instance triggering a type name of length ~102 GB.
@@ -1463,10 +1465,6 @@ func testFuzz(t *testing.T, seed int64, n int, input ...interface{}) {
 // TestFuzzOneByte tries to decode corrupted input sequences
 // and checks that no panic occurs.
 func TestFuzzOneByte(t *testing.T) {
-	if !*doFuzzTests {
-		t.Skipf("disabled; run with -gob.fuzz to enable")
-	}
-
 	buf := new(bytes.Buffer)
 	Register(OnTheFly{})
 	dt := newDT()

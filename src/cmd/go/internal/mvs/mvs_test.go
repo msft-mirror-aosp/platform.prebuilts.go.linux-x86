@@ -5,7 +5,6 @@
 package mvs
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -29,7 +28,7 @@ D5: E2
 G1: C4
 A2: B1 C4 D4
 build A: A B1 C2 D4 E2 F1
-upgrade* A: A B1 C4 D5 E2 F1 G1
+upgrade* A: A B1 C4 D5 E2 G1
 upgrade A C4: A B1 C4 D4 E2 F1 G1
 downgrade A2 D2: A2 C4 D2
 
@@ -38,7 +37,7 @@ A: B1 C2
 B1: D3
 C2: B2
 B2:
-build A: A B2 C2 D3
+build A: A B2 C2
 
 # Cross-dependency between D and E.
 # No matter how it arises, should get result of merging all build lists via max,
@@ -157,18 +156,7 @@ D1: E2
 E1: D2
 build A: A B C D2 E2
 
-# golang.org/issue/31248:
-# Even though we select X2, the requirement on I1
-# via X1 should be preserved.
-name: cross8
-M: A1 B1
-A1: X1
-B1: X2
-X1: I1
-X2: 
-build M: M A1 B1 I1 X2
-
-# Upgrade from B1 to B2 should not drop the transitive dep on D.
+# Upgrade from B1 to B2 should drop the transitive dep on D.
 name: drop
 A: B1 C1
 B1: D1
@@ -176,14 +164,14 @@ B2:
 C2:
 D2:
 build A: A B1 C1 D1
-upgrade* A: A B2 C2 D2
+upgrade* A: A B2 C2
 
 name: simplify
 A: B1 C1
 B1: C2
 C1: D1
 C2:
-build A: A B1 C2 D1
+build A: A B1 C2
 
 name: up1
 A: B1 C1
@@ -265,9 +253,8 @@ build A: A B1
 upgrade A B2: A B2
 upgrade* A: A B3
 
-# golang.org/issue/29773:
 # Requirements of older versions of the target
-# must be carried over.
+# must not be carried over.
 name: cycle2
 A: B1
 A1: C1
@@ -277,8 +264,8 @@ B2: A2
 C1: A2
 C2:
 D2:
-build A: A B1 C1 D1
-upgrade* A: A B2 C2 D2
+build A: A B1
+upgrade* A: A B2
 
 # Requirement minimization.
 
@@ -295,14 +282,6 @@ H1: G1
 req A: G1
 req A G: G1
 req A H: H1
-
-name: req3
-M: A1 B1
-A1: X1
-B1: X2
-X1: I1
-X2: 
-req M: A1 B1
 `
 
 func Test(t *testing.T) {
@@ -467,7 +446,7 @@ func (r reqsMap) Upgrade(m module.Version) (module.Version, error) {
 		}
 	}
 	if u.Path == "" {
-		return module.Version{}, fmt.Errorf("missing module: %v", module.Version{Path: m.Path})
+		return module.Version{}, &MissingModuleError{module.Version{Path: m.Path, Version: ""}}
 	}
 	return u, nil
 }
@@ -488,7 +467,7 @@ func (r reqsMap) Previous(m module.Version) (module.Version, error) {
 func (r reqsMap) Required(m module.Version) ([]module.Version, error) {
 	rr, ok := r[m]
 	if !ok {
-		return nil, fmt.Errorf("missing module: %v", m)
+		return nil, &MissingModuleError{m}
 	}
 	return rr, nil
 }

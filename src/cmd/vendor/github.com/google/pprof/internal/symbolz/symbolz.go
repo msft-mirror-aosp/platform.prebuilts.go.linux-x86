@@ -68,7 +68,7 @@ func Symbolize(p *profile.Profile, force bool, sources plugin.MappingSources, sy
 	return nil
 }
 
-// hasGperftoolsSuffix checks whether path ends with one of the suffixes listed in
+// Check whether path ends with one of the suffixes listed in
 // pprof_remote_servers.html from the gperftools distribution
 func hasGperftoolsSuffix(path string) bool {
 	suffixes := []string{

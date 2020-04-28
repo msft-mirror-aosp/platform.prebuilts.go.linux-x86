@@ -6,8 +6,6 @@ package runtime
 
 import "unsafe"
 
-func nacl_sysinfo(di uint32) // cross-assembly-file call; declared for vet
-
 type sigctxt struct {
 	info *siginfo
 	ctxt unsafe.Pointer

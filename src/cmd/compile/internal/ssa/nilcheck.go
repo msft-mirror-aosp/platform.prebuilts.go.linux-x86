@@ -49,9 +49,7 @@ func nilcheckelim(f *Func) {
 			// value, or a value constructed from an offset of a
 			// non-nil ptr (OpAddPtr) implies it is non-nil
 			// We also assume unsafe pointer arithmetic generates non-nil pointers. See #27180.
-			// We assume that SlicePtr is non-nil because we do a bounds check
-			// before the slice access (and all cap>0 slices have a non-nil ptr). See #30366.
-			if v.Op == OpAddr || v.Op == OpLocalAddr || v.Op == OpAddPtr || v.Op == OpOffPtr || v.Op == OpAdd32 || v.Op == OpAdd64 || v.Op == OpSub32 || v.Op == OpSub64 || v.Op == OpSlicePtr {
+			if v.Op == OpAddr || v.Op == OpLocalAddr || v.Op == OpAddPtr || v.Op == OpOffPtr || v.Op == OpAdd32 || v.Op == OpAdd64 || v.Op == OpSub32 || v.Op == OpSub64 {
 				nonNilValues[v.ID] = true
 			}
 		}
@@ -124,7 +122,7 @@ func nilcheckelim(f *Func) {
 					ptr := v.Args[0]
 					if nonNilValues[ptr.ID] {
 						if v.Pos.IsStmt() == src.PosIsStmt { // Boolean true is a terrible statement boundary.
-							pendingLines.add(v.Pos)
+							pendingLines.add(v.Pos.Line())
 							v.Pos = v.Pos.WithNotStmt()
 						}
 						// This is a redundant explicit nil check.
@@ -141,7 +139,7 @@ func nilcheckelim(f *Func) {
 							f.Warnl(v.Pos, "removed nil check")
 						}
 						if v.Pos.IsStmt() == src.PosIsStmt { // About to lose a statement boundary
-							pendingLines.add(v.Pos)
+							pendingLines.add(v.Pos.Line())
 						}
 						v.reset(OpUnknown)
 						f.freeValue(v)
@@ -154,15 +152,15 @@ func nilcheckelim(f *Func) {
 					work = append(work, bp{op: ClearPtr, ptr: ptr})
 					fallthrough // a non-eliminated nil check might be a good place for a statement boundary.
 				default:
-					if pendingLines.contains(v.Pos) && v.Pos.IsStmt() != src.PosNotStmt {
+					if pendingLines.contains(v.Pos.Line()) && v.Pos.IsStmt() != src.PosNotStmt {
 						v.Pos = v.Pos.WithIsStmt()
-						pendingLines.remove(v.Pos)
+						pendingLines.remove(v.Pos.Line())
 					}
 				}
 			}
-			if pendingLines.contains(b.Pos) {
+			if pendingLines.contains(b.Pos.Line()) {
 				b.Pos = b.Pos.WithIsStmt()
-				pendingLines.remove(b.Pos)
+				pendingLines.remove(b.Pos.Line())
 			}
 			for j := i; j < len(b.Values); j++ {
 				b.Values[j] = nil
@@ -212,38 +210,16 @@ func nilcheckelim2(f *Func) {
 					f.Warnl(v.Pos, "removed nil check")
 				}
 				if v.Pos.IsStmt() == src.PosIsStmt {
-					pendingLines.add(v.Pos)
+					pendingLines.add(v.Pos.Line())
 				}
 				v.reset(OpUnknown)
 				firstToRemove = i
 				continue
 			}
 			if v.Type.IsMemory() || v.Type.IsTuple() && v.Type.FieldType(1).IsMemory() {
-				if v.Op == OpVarKill || v.Op == OpVarLive || (v.Op == OpVarDef && !v.Aux.(GCNode).Typ().HasHeapPointer()) {
+				if v.Op == OpVarDef || v.Op == OpVarKill || v.Op == OpVarLive {
 					// These ops don't really change memory.
 					continue
-					// Note: OpVarDef requires that the defined variable not have pointers.
-					// We need to make sure that there's no possible faulting
-					// instruction between a VarDef and that variable being
-					// fully initialized. If there was, then anything scanning
-					// the stack during the handling of that fault will see
-					// a live but uninitialized pointer variable on the stack.
-					//
-					// If we have:
-					//
-					//   NilCheck p
-					//   VarDef x
-					//   x = *p
-					//
-					// We can't rewrite that to
-					//
-					//   VarDef x
-					//   NilCheck p
-					//   x = *p
-					//
-					// Particularly, even though *p faults on p==nil, we still
-					// have to do the explicit nil check before the VarDef.
-					// See issue #32288.
 				}
 				// This op changes memory.  Any faulting instruction after v that
 				// we've recorded in the unnecessary map is now obsolete.
@@ -295,16 +271,16 @@ func nilcheckelim2(f *Func) {
 		for j := i; j < len(b.Values); j++ {
 			v := b.Values[j]
 			if v.Op != OpUnknown {
-				if v.Pos.IsStmt() != src.PosNotStmt && pendingLines.contains(v.Pos) {
+				if v.Pos.IsStmt() != src.PosNotStmt && pendingLines.contains(v.Pos.Line()) {
 					v.Pos = v.Pos.WithIsStmt()
-					pendingLines.remove(v.Pos)
+					pendingLines.remove(v.Pos.Line())
 				}
 				b.Values[i] = v
 				i++
 			}
 		}
 
-		if pendingLines.contains(b.Pos) {
+		if pendingLines.contains(b.Pos.Line()) {
 			b.Pos = b.Pos.WithIsStmt()
 		}
 

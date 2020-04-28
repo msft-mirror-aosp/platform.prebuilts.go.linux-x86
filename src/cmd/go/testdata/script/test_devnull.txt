@@ -1,10 +1,8 @@
-env GO111MODULE=off
-
 # go test -c -o NUL
 # should work (see golang.org/issue/28035).
 cd x
 go test -o=$devnull -c
-! exists x.test$GOEXE
+! exists x.test$exe
 
 -- x/x_test.go --
 package x_test

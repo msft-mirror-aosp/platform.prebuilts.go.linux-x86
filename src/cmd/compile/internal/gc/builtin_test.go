@@ -14,7 +14,6 @@ import (
 
 func TestBuiltin(t *testing.T) {
 	testenv.MustHaveGoRun(t)
-	t.Parallel()
 
 	old, err := ioutil.ReadFile("builtin.go")
 	if err != nil {

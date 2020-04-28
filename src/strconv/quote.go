@@ -11,10 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-const (
-	lowerhex = "0123456789abcdef"
-	upperhex = "0123456789ABCDEF"
-)
+const lowerhex = "0123456789abcdef"
 
 func quoteWith(s string, quote byte, ASCIIonly, graphicOnly bool) string {
 	return string(appendQuotedWith(make([]byte, 0, 3*len(s)/2), s, quote, ASCIIonly, graphicOnly))
@@ -25,13 +22,6 @@ func quoteRuneWith(r rune, quote byte, ASCIIonly, graphicOnly bool) string {
 }
 
 func appendQuotedWith(buf []byte, s string, quote byte, ASCIIonly, graphicOnly bool) []byte {
-	// Often called with big strings, so preallocate. If there's quoting,
-	// this is conservative but still helps a lot.
-	if cap(buf)-len(buf) < len(s) {
-		nBuf := make([]byte, len(buf), len(buf)+1+len(s)+1)
-		copy(nBuf, buf)
-		buf = nBuf
-	}
 	buf = append(buf, quote)
 	for width := 0; len(s) > 0; s = s[width:] {
 		r := rune(s[0])

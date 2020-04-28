@@ -21,7 +21,7 @@ func Init(arch *gc.Arch) {
 	arch.ZeroRange = zerorange
 	arch.ZeroAuto = zeroAuto
 	arch.Ginsnop = ginsnop
-	arch.Ginsnopdefer = ginsnopdefer
+	arch.Ginsnopdefer = ginsnop2
 
 	arch.SSAMarkMoves = ssaMarkMoves
 	arch.SSAGenValue = ssaGenValue

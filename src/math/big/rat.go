@@ -339,13 +339,6 @@ func (z *Rat) SetInt64(x int64) *Rat {
 	return z
 }
 
-// SetUint64 sets z to x and returns z.
-func (z *Rat) SetUint64(x uint64) *Rat {
-	z.a.SetUint64(x)
-	z.b.abs = z.b.abs[:0]
-	return z
-}
-
 // Set sets z to x (by making a copy of x) and returns z.
 func (z *Rat) Set(x *Rat) *Rat {
 	if z != x {
@@ -462,15 +455,16 @@ func mulDenom(z, x, y nat) nat {
 	return z.mul(x, y)
 }
 
-// scaleDenom sets z to the product x*f.
-// If f == 0 (zero value of denominator), z is set to (a copy of) x.
-func (z *Int) scaleDenom(x *Int, f nat) {
+// scaleDenom computes x*f.
+// If f == 0 (zero value of denominator), the result is (a copy of) x.
+func scaleDenom(x *Int, f nat) *Int {
+	var z Int
 	if len(f) == 0 {
-		z.Set(x)
-		return
+		return z.Set(x)
 	}
 	z.abs = z.abs.mul(x.abs, f)
 	z.neg = x.neg
+	return &z
 }
 
 // Cmp compares x and y and returns:
@@ -480,28 +474,23 @@ func (z *Int) scaleDenom(x *Int, f nat) {
 //   +1 if x >  y
 //
 func (x *Rat) Cmp(y *Rat) int {
-	var a, b Int
-	a.scaleDenom(&x.a, y.b.abs)
-	b.scaleDenom(&y.a, x.b.abs)
-	return a.Cmp(&b)
+	return scaleDenom(&x.a, y.b.abs).Cmp(scaleDenom(&y.a, x.b.abs))
 }
 
 // Add sets z to the sum x+y and returns z.
 func (z *Rat) Add(x, y *Rat) *Rat {
-	var a1, a2 Int
-	a1.scaleDenom(&x.a, y.b.abs)
-	a2.scaleDenom(&y.a, x.b.abs)
-	z.a.Add(&a1, &a2)
+	a1 := scaleDenom(&x.a, y.b.abs)
+	a2 := scaleDenom(&y.a, x.b.abs)
+	z.a.Add(a1, a2)
 	z.b.abs = mulDenom(z.b.abs, x.b.abs, y.b.abs)
 	return z.norm()
 }
 
 // Sub sets z to the difference x-y and returns z.
 func (z *Rat) Sub(x, y *Rat) *Rat {
-	var a1, a2 Int
-	a1.scaleDenom(&x.a, y.b.abs)
-	a2.scaleDenom(&y.a, x.b.abs)
-	z.a.Sub(&a1, &a2)
+	a1 := scaleDenom(&x.a, y.b.abs)
+	a2 := scaleDenom(&y.a, x.b.abs)
+	z.a.Sub(a1, a2)
 	z.b.abs = mulDenom(z.b.abs, x.b.abs, y.b.abs)
 	return z.norm()
 }
@@ -526,9 +515,8 @@ func (z *Rat) Quo(x, y *Rat) *Rat {
 	if len(y.a.abs) == 0 {
 		panic("division by zero")
 	}
-	var a, b Int
-	a.scaleDenom(&x.a, y.b.abs)
-	b.scaleDenom(&y.a, x.b.abs)
+	a := scaleDenom(&x.a, y.b.abs)
+	b := scaleDenom(&y.a, x.b.abs)
 	z.a.abs = a.abs
 	z.b.abs = b.abs
 	z.a.neg = a.neg != b.neg

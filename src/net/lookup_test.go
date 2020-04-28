@@ -16,7 +16,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -254,11 +253,14 @@ func TestLookupGmailTXT(t *testing.T) {
 	}
 }
 
-var lookupGooglePublicDNSAddrTests = []string{
-	"8.8.8.8",
-	"8.8.4.4",
-	"2001:4860:4860::8888",
-	"2001:4860:4860::8844",
+var lookupGooglePublicDNSAddrTests = []struct {
+	addr, name string
+}{
+	{"8.8.8.8", ".google.com."},
+	{"8.8.4.4", ".google.com."},
+
+	{"2001:4860:4860::8888", ".google.com."},
+	{"2001:4860:4860::8844", ".google.com."},
 }
 
 func TestLookupGooglePublicDNSAddr(t *testing.T) {
@@ -270,8 +272,8 @@ func TestLookupGooglePublicDNSAddr(t *testing.T) {
 
 	defer dnsWaitGroup.Wait()
 
-	for _, ip := range lookupGooglePublicDNSAddrTests {
-		names, err := LookupAddr(ip)
+	for _, tt := range lookupGooglePublicDNSAddrTests {
+		names, err := LookupAddr(tt.addr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -279,8 +281,8 @@ func TestLookupGooglePublicDNSAddr(t *testing.T) {
 			t.Error("got no record")
 		}
 		for _, name := range names {
-			if !strings.HasSuffix(name, ".google.com.") && !strings.HasSuffix(name, ".google.") {
-				t.Errorf("got %q; want a record ending in .google.com. or .google.", name)
+			if !strings.HasSuffix(name, tt.name) {
+				t.Errorf("got %s; want a record containing %s", name, tt.name)
 			}
 		}
 	}
@@ -656,8 +658,8 @@ func testDots(t *testing.T, mode string) {
 		t.Errorf("LookupAddr(8.8.8.8): %v (mode=%v)", err, mode)
 	} else {
 		for _, name := range names {
-			if !strings.HasSuffix(name, ".google.com.") && !strings.HasSuffix(name, ".google.") {
-				t.Errorf("LookupAddr(8.8.8.8) = %v, want names ending in .google.com or .google with trailing dot (mode=%v)", names, mode)
+			if !strings.HasSuffix(name, ".google.com.") {
+				t.Errorf("LookupAddr(8.8.8.8) = %v, want names ending in .google.com. with trailing dot (mode=%v)", names, mode)
 				break
 			}
 		}
@@ -877,9 +879,6 @@ func TestLookupNonLDH(t *testing.T) {
 	if !strings.HasSuffix(err.Error(), errNoSuchHost.Error()) {
 		t.Fatalf("lookup error = %v, want %v", err, errNoSuchHost)
 	}
-	if !err.(*DNSError).IsNotFound {
-		t.Fatalf("lookup error = %v, want true", err.(*DNSError).IsNotFound)
-	}
 }
 
 func TestLookupContextCancel(t *testing.T) {
@@ -1097,69 +1096,6 @@ func TestLookupIPAddrPreservesContextValues(t *testing.T) {
 	}
 }
 
-// Issue 30521: The lookup group should call the resolver for each network.
-func TestLookupIPAddrConcurrentCallsForNetworks(t *testing.T) {
-	origTestHookLookupIP := testHookLookupIP
-	defer func() { testHookLookupIP = origTestHookLookupIP }()
-
-	queries := [][]string{
-		{"udp", "golang.org"},
-		{"udp4", "golang.org"},
-		{"udp6", "golang.org"},
-		{"udp", "golang.org"},
-		{"udp", "golang.org"},
-	}
-	results := map[[2]string][]IPAddr{
-		{"udp", "golang.org"}: {
-			{IP: IPv4(127, 0, 0, 1)},
-			{IP: IPv6loopback},
-		},
-		{"udp4", "golang.org"}: {
-			{IP: IPv4(127, 0, 0, 1)},
-		},
-		{"udp6", "golang.org"}: {
-			{IP: IPv6loopback},
-		},
-	}
-	calls := int32(0)
-	waitCh := make(chan struct{})
-	testHookLookupIP = func(ctx context.Context, fn func(context.Context, string, string) ([]IPAddr, error), network, host string) ([]IPAddr, error) {
-		// We'll block until this is called one time for each different
-		// expected result. This will ensure that the lookup group would wait
-		// for the existing call if it was to be reused.
-		if atomic.AddInt32(&calls, 1) == int32(len(results)) {
-			close(waitCh)
-		}
-		select {
-		case <-waitCh:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-		return results[[2]string{network, host}], nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	wg := sync.WaitGroup{}
-	for _, q := range queries {
-		network := q[0]
-		host := q[1]
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			gotIPs, err := DefaultResolver.lookupIPAddr(ctx, network, host)
-			if err != nil {
-				t.Errorf("lookupIPAddr(%v, %v): unexpected error: %v", network, host, err)
-			}
-			wantIPs := results[[2]string{network, host}]
-			if !reflect.DeepEqual(gotIPs, wantIPs) {
-				t.Errorf("lookupIPAddr(%v, %v): mismatched IPAddr results\n\tGot: %v\n\tWant: %v", network, host, gotIPs, wantIPs)
-			}
-		}()
-	}
-	wg.Wait()
-}
-
 func TestWithUnexpiredValuesPreserved(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -1182,15 +1118,5 @@ func TestWithUnexpiredValuesPreserved(t *testing.T) {
 	// Lookup after expiry should return nil
 	if g := ctx.Value(key); g != nil {
 		t.Errorf("Lookup after expiry: Got %v want nil", g)
-	}
-}
-
-// Issue 31586: don't crash on null byte in name
-func TestLookupNullByte(t *testing.T) {
-	testenv.MustHaveExternalNetwork(t)
-	testenv.SkipFlakyNet(t)
-	_, err := LookupHost("foo\x00bar") // used to crash on Windows
-	if err == nil {
-		t.Errorf("unexpected success")
 	}
 }

@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"cmd/go/internal/base"
-	"cmd/go/internal/cfg"
 	"cmd/go/internal/lockedfile"
 	"cmd/go/internal/modfetch/codehost"
 	"cmd/go/internal/module"
@@ -216,21 +215,29 @@ func (r *cachingRepo) Latest() (*RevInfo, error) {
 	return &info, nil
 }
 
-func (r *cachingRepo) GoMod(version string) ([]byte, error) {
+func (r *cachingRepo) GoMod(rev string) ([]byte, error) {
 	type cached struct {
 		text []byte
 		err  error
 	}
-	c := r.cache.Do("gomod:"+version, func() interface{} {
-		file, text, err := readDiskGoMod(r.path, version)
+	c := r.cache.Do("gomod:"+rev, func() interface{} {
+		file, text, err := readDiskGoMod(r.path, rev)
 		if err == nil {
 			// Note: readDiskGoMod already called checkGoMod.
 			return cached{text, nil}
 		}
 
-		text, err = r.r.GoMod(version)
+		// Convert rev to canonical version
+		// so that we use the right identifier in the go.sum check.
+		info, err := r.Stat(rev)
+		if err != nil {
+			return cached{nil, err}
+		}
+		rev = info.Version
+
+		text, err = r.r.GoMod(rev)
 		if err == nil {
-			checkGoMod(r.path, version, text)
+			checkGoMod(r.path, rev, text)
 			if err := writeDiskGoMod(file, text); err != nil {
 				fmt.Fprintf(os.Stderr, "go: writing go.mod cache: %v\n", err)
 			}
@@ -251,12 +258,12 @@ func (r *cachingRepo) Zip(dst io.Writer, version string) error {
 // Stat is like Lookup(path).Stat(rev) but avoids the
 // repository path resolution in Lookup if the result is
 // already cached on local disk.
-func Stat(proxy, path, rev string) (*RevInfo, error) {
+func Stat(path, rev string) (*RevInfo, error) {
 	_, info, err := readDiskStat(path, rev)
 	if err == nil {
 		return info, nil
 	}
-	repo, err := Lookup(proxy, path)
+	repo, err := Lookup(path)
 	if err != nil {
 		return nil, err
 	}
@@ -269,22 +276,9 @@ func InfoFile(path, version string) (string, error) {
 	if !semver.IsValid(version) {
 		return "", fmt.Errorf("invalid version %q", version)
 	}
-
-	if file, _, err := readDiskStat(path, version); err == nil {
-		return file, nil
-	}
-
-	err := TryProxies(func(proxy string) error {
-		repo, err := Lookup(proxy, path)
-		if err == nil {
-			_, err = repo.Stat(version)
-		}
-		return err
-	})
-	if err != nil {
+	if _, err := Stat(path, version); err != nil {
 		return "", err
 	}
-
 	// Stat should have populated the disk cache for us.
 	file, _, err := readDiskStat(path, version)
 	if err != nil {
@@ -300,39 +294,21 @@ func GoMod(path, rev string) ([]byte, error) {
 	// Convert commit hash to pseudo-version
 	// to increase cache hit rate.
 	if !semver.IsValid(rev) {
-		if _, info, err := readDiskStat(path, rev); err == nil {
-			rev = info.Version
-		} else {
-			err := TryProxies(func(proxy string) error {
-				repo, err := Lookup(proxy, path)
-				if err != nil {
-					return err
-				}
-				info, err := repo.Stat(rev)
-				if err == nil {
-					rev = info.Version
-				}
-				return err
-			})
-			if err != nil {
-				return nil, err
-			}
+		info, err := Stat(path, rev)
+		if err != nil {
+			return nil, err
 		}
+		rev = info.Version
 	}
-
 	_, data, err := readDiskGoMod(path, rev)
 	if err == nil {
 		return data, nil
 	}
-
-	err = TryProxies(func(proxy string) error {
-		repo, err := Lookup(proxy, path)
-		if err == nil {
-			data, err = repo.GoMod(rev)
-		}
-		return err
-	})
-	return data, err
+	repo, err := Lookup(path)
+	if err != nil {
+		return nil, err
+	}
+	return repo.GoMod(rev)
 }
 
 // GoModFile is like GoMod but returns the name of the file containing
@@ -378,29 +354,8 @@ var errNotCached = fmt.Errorf("not in cache")
 func readDiskStat(path, rev string) (file string, info *RevInfo, err error) {
 	file, data, err := readDiskCache(path, rev, "info")
 	if err != nil {
-		// If the cache already contains a pseudo-version with the given hash, we
-		// would previously return that pseudo-version without checking upstream.
-		// However, that produced an unfortunate side-effect: if the author added a
-		// tag to the repository, 'go get' would not pick up the effect of that new
-		// tag on the existing commits, and 'go' commands that referred to those
-		// commits would use the previous name instead of the new one.
-		//
-		// That's especially problematic if the original pseudo-version starts with
-		// v0.0.0-, as was the case for all pseudo-versions during vgo development,
-		// since a v0.0.0- pseudo-version has lower precedence than pretty much any
-		// tagged version.
-		//
-		// In practice, we're only looking up by hash during initial conversion of a
-		// legacy config and during an explicit 'go get', and a little extra latency
-		// for those operations seems worth the benefit of picking up more accurate
-		// versions.
-		//
-		// Fall back to this resolution scheme only if the GOPROXY setting prohibits
-		// us from resolving upstream tags.
-		if cfg.GOPROXY == "off" {
-			if file, info, err := readDiskStatByHash(path, rev); err == nil {
-				return file, info, nil
-			}
+		if file, info, err := readDiskStatByHash(path, rev); err == nil {
+			return file, info, nil
 		}
 		return file, nil, err
 	}
@@ -450,23 +405,13 @@ func readDiskStatByHash(path, rev string) (file string, info *RevInfo, err error
 	if err != nil {
 		return "", nil, errNotCached
 	}
-
-	// A given commit hash may map to more than one pseudo-version,
-	// depending on which tags are present on the repository.
-	// Take the highest such version.
-	var maxVersion string
 	suffix := "-" + rev + ".info"
-	err = errNotCached
 	for _, name := range names {
-		if strings.HasSuffix(name, suffix) {
-			v := strings.TrimSuffix(name, ".info")
-			if IsPseudoVersion(v) && semver.Max(maxVersion, v) == v {
-				maxVersion = v
-				file, info, err = readDiskStat(path, strings.TrimSuffix(name, ".info"))
-			}
+		if strings.HasSuffix(name, suffix) && IsPseudoVersion(strings.TrimSuffix(name, ".info")) {
+			return readDiskStat(path, strings.TrimSuffix(name, ".info"))
 		}
 	}
-	return file, info, err
+	return "", nil, errNotCached
 }
 
 // oldVgoPrefix is the prefix in the old auto-generated cached go.mod files.
@@ -506,7 +451,7 @@ func readDiskCache(path, rev, suffix string) (file string, data []byte, err erro
 	if err != nil {
 		return "", nil, errNotCached
 	}
-	data, err = renameio.ReadFile(file)
+	data, err = ioutil.ReadFile(file)
 	if err != nil {
 		return file, nil, errNotCached
 	}
@@ -543,7 +488,7 @@ func writeDiskCache(file string, data []byte) error {
 		return err
 	}
 
-	if err := renameio.WriteFile(file, data, 0666); err != nil {
+	if err := renameio.WriteFile(file, data); err != nil {
 		return err
 	}
 
@@ -600,12 +545,12 @@ func rewriteVersionList(dir string) {
 		buf.WriteString(v)
 		buf.WriteString("\n")
 	}
-	old, _ := renameio.ReadFile(listFile)
+	old, _ := ioutil.ReadFile(listFile)
 	if bytes.Equal(buf.Bytes(), old) {
 		return
 	}
 
-	if err := renameio.WriteFile(listFile, buf.Bytes(), 0666); err != nil {
+	if err := renameio.WriteFile(listFile, buf.Bytes()); err != nil {
 		base.Fatalf("go: failed to write version list: %v", err)
 	}
 }

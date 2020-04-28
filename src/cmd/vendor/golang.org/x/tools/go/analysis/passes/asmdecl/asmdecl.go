@@ -114,8 +114,7 @@ func init() {
 			// library we cannot assume types.SizesFor is consistent with arches.
 			// For now, assume 64-bit norms and print a warning.
 			// But this warning should really be deferred until we attempt to use
-			// arch, which is very unlikely. Better would be
-			// to defer size computation until we have Pass.TypesSizes.
+			// arch, which is very unlikely.
 			arch.sizes = types.SizesFor("gc", "amd64")
 			log.Printf("unknown architecture %s", arch.name)
 		}
@@ -130,7 +129,7 @@ var (
 	asmPlusBuild = re(`//\s+\+build\s+([^\n]+)`)
 	asmTEXT      = re(`\bTEXT\b(.*)·([^\(]+)\(SB\)(?:\s*,\s*([0-9A-Z|+()]+))?(?:\s*,\s*\$(-?[0-9]+)(?:-([0-9]+))?)?`)
 	asmDATA      = re(`\b(DATA|GLOBL)\b`)
-	asmNamedFP   = re(`\$?([a-zA-Z0-9_\xFF-\x{10FFFF}]+)(?:\+([0-9]+))\(FP\)`)
+	asmNamedFP   = re(`([a-zA-Z0-9_\xFF-\x{10FFFF}]+)(?:\+([0-9]+))\(FP\)`)
 	asmUnnamedFP = re(`[^+\-0-9](([0-9]+)\(FP\))`)
 	asmSP        = re(`[^+\-0-9](([0-9]+)\(([A-Z0-9]+)\))`)
 	asmOpcode    = re(`^\s*(?:[A-Z0-9a-z_]+:)?\s*([A-Z]+)\s*([^,]*)(?:,\s*(.*))?`)
@@ -184,7 +183,6 @@ Files:
 			fnName             string
 			localSize, argSize int
 			wroteSP            bool
-			noframe            bool
 			haveRetArg         bool
 			retLine            []int
 		)
@@ -232,11 +230,6 @@ Files:
 				}
 			}
 
-			// Ignore comments and commented-out code.
-			if i := strings.Index(line, "//"); i >= 0 {
-				line = line[:i]
-			}
-
 			if m := asmTEXT.FindStringSubmatch(line); m != nil {
 				flushRet()
 				if arch == "" {
@@ -260,7 +253,7 @@ Files:
 					// identifiers to represent the directory separator.
 					pkgPath = strings.Replace(pkgPath, "∕", "/", -1)
 					if pkgPath != pass.Pkg.Path() {
-						// log.Printf("%s:%d: [%s] cannot check cross-package assembly function: %s is in package %s", fname, lineno, arch, fnName, pkgPath)
+						log.Printf("%s:%d: [%s] cannot check cross-package assembly function: %s is in package %s", fname, lineno, arch, fnName, pkgPath)
 						fn = nil
 						fnName = ""
 						continue
@@ -281,8 +274,7 @@ Files:
 					localSize += archDef.intSize
 				}
 				argSize, _ = strconv.Atoi(m[5])
-				noframe = strings.Contains(flag, "NOFRAME")
-				if fn == nil && !strings.Contains(fnName, "<>") && !noframe {
+				if fn == nil && !strings.Contains(fnName, "<>") {
 					badf("function %s missing Go declaration", fnName)
 				}
 				wroteSP = false
@@ -312,18 +304,13 @@ Files:
 				continue
 			}
 
-			if strings.Contains(line, ", "+archDef.stack) || strings.Contains(line, ",\t"+archDef.stack) || strings.Contains(line, "NOP "+archDef.stack) || strings.Contains(line, "NOP\t"+archDef.stack) {
+			if strings.Contains(line, ", "+archDef.stack) || strings.Contains(line, ",\t"+archDef.stack) {
 				wroteSP = true
 				continue
 			}
 
-			if arch == "wasm" && strings.Contains(line, "CallImport") {
-				// CallImport is a call out to magic that can write the result.
-				haveRetArg = true
-			}
-
 			for _, m := range asmSP.FindAllStringSubmatch(line, -1) {
-				if m[3] != archDef.stack || wroteSP || noframe {
+				if m[3] != archDef.stack || wroteSP {
 					continue
 				}
 				off := 0
@@ -383,7 +370,7 @@ Files:
 					}
 					continue
 				}
-				asmCheckVar(badf, fn, line, m[0], off, v, archDef)
+				asmCheckVar(badf, fn, line, m[0], off, v)
 			}
 		}
 		flushRet()
@@ -601,7 +588,7 @@ func asmParseDecl(pass *analysis.Pass, decl *ast.FuncDecl) map[string]*asmFunc {
 }
 
 // asmCheckVar checks a single variable reference.
-func asmCheckVar(badf func(string, ...interface{}), fn *asmFunc, line, expr string, off int, v *asmVar, archDef *asmArch) {
+func asmCheckVar(badf func(string, ...interface{}), fn *asmFunc, line, expr string, off int, v *asmVar) {
 	m := asmOpcode.FindStringSubmatch(line)
 	if m == nil {
 		if !strings.HasPrefix(strings.TrimSpace(line), "//") {
@@ -609,8 +596,6 @@ func asmCheckVar(badf func(string, ...interface{}), fn *asmFunc, line, expr stri
 		}
 		return
 	}
-
-	addr := strings.HasPrefix(expr, "$")
 
 	// Determine operand sizes from instruction.
 	// Typically the suffix suffices, but there are exceptions.
@@ -631,13 +616,10 @@ func asmCheckVar(badf func(string, ...interface{}), fn *asmFunc, line, expr stri
 	// They just take the address of it.
 	case "386.LEAL":
 		dst = 4
-		addr = true
 	case "amd64.LEAQ":
 		dst = 8
-		addr = true
 	case "amd64p32.LEAL":
 		dst = 4
-		addr = true
 	default:
 		switch fn.arch.name {
 		case "386", "amd64":
@@ -741,11 +723,6 @@ func asmCheckVar(badf func(string, ...interface{}), fn *asmFunc, line, expr stri
 		vk = v.inner[0].kind
 		vs = v.inner[0].size
 		vt = v.inner[0].typ
-	}
-	if addr {
-		vk = asmKind(archDef.ptrSize)
-		vs = archDef.ptrSize
-		vt = "address"
 	}
 
 	if off != v.off {

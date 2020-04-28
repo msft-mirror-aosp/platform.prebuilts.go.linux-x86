@@ -5,7 +5,6 @@
 package modload
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -56,26 +55,18 @@ func listModules(args []string, listVersions bool) []*modinfo.ModulePublic {
 			base.Fatalf("go: cannot use relative path %s to specify module", arg)
 		}
 		if i := strings.Index(arg, "@"); i >= 0 {
-			path := arg[:i]
-			vers := arg[i+1:]
-			var current string
-			for _, m := range buildList {
-				if m.Path == path {
-					current = m.Version
-					break
-				}
-			}
-
-			info, err := Query(path, vers, current, nil)
+			info, err := Query(arg[:i], arg[i+1:], nil)
 			if err != nil {
 				mods = append(mods, &modinfo.ModulePublic{
-					Path:    path,
-					Version: vers,
-					Error:   modinfoError(path, vers, err),
+					Path:    arg[:i],
+					Version: arg[i+1:],
+					Error: &modinfo.ModuleError{
+						Err: err.Error(),
+					},
 				})
 				continue
 			}
-			mods = append(mods, moduleInfo(module.Version{Path: path, Version: info.Version}, false))
+			mods = append(mods, moduleInfo(module.Version{Path: arg[:i], Version: info.Version}, false))
 			continue
 		}
 
@@ -110,20 +101,17 @@ func listModules(args []string, listVersions bool) []*modinfo.ModulePublic {
 					// Don't make the user provide an explicit '@latest' when they're
 					// explicitly asking what the available versions are.
 					// Instead, resolve the module, even if it isn't an existing dependency.
-					info, err := Query(arg, "latest", "", nil)
+					info, err := Query(arg, "latest", nil)
 					if err == nil {
 						mods = append(mods, moduleInfo(module.Version{Path: arg, Version: info.Version}, false))
-					} else {
-						mods = append(mods, &modinfo.ModulePublic{
-							Path:  arg,
-							Error: modinfoError(arg, "", err),
-						})
+						continue
 					}
-					continue
 				}
 				mods = append(mods, &modinfo.ModulePublic{
-					Path:  arg,
-					Error: modinfoError(arg, "", errors.New("not a known dependency")),
+					Path: arg,
+					Error: &modinfo.ModuleError{
+						Err: fmt.Sprintf("module %q is not a known dependency", arg),
+					},
 				})
 			} else {
 				fmt.Fprintf(os.Stderr, "warning: pattern %q matched no module dependencies\n", arg)
@@ -132,22 +120,4 @@ func listModules(args []string, listVersions bool) []*modinfo.ModulePublic {
 	}
 
 	return mods
-}
-
-// modinfoError wraps an error to create an error message in
-// modinfo.ModuleError with minimal redundancy.
-func modinfoError(path, vers string, err error) *modinfo.ModuleError {
-	var nerr *NoMatchingVersionError
-	var merr *module.ModuleError
-	if errors.As(err, &nerr) {
-		// NoMatchingVersionError contains the query, so we don't mention the
-		// query again in ModuleError.
-		err = &module.ModuleError{Path: path, Err: err}
-	} else if !errors.As(err, &merr) {
-		// If the error does not contain path and version, wrap it in a
-		// module.ModuleError.
-		err = &module.ModuleError{Path: path, Version: vers, Err: err}
-	}
-
-	return &modinfo.ModuleError{Err: err.Error()}
 }

@@ -6,38 +6,32 @@ env GO111MODULE=on
 
 [short] skip
 
-go test -coverpkg=all ./...
+go test -coverpkg=all ./main1 ./main2
 
 -- go.mod --
 module example.com/cov
 
--- mainonly/mainonly.go --
+-- main1/main1.go --
 package main
 
 func main() {}
 
--- mainwithtest/mainwithtest.go --
+-- main1/main1_test.go --
+package main
+
+import "testing"
+
+func TestMain1(t *testing.T) {}
+
+-- main2/main2.go --
 package main
 
 func main() {}
 
-func Foo() {}
-
--- mainwithtest/mainwithtest_test.go --
+-- main2/main2_test.go --
 package main
 
 import "testing"
 
-func TestFoo(t *testing.T) {
-  Foo()
-}
+func TestMain2(t *testing.T) {}
 
--- xtest/x.go --
-package x
-
--- xtest/x_test.go --
-package x_test
-
-import "testing"
-
-func TestX(t *testing.T) {}

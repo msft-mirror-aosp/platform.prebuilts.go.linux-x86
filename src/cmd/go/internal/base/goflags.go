@@ -7,6 +7,7 @@ package base
 import (
 	"flag"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 
@@ -61,7 +62,7 @@ func InitGOFLAGS() {
 	// (Both will show the GOFLAGS setting if let succeed.)
 	hideErrors := cfg.CmdName == "env" || cfg.CmdName == "bug"
 
-	goflags = strings.Fields(cfg.Getenv("GOFLAGS"))
+	goflags = strings.Fields(os.Getenv("GOFLAGS"))
 	if goflags == nil {
 		goflags = []string{} // avoid work on later InitGOFLAGS call
 	}

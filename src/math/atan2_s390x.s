@@ -144,10 +144,16 @@ Normal:
 	MOVD	$·atan2rodataL25<>+0(SB), R9
 	LGDR	F0, R2
 	LGDR	F2, R1
-	RISBGNZ	$32, $63, $32, R2, R2
-	RISBGNZ	$32, $63, $32, R1, R1
+	WORD	$0xEC2220BF	//risbgn	%r2,%r2,64-32,128+63,64+0+32
+	BYTE	$0x60
+	BYTE	$0x59
+	WORD	$0xEC1120BF	//risbgn	%r1,%r1,64-32,128+63,64+0+32
+	BYTE	$0x60
+	BYTE	$0x59
 	WORD	$0xB9170032	//llgtr	%r3,%r2
-	RISBGZ	$63, $63, $33, R2, R5
+	WORD	$0xEC523FBF	//risbg	%r5,%r2,64-1,128+63,64+32+1
+	BYTE	$0x61
+	BYTE	$0x55
 	WORD	$0xB9170041	//llgtr	%r4,%r1
 	WFLCDB	V0, V20
 	MOVW	R4, R6
@@ -218,7 +224,9 @@ L7:
 	MOVW	R1, R6
 	CMPBGE	R6, $0, L1
 L18:
-	RISBGZ	$58, $60, $3, R2, R2
+	WORD	$0xEC223ABC	//risbg	%r2,%r2,58,128+60,3
+	BYTE	$0x03
+	BYTE	$0x55
 	MOVD	$·atan2xpi2h<>+0(SB), R1
 	MOVD	·atan2xpim<>+0(SB), R3
 	LDGR	R3, F0

@@ -9,8 +9,6 @@
 # import "C" block.  Add more tests here.
 FILE_PREFIXES="anonunion issue8478 fieldtypedef"
 
-cd testdata
-
 RM=
 for FP in $FILE_PREFIXES
 do
@@ -18,7 +16,7 @@ do
   RM="${RM} ${FP}_defs.go"
 done
 
-go build -o testgodefs . && ./testgodefs
+go build . && ./testgodefs
 EXIT=$?
 rm -rf _obj testgodefs ${RM}
 exit $EXIT

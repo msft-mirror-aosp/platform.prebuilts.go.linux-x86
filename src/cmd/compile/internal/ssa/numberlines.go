@@ -7,8 +7,7 @@ package ssa
 import (
 	"cmd/internal/obj"
 	"cmd/internal/src"
-	"fmt"
-	"sort"
+	"math"
 )
 
 func isPoorStatementOp(op Op) bool {
@@ -52,7 +51,7 @@ func nextGoodStatementIndex(v *Value, i int, b *Block) int {
 		if b.Values[j].Pos.IsStmt() == src.PosNotStmt { // ignore non-statements
 			continue
 		}
-		if b.Values[j].Pos.Line() == v.Pos.Line() && v.Pos.SameFile(b.Values[j].Pos) {
+		if b.Values[j].Pos.Line() == v.Pos.Line() {
 			return j
 		}
 		return i
@@ -74,61 +73,17 @@ func notStmtBoundary(op Op) bool {
 	return false
 }
 
-func (b *Block) FirstPossibleStmtValue() *Value {
-	for _, v := range b.Values {
-		if notStmtBoundary(v.Op) {
-			continue
-		}
-		return v
-	}
-	return nil
-}
-
-func flc(p src.XPos) string {
-	if p == src.NoXPos {
-		return "none"
-	}
-	return fmt.Sprintf("(%d):%d:%d", p.FileIndex(), p.Line(), p.Col())
-}
-
-type fileAndPair struct {
-	f  int32
-	lp lineRange
-}
-
-type fileAndPairs []fileAndPair
-
-func (fap fileAndPairs) Len() int {
-	return len(fap)
-}
-func (fap fileAndPairs) Less(i, j int) bool {
-	return fap[i].f < fap[j].f
-}
-func (fap fileAndPairs) Swap(i, j int) {
-	fap[i], fap[j] = fap[j], fap[i]
-}
-
-// -d=ssa/number_lines/stats=1 (that bit) for line and file distribution statistics
-// -d=ssa/number_lines/debug for information about why particular values are marked as statements.
 func numberLines(f *Func) {
 	po := f.Postorder()
 	endlines := make(map[ID]src.XPos)
-	ranges := make(map[int]lineRange)
-	note := func(p src.XPos) {
-		line := uint32(p.Line())
-		i := int(p.FileIndex())
-		lp, found := ranges[i]
-		change := false
-		if line < lp.first || !found {
-			lp.first = line
-			change = true
+	last := uint(0)              // uint follows type of XPos.Line()
+	first := uint(math.MaxInt32) // unsigned, but large valid int when cast
+	note := func(line uint) {
+		if line < first {
+			first = line
 		}
-		if line > lp.last {
-			lp.last = line
-			change = true
-		}
-		if change {
-			ranges[i] = lp
+		if line > last {
+			last = line
 		}
 	}
 
@@ -139,12 +94,12 @@ func numberLines(f *Func) {
 		firstPos := src.NoXPos
 		firstPosIndex := -1
 		if b.Pos.IsStmt() != src.PosNotStmt {
-			note(b.Pos)
+			note(b.Pos.Line())
 		}
 		for i := 0; i < len(b.Values); i++ {
 			v := b.Values[i]
 			if v.Pos.IsStmt() != src.PosNotStmt {
-				note(v.Pos)
+				note(v.Pos.Line())
 				// skip ahead to better instruction for this line if possible
 				i = nextGoodStatementIndex(v, i, b)
 				v = b.Values[i]
@@ -159,9 +114,6 @@ func numberLines(f *Func) {
 			if b.Pos.IsStmt() != src.PosNotStmt {
 				b.Pos = b.Pos.WithIsStmt()
 				endlines[b.ID] = b.Pos
-				if f.pass.debug > 0 {
-					fmt.Printf("Mark stmt effectively-empty-block %s %s %s\n", f.Name, b, flc(b.Pos))
-				}
 				continue
 			}
 			line := src.NoXPos
@@ -184,18 +136,11 @@ func numberLines(f *Func) {
 		// check predecessors for any difference; if firstPos differs, then it is a boundary.
 		if len(b.Preds) == 0 { // Don't forget the entry block
 			b.Values[firstPosIndex].Pos = firstPos.WithIsStmt()
-			if f.pass.debug > 0 {
-				fmt.Printf("Mark stmt entry-block %s %s %s %s\n", f.Name, b, b.Values[firstPosIndex], flc(firstPos))
-			}
-		} else { // differing pred
+		} else {
 			for _, p := range b.Preds {
 				pbi := p.Block().ID
-				if endlines[pbi].Line() != firstPos.Line() || !endlines[pbi].SameFile(firstPos) {
+				if endlines[pbi] != firstPos {
 					b.Values[firstPosIndex].Pos = firstPos.WithIsStmt()
-					if f.pass.debug > 0 {
-						fmt.Printf("Mark stmt differing-pred %s %s %s %s, different=%s ending %s\n",
-							f.Name, b, b.Values[firstPosIndex], flc(firstPos), p.Block(), flc(endlines[pbi]))
-					}
 					break
 				}
 			}
@@ -206,14 +151,11 @@ func numberLines(f *Func) {
 			if v.Pos.IsStmt() == src.PosNotStmt {
 				continue
 			}
-			note(v.Pos)
+			note(v.Pos.Line())
 			// skip ahead if possible
 			i = nextGoodStatementIndex(v, i, b)
 			v = b.Values[i]
 			if v.Pos.Line() != firstPos.Line() || !v.Pos.SameFile(firstPos) {
-				if f.pass.debug > 0 {
-					fmt.Printf("Mark stmt new line %s %s %s %s prev pos = %s\n", f.Name, b, v, flc(v.Pos), flc(firstPos))
-				}
 				firstPos = v.Pos
 				v.Pos = v.Pos.WithIsStmt()
 			} else {
@@ -221,43 +163,10 @@ func numberLines(f *Func) {
 			}
 		}
 		if b.Pos.IsStmt() != src.PosNotStmt && (b.Pos.Line() != firstPos.Line() || !b.Pos.SameFile(firstPos)) {
-			if f.pass.debug > 0 {
-				fmt.Printf("Mark stmt end of block differs %s %s %s prev pos = %s\n", f.Name, b, flc(b.Pos), flc(firstPos))
-			}
 			b.Pos = b.Pos.WithIsStmt()
 			firstPos = b.Pos
 		}
 		endlines[b.ID] = firstPos
 	}
-	if f.pass.stats&1 != 0 {
-		// Report summary statistics on the shape of the sparse map about to be constructed
-		// TODO use this information to make sparse maps faster.
-		var entries fileAndPairs
-		for k, v := range ranges {
-			entries = append(entries, fileAndPair{int32(k), v})
-		}
-		sort.Sort(entries)
-		total := uint64(0)            // sum over files of maxline(file) - minline(file)
-		maxfile := int32(0)           // max(file indices)
-		minline := uint32(0xffffffff) // min over files of minline(file)
-		maxline := uint32(0)          // max over files of maxline(file)
-		for _, v := range entries {
-			if f.pass.stats > 1 {
-				f.LogStat("file", v.f, "low", v.lp.first, "high", v.lp.last)
-			}
-			total += uint64(v.lp.last - v.lp.first)
-			if maxfile < v.f {
-				maxfile = v.f
-			}
-			if minline > v.lp.first {
-				minline = v.lp.first
-			}
-			if maxline < v.lp.last {
-				maxline = v.lp.last
-			}
-		}
-		f.LogStat("SUM_LINE_RANGE", total, "MAXMIN_LINE_RANGE", maxline-minline, "MAXFILE", maxfile, "NFILES", len(entries))
-	}
-	// cachedLineStarts is an empty sparse map for values that are included within ranges.
-	f.cachedLineStarts = newXposmap(ranges)
+	f.cachedLineStarts = newBiasedSparseMap(int(first), int(last))
 }

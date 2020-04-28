@@ -33,7 +33,6 @@ var (
 	ExportHttp2ConfigureServer        = http2ConfigureServer
 	Export_shouldCopyHeaderOnRedirect = shouldCopyHeaderOnRedirect
 	Export_writeStatusLine            = writeStatusLine
-	Export_is408Message               = is408Message
 )
 
 const MaxWriteWaitBeforeConnReuse = maxWriteWaitBeforeConnReuse
@@ -166,40 +165,30 @@ func (t *Transport) IdleConnCountForTesting(scheme, addr string) int {
 	return 0
 }
 
-func (t *Transport) IdleConnWaitMapSizeForTesting() int {
+func (t *Transport) IdleConnChMapSizeForTesting() int {
 	t.idleMu.Lock()
 	defer t.idleMu.Unlock()
-	return len(t.idleConnWait)
+	return len(t.idleConnCh)
 }
 
 func (t *Transport) IsIdleForTesting() bool {
 	t.idleMu.Lock()
 	defer t.idleMu.Unlock()
-	return t.closeIdle
+	return t.wantIdle
 }
 
-func (t *Transport) QueueForIdleConnForTesting() {
-	t.queueForIdleConn(nil)
+func (t *Transport) RequestIdleConnChForTesting() {
+	t.getIdleConnCh(connectMethod{nil, "http", "example.com", false})
 }
 
-// PutIdleTestConn reports whether it was able to insert a fresh
-// persistConn for scheme, addr into the idle connection pool.
 func (t *Transport) PutIdleTestConn(scheme, addr string) bool {
 	c, _ := net.Pipe()
 	key := connectMethodKey{"", scheme, addr, false}
-
-	if t.MaxConnsPerHost > 0 {
-		// Transport is tracking conns-per-host.
-		// Increment connection count to account
-		// for new persistConn created below.
-		t.connsPerHostMu.Lock()
-		if t.connsPerHost == nil {
-			t.connsPerHost = make(map[connectMethodKey]int)
-		}
-		t.connsPerHost[key]++
-		t.connsPerHostMu.Unlock()
+	select {
+	case <-t.incHostConnCount(key):
+	default:
+		return false
 	}
-
 	return t.tryPutIdleConn(&persistConn{
 		t:        t,
 		conn:     c,                   // dummy
@@ -255,18 +244,3 @@ func ExportSetH2GoawayTimeout(d time.Duration) (restore func()) {
 }
 
 func (r *Request) ExportIsReplayable() bool { return r.isReplayable() }
-
-// ExportCloseTransportConnsAbruptly closes all idle connections from
-// tr in an abrupt way, just reaching into the underlying Conns and
-// closing them, without telling the Transport or its persistConns
-// that it's doing so. This is to simulate the server closing connections
-// on the Transport.
-func ExportCloseTransportConnsAbruptly(tr *Transport) {
-	tr.idleMu.Lock()
-	for _, pcs := range tr.idleConn {
-		for _, pc := range pcs {
-			pc.conn.Close()
-		}
-	}
-	tr.idleMu.Unlock()
-}

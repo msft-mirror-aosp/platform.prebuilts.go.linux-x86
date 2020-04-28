@@ -35,10 +35,7 @@ var m *M
 var m1 *M1
 var m2 *M2
 
-var V interface{}
-
-func use(x interface{}) {
-	V = x
+func use(interface{}) {
 }
 
 var tests = []struct{

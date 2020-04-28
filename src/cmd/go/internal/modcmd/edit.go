@@ -385,9 +385,7 @@ type replaceJSON struct {
 // editPrintJSON prints the -json output.
 func editPrintJSON(modFile *modfile.File) {
 	var f fileJSON
-	if modFile.Module != nil {
-		f.Module = modFile.Module.Mod
-	}
+	f.Module = modFile.Module.Mod
 	if modFile.Go != nil {
 		f.Go = modFile.Go.Version
 	}

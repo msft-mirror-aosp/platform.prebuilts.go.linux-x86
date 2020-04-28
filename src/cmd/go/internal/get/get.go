@@ -118,6 +118,11 @@ func runGet(cmd *base.Command, args []string) {
 		// Should not happen: main.go should install the separate module-enabled get code.
 		base.Fatalf("go get: modules not implemented")
 	}
+	if cfg.GoModInGOPATH != "" {
+		// Warn about not using modules with GO111MODULE=auto when go.mod exists.
+		// To silence the warning, users can set GO111MODULE=off.
+		fmt.Fprintf(os.Stderr, "go get: warning: modules disabled by GO111MODULE=auto in GOPATH/src;\n\tignoring %s;\n\tsee 'go help modules'\n", base.ShortPath(cfg.GoModInGOPATH))
+	}
 
 	work.BuildInit()
 
@@ -171,6 +176,12 @@ func runGet(cmd *base.Command, args []string) {
 	// track of the reverse dependency information, evict
 	// everything.
 	load.ClearPackageCache()
+
+	// In order to rebuild packages information completely,
+	// we need to clear commands cache. Command packages are
+	// referring to evicted packages from the package cache.
+	// This leads to duplicated loads of the standard packages.
+	load.ClearCmdCache()
 
 	pkgs := load.PackagesForBuild(args)
 
@@ -229,8 +240,7 @@ func download(arg string, parent *load.Package, stk *load.ImportStack, mode int)
 	}
 	load1 := func(path string, mode int) *load.Package {
 		if parent == nil {
-			mode := 0 // don't do module or vendor resolution
-			return load.LoadImport(path, base.Cwd, nil, stk, nil, mode)
+			return load.LoadPackageNoFlags(path, stk)
 		}
 		return load.LoadImport(path, parent.Dir, parent, stk, nil, mode|load.ResolveModule)
 	}
@@ -387,7 +397,7 @@ func downloadPackage(p *load.Package) error {
 		blindRepo      bool // set if the repo has unusual configuration
 	)
 
-	security := web.SecureOnly
+	security := web.Secure
 	if Insecure {
 		security = web.Insecure
 	}

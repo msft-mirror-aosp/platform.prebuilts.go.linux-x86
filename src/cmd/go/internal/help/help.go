@@ -17,7 +17,6 @@ import (
 	"unicode/utf8"
 
 	"cmd/go/internal/base"
-	"cmd/go/internal/modload"
 )
 
 // Help implements the 'help' command.
@@ -36,10 +35,8 @@ func Help(w io.Writer, args []string) {
 		usage := &base.Command{Long: buf.String()}
 		cmds := []*base.Command{usage}
 		for _, cmd := range base.Go.Commands {
-			// Avoid duplication of the "get" documentation.
-			if cmd.UsageLine == "module-get" && modload.Enabled() {
-				continue
-			} else if cmd.UsageLine == "gopath-get" && !modload.Enabled() {
+			if cmd.UsageLine == "gopath-get" {
+				// Avoid duplication of the "get" documentation.
 				continue
 			}
 			cmds = append(cmds, cmd)
@@ -63,11 +60,10 @@ Args:
 		// helpSuccess is the help command using as many args as possible that would succeed.
 		helpSuccess := "go help"
 		if i > 0 {
-			helpSuccess += " " + strings.Join(args[:i], " ")
+			helpSuccess = " " + strings.Join(args[:i], " ")
 		}
 		fmt.Fprintf(os.Stderr, "go help %s: unknown help topic. Run '%s'.\n", strings.Join(args, " "), helpSuccess)
-		base.SetExitStatus(2) // failed at 'go help cmd'
-		base.Exit()
+		os.Exit(2) // failed at 'go help cmd'
 	}
 
 	if len(cmd.Commands) > 0 {
@@ -171,8 +167,7 @@ func tmpl(w io.Writer, text string, data interface{}) {
 	if ew.err != nil {
 		// I/O error writing. Ignore write on closed pipe.
 		if strings.Contains(ew.err.Error(), "pipe") {
-			base.SetExitStatus(1)
-			base.Exit()
+			os.Exit(1)
 		}
 		base.Fatalf("writing output: %v", ew.err)
 	}

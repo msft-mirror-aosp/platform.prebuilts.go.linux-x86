@@ -821,14 +821,24 @@ func testVariousDeadlines(t *testing.T) {
 		d   time.Duration
 	}
 
+	ch := make(chan error, 1)
+	pasvch := make(chan result)
 	handler := func(ls *localServer, ln Listener) {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
-				break
+				ch <- err
+				return
 			}
-			c.Read(make([]byte, 1)) // wait for client to close connection
-			c.Close()
+			// The server, with no timeouts of its own,
+			// sending bytes to clients as fast as it can.
+			go func() {
+				t0 := time.Now()
+				n, err := io.Copy(c, neverEnding('a'))
+				dt := time.Since(t0)
+				c.Close()
+				pasvch <- result{n, err, dt}
+			}()
 		}
 	}
 	ls, err := newLocalServer("tcp")
@@ -869,18 +879,18 @@ func testVariousDeadlines(t *testing.T) {
 			}
 		}
 		for run := 0; run < numRuns; run++ {
-			name := fmt.Sprintf("%v %d/%d", timeout, run, numRuns)
+			name := fmt.Sprintf("%v run %d/%d", timeout, run+1, numRuns)
 			t.Log(name)
-
-			tooSlow := time.NewTimer(5 * time.Second)
-			defer tooSlow.Stop()
 
 			c, err := Dial(ls.Listener.Addr().Network(), ls.Listener.Addr().String())
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			ch := make(chan result, 1)
+			tooLong := 5 * time.Second
+			max := time.NewTimer(tooLong)
+			defer max.Stop()
+			actvch := make(chan result)
 			go func() {
 				t0 := time.Now()
 				if err := c.SetDeadline(t0.Add(timeout)); err != nil {
@@ -889,18 +899,27 @@ func testVariousDeadlines(t *testing.T) {
 				n, err := io.Copy(ioutil.Discard, c)
 				dt := time.Since(t0)
 				c.Close()
-				ch <- result{n, err, dt}
+				actvch <- result{n, err, dt}
 			}()
 
 			select {
-			case res := <-ch:
+			case res := <-actvch:
 				if nerr, ok := res.err.(Error); ok && nerr.Timeout() {
-					t.Logf("%v: good timeout after %v; %d bytes", name, res.d, res.n)
+					t.Logf("for %v, good client timeout after %v, reading %d bytes", name, res.d, res.n)
 				} else {
-					t.Fatalf("%v: Copy = %d, %v; want timeout", name, res.n, res.err)
+					t.Fatalf("for %v, client Copy = %d, %v; want timeout", name, res.n, res.err)
 				}
-			case <-tooSlow.C:
-				t.Fatalf("%v: client stuck in Dial+Copy", name)
+			case <-max.C:
+				t.Fatalf("for %v, timeout (%v) waiting for client to timeout (%v) reading", name, tooLong, timeout)
+			}
+
+			select {
+			case res := <-pasvch:
+				t.Logf("for %v, server in %v wrote %d: %v", name, res.d, res.n, res.err)
+			case err := <-ch:
+				t.Fatalf("for %v, Accept = %v", name, err)
+			case <-max.C:
+				t.Fatalf("for %v, timeout waiting for server to finish writing", name)
 			}
 		}
 	}

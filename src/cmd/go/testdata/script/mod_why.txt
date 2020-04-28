@@ -1,5 +1,4 @@
 env GO111MODULE=on
-[short] skip
 
 go list -test all
 stdout rsc.io/quote

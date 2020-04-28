@@ -580,9 +580,6 @@ func TestStringBytes(t *testing.T) {
 	// Test that encodeState.stringBytes and encodeState.string use the same encoding.
 	var r []rune
 	for i := '\u0000'; i <= unicode.MaxRune; i++ {
-		if testing.Short() && i > 1000 {
-			i = unicode.MaxRune
-		}
 		r = append(r, i)
 	}
 	s := string(r) + "\xff\xff\xffhello" // some invalid UTF-8 too
@@ -867,9 +864,6 @@ func TestMarshalFloat(t *testing.T) {
 
 	var digits = "1.2345678901234567890123"
 	for i := len(digits); i >= 2; i-- {
-		if testing.Short() && i < len(digits)-4 {
-			break
-		}
 		for exp := -30; exp <= 30; exp++ {
 			for _, sign := range "+-" {
 				for bits := 32; bits <= 64; bits += 32 {

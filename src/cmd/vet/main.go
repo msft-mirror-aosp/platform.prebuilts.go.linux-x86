@@ -1,8 +1,6 @@
 package main
 
 import (
-	"cmd/internal/objabi"
-
 	"golang.org/x/tools/go/analysis/unitchecker"
 
 	"golang.org/x/tools/go/analysis/passes/asmdecl"
@@ -13,7 +11,6 @@ import (
 	"golang.org/x/tools/go/analysis/passes/cgocall"
 	"golang.org/x/tools/go/analysis/passes/composite"
 	"golang.org/x/tools/go/analysis/passes/copylock"
-	"golang.org/x/tools/go/analysis/passes/errorsas"
 	"golang.org/x/tools/go/analysis/passes/httpresponse"
 	"golang.org/x/tools/go/analysis/passes/loopclosure"
 	"golang.org/x/tools/go/analysis/passes/lostcancel"
@@ -30,8 +27,6 @@ import (
 )
 
 func main() {
-	objabi.AddVersionFlag()
-
 	unitchecker.Main(
 		asmdecl.Analyzer,
 		assign.Analyzer,
@@ -41,7 +36,6 @@ func main() {
 		cgocall.Analyzer,
 		composite.Analyzer,
 		copylock.Analyzer,
-		errorsas.Analyzer,
 		httpresponse.Analyzer,
 		loopclosure.Analyzer,
 		lostcancel.Analyzer,

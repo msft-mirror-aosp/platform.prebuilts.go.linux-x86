@@ -28,19 +28,6 @@ const (
 	SYS_FCNTL
 )
 
-const (
-	// AF_LOCAL doesn't exist on AIX
-	AF_LOCAL = AF_UNIX
-)
-
-func (ts *StTimespec_t) Unix() (sec int64, nsec int64) {
-	return int64(ts.Sec), int64(ts.Nsec)
-}
-
-func (ts *StTimespec_t) Nano() int64 {
-	return int64(ts.Sec)*1e9 + int64(ts.Nsec)
-}
-
 /*
  * Wrapped
  */
@@ -51,7 +38,7 @@ func (ts *StTimespec_t) Nano() int64 {
 // But, as fcntl is currently not exported and isn't called with F_DUP2FD,
 // it doesn't matter.
 //sys	fcntl(fd int, cmd int, arg int) (val int, err error)
-//sys	Dup2(old int, new int) (err error)
+//sys	dup2(old int, new int) (val int, err error)
 
 //sysnb pipe(p *[2]_C_int) (err error)
 func Pipe(p []int) (err error) {
@@ -230,11 +217,8 @@ func Wait4(pid int, wstatus *WaitStatus, options int, rusage *Rusage) (wpid int,
 //sys	recvfrom(fd int, p []byte, flags int, from *RawSockaddrAny, fromlen *_Socklen) (n int, err error)
 //sys	sendto(s int, buf []byte, flags int, to unsafe.Pointer, addrlen _Socklen) (err error)
 //sys	Shutdown(s int, how int) (err error)
-
-// In order to use msghdr structure with Control, Controllen in golang.org/x/net,
-// nrecvmsg and nsendmsg must be used.
-//sys	recvmsg(s int, msg *Msghdr, flags int) (n int, err error) = nrecvmsg
-//sys	sendmsg(s int, msg *Msghdr, flags int) (n int, err error) = nsendmsg
+//sys	recvmsg(s int, msg *Msghdr, flags int) (n int, err error)
+//sys	sendmsg(s int, msg *Msghdr, flags int) (n int, err error)
 
 func (sa *SockaddrInet4) sockaddr() (unsafe.Pointer, _Socklen, error) {
 	if sa.Port < 0 || sa.Port > 0xFFFF {
@@ -404,7 +388,7 @@ func SendmsgN(fd int, p, oob []byte, to Sockaddr, flags int) (n int, err error) 
 func (sa *RawSockaddrUnix) getLen() (int, error) {
 	// Some versions of AIX have a bug in getsockname (see IV78655).
 	// We can't rely on sa.Len being set correctly.
-	n := SizeofSockaddrUnix - 3 // subtract leading Family, Len, terminating NUL.
+	n := SizeofSockaddrUnix - 3 // substract leading Family, Len, terminating NUL.
 	for i := 0; i < n; i++ {
 		if sa.Path[i] == 0 {
 			n = i
@@ -448,18 +432,6 @@ func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
 		return sa, nil
 	}
 	return nil, EAFNOSUPPORT
-}
-
-type SockaddrDatalink struct {
-	Len    uint8
-	Family uint8
-	Index  uint16
-	Type   uint8
-	Nlen   uint8
-	Alen   uint8
-	Slen   uint8
-	Data   [120]uint8
-	raw    RawSockaddrDatalink
 }
 
 /*
@@ -587,7 +559,6 @@ func PtraceDetach(pid int) (err error) { return ptrace64(PT_DETACH, int64(pid), 
 //sys	Chdir(path string) (err error)
 //sys	Chmod(path string, mode uint32) (err error)
 //sys	Chown(path string, uid int, gid int) (err error)
-//sys	Chroot(path string) (err error)
 //sys	Close(fd int) (err error)
 //sys	Dup(fd int) (nfd int, err error)
 //sys	Faccessat(dirfd int, path string, mode uint32, flags int) (err error)
@@ -606,7 +577,6 @@ func PtraceDetach(pid int) (err error) { return ptrace64(PT_DETACH, int64(pid), 
 //sys	Geteuid() (euid int)
 //sys	Getegid() (egid int)
 //sys	Getppid() (ppid int)
-//sys	Getpriority(which int, who int) (n int, err error)
 //sysnb	Getrlimit(which int, lim *Rlimit) (err error)
 //sysnb	Getuid() (uid int)
 //sys	Kill(pid int, signum Signal) (err error)
@@ -629,10 +599,8 @@ func PtraceDetach(pid int) (err error) { return ptrace64(PT_DETACH, int64(pid), 
 //sysnb	Seteuid(euid int) (err error)
 //sysnb	Setgid(gid int) (err error)
 //sysnb	Setpgid(pid int, pgid int) (err error)
-//sys	Setpriority(which int, who int, prio int) (err error)
 //sysnb	Setregid(rgid int, egid int) (err error)
 //sysnb	Setreuid(ruid int, euid int) (err error)
-//sysnb	Setrlimit(which int, lim *Rlimit) (err error)
 //sys	Stat(path string, stat *Stat_t) (err error)
 //sys	Statfs(path string, buf *Statfs_t) (err error)
 //sys	Symlink(path string, link string) (err error)

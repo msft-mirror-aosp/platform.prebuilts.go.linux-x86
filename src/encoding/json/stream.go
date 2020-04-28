@@ -92,23 +92,20 @@ func (dec *Decoder) readValue() (int, error) {
 	scanp := dec.scanp
 	var err error
 Input:
-	// help the compiler see that scanp is never negative, so it can remove
-	// some bounds checks below.
-	for scanp >= 0 {
-
+	for {
 		// Look in the buffer for a new value.
-		for ; scanp < len(dec.buf); scanp++ {
-			c := dec.buf[scanp]
+		for i, c := range dec.buf[scanp:] {
 			dec.scan.bytes++
 			switch dec.scan.step(&dec.scan, c) {
 			case scanEnd:
+				scanp += i
 				break Input
 			case scanEndObject, scanEndArray:
 				// scanEnd is delayed one byte.
 				// We might block trying to get that byte from src,
 				// so instead invent a space byte.
 				if stateEndValue(&dec.scan, ' ') == scanEnd {
-					scanp++
+					scanp += i + 1
 					break Input
 				}
 			case scanError:
@@ -116,6 +113,7 @@ Input:
 				return 0, dec.scan.err
 			}
 		}
+		scanp = len(dec.buf)
 
 		// Did the last read have an error?
 		// Delayed until now to allow buffer scan.

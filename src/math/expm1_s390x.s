@@ -99,7 +99,9 @@ L2:
 	FMADD	F5, F4, F0
 	FMOVD	16(R5), F6
 	WFMADB	V0, V2, V6, V2
-	RISBGZ	$57, $60, $3, R1, R3
+	WORD	$0xEC3139BC	//risbg	%r3,%r1,57,128+60,3
+	BYTE	$0x03
+	BYTE	$0x55
 	WORD	$0xB3130022	//lcdbr	%f2,%f2
 	MOVD	$·expm1tab<>+0(SB), R2
 	WORD	$0x68432000	//ld	%f4,0(%r3,%r2)
@@ -155,7 +157,9 @@ L6:
 	FMADD	F4, F1, F6
 	LGDR	F5, R1
 	WORD	$0xB3130066	//lcdbr	%f6,%f6
-	RISBGZ	$57, $60, $3, R1, R3
+	WORD	$0xEC3139BC	//risbg	%r3,%r1,57,128+60,3
+	BYTE	$0x03
+	BYTE	$0x55
 	WORD	$0x68432000	//ld	%f4,0(%r3,%r2)
 	FMADD	F4, F1, F1
 	MOVD	$0x4086000000000000, R2
@@ -164,7 +168,9 @@ L6:
 	WFCHDBS	V2, V0, V0
 	BEQ	L21
 	ADDW	$0xF000, R1
-	RISBGN	$0, $15, $48, R1, R2
+	WORD	$0xEC21000F	//risbgn	%r2,%r1,64-64+0,64-64+0+16-1,64-0-16
+	BYTE	$0x30
+	BYTE	$0x59
 	LDGR	R2, F0
 	FMADD	F0, F4, F0
 	MOVD	$·expm1x4ff<>+0(SB), R3
@@ -180,7 +186,9 @@ L7:
 	RET
 L21:
 	ADDW	$0x1000, R1
-	RISBGN	$0, $15, $48, R1, R2
+	WORD	$0xEC21000F	//risbgn	%r2,%r1,64-64+0,64-64+0+16-1,64-0-16
+	BYTE	$0x30
+	BYTE	$0x59
 	LDGR	R2, F0
 	FMADD	F0, F4, F0
 	MOVD	$·expm1x2ff<>+0(SB), R3

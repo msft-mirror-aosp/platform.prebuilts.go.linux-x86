@@ -42,7 +42,7 @@ func mapaccess1_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer {
 	for ; b != nil; b = b.overflow(t) {
 		for i, k := uintptr(0), b.keys(); i < bucketCnt; i, k = i+1, add(k, 4) {
 			if *(*uint32)(k) == key && !isEmpty(b.tophash[i]) {
-				return add(unsafe.Pointer(b), dataOffset+bucketCnt*4+i*uintptr(t.elemsize))
+				return add(unsafe.Pointer(b), dataOffset+bucketCnt*4+i*uintptr(t.valuesize))
 			}
 		}
 	}
@@ -82,7 +82,7 @@ func mapaccess2_fast32(t *maptype, h *hmap, key uint32) (unsafe.Pointer, bool) {
 	for ; b != nil; b = b.overflow(t) {
 		for i, k := uintptr(0), b.keys(); i < bucketCnt; i, k = i+1, add(k, 4) {
 			if *(*uint32)(k) == key && !isEmpty(b.tophash[i]) {
-				return add(unsafe.Pointer(b), dataOffset+bucketCnt*4+i*uintptr(t.elemsize)), true
+				return add(unsafe.Pointer(b), dataOffset+bucketCnt*4+i*uintptr(t.valuesize)), true
 			}
 		}
 	}
@@ -171,12 +171,12 @@ bucketloop:
 	h.count++
 
 done:
-	elem := add(unsafe.Pointer(insertb), dataOffset+bucketCnt*4+inserti*uintptr(t.elemsize))
+	val := add(unsafe.Pointer(insertb), dataOffset+bucketCnt*4+inserti*uintptr(t.valuesize))
 	if h.flags&hashWriting == 0 {
 		throw("concurrent map writes")
 	}
 	h.flags &^= hashWriting
-	return elem
+	return val
 }
 
 func mapassign_fast32ptr(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer {
@@ -261,12 +261,12 @@ bucketloop:
 	h.count++
 
 done:
-	elem := add(unsafe.Pointer(insertb), dataOffset+bucketCnt*4+inserti*uintptr(t.elemsize))
+	val := add(unsafe.Pointer(insertb), dataOffset+bucketCnt*4+inserti*uintptr(t.valuesize))
 	if h.flags&hashWriting == 0 {
 		throw("concurrent map writes")
 	}
 	h.flags &^= hashWriting
-	return elem
+	return val
 }
 
 func mapdelete_fast32(t *maptype, h *hmap, key uint32) {
@@ -299,14 +299,14 @@ search:
 				continue
 			}
 			// Only clear key if there are pointers in it.
-			if t.key.ptrdata != 0 {
+			if t.key.kind&kindNoPointers == 0 {
 				memclrHasPointers(k, t.key.size)
 			}
-			e := add(unsafe.Pointer(b), dataOffset+bucketCnt*4+i*uintptr(t.elemsize))
-			if t.elem.ptrdata != 0 {
-				memclrHasPointers(e, t.elem.size)
+			v := add(unsafe.Pointer(b), dataOffset+bucketCnt*4+i*uintptr(t.valuesize))
+			if t.elem.kind&kindNoPointers == 0 {
+				memclrHasPointers(v, t.elem.size)
 			} else {
-				memclrNoHeapPointers(e, t.elem.size)
+				memclrNoHeapPointers(v, t.elem.size)
 			}
 			b.tophash[i] = emptyOne
 			// If the bucket now ends in a bunch of emptyOne states,
@@ -373,7 +373,7 @@ func evacuate_fast32(t *maptype, h *hmap, oldbucket uintptr) {
 		x := &xy[0]
 		x.b = (*bmap)(add(h.buckets, oldbucket*uintptr(t.bucketsize)))
 		x.k = add(unsafe.Pointer(x.b), dataOffset)
-		x.e = add(x.k, bucketCnt*4)
+		x.v = add(x.k, bucketCnt*4)
 
 		if !h.sameSizeGrow() {
 			// Only calculate y pointers if we're growing bigger.
@@ -381,13 +381,13 @@ func evacuate_fast32(t *maptype, h *hmap, oldbucket uintptr) {
 			y := &xy[1]
 			y.b = (*bmap)(add(h.buckets, (oldbucket+newbit)*uintptr(t.bucketsize)))
 			y.k = add(unsafe.Pointer(y.b), dataOffset)
-			y.e = add(y.k, bucketCnt*4)
+			y.v = add(y.k, bucketCnt*4)
 		}
 
 		for ; b != nil; b = b.overflow(t) {
 			k := add(unsafe.Pointer(b), dataOffset)
-			e := add(k, bucketCnt*4)
-			for i := 0; i < bucketCnt; i, k, e = i+1, add(k, 4), add(e, uintptr(t.elemsize)) {
+			v := add(k, bucketCnt*4)
+			for i := 0; i < bucketCnt; i, k, v = i+1, add(k, 4), add(v, uintptr(t.valuesize)) {
 				top := b.tophash[i]
 				if isEmpty(top) {
 					b.tophash[i] = evacuatedEmpty
@@ -399,7 +399,7 @@ func evacuate_fast32(t *maptype, h *hmap, oldbucket uintptr) {
 				var useY uint8
 				if !h.sameSizeGrow() {
 					// Compute hash to make our evacuation decision (whether we need
-					// to send this key/elem to bucket x or bucket y).
+					// to send this key/value to bucket x or bucket y).
 					hash := t.key.alg.hash(k, uintptr(h.hash0))
 					if hash&newbit != 0 {
 						useY = 1
@@ -413,30 +413,30 @@ func evacuate_fast32(t *maptype, h *hmap, oldbucket uintptr) {
 					dst.b = h.newoverflow(t, dst.b)
 					dst.i = 0
 					dst.k = add(unsafe.Pointer(dst.b), dataOffset)
-					dst.e = add(dst.k, bucketCnt*4)
+					dst.v = add(dst.k, bucketCnt*4)
 				}
 				dst.b.tophash[dst.i&(bucketCnt-1)] = top // mask dst.i as an optimization, to avoid a bounds check
 
 				// Copy key.
-				if sys.PtrSize == 4 && t.key.ptrdata != 0 && writeBarrier.enabled {
+				if sys.PtrSize == 4 && t.key.kind&kindNoPointers == 0 && writeBarrier.enabled {
 					// Write with a write barrier.
 					*(*unsafe.Pointer)(dst.k) = *(*unsafe.Pointer)(k)
 				} else {
 					*(*uint32)(dst.k) = *(*uint32)(k)
 				}
 
-				typedmemmove(t.elem, dst.e, e)
+				typedmemmove(t.elem, dst.v, v)
 				dst.i++
 				// These updates might push these pointers past the end of the
-				// key or elem arrays.  That's ok, as we have the overflow pointer
+				// key or value arrays.  That's ok, as we have the overflow pointer
 				// at the end of the bucket to protect against pointing past the
 				// end of the bucket.
 				dst.k = add(dst.k, 4)
-				dst.e = add(dst.e, uintptr(t.elemsize))
+				dst.v = add(dst.v, uintptr(t.valuesize))
 			}
 		}
-		// Unlink the overflow buckets & clear key/elem to help GC.
-		if h.flags&oldIterator == 0 && t.bucket.ptrdata != 0 {
+		// Unlink the overflow buckets & clear key/value to help GC.
+		if h.flags&oldIterator == 0 && t.bucket.kind&kindNoPointers == 0 {
 			b := add(h.oldbuckets, oldbucket*uintptr(t.bucketsize))
 			// Preserve b.tophash because the evacuation
 			// state is maintained there.

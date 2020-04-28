@@ -18,27 +18,20 @@ import (
 
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/modfetch"
+	"cmd/go/internal/modfetch/codehost"
 	"cmd/go/internal/module"
 	"cmd/go/internal/par"
 	"cmd/go/internal/search"
 	"cmd/go/internal/semver"
-	"cmd/go/internal/str"
 )
 
 type ImportMissingError struct {
 	ImportPath string
 	Module     module.Version
-
-	// newMissingVersion is set to a newer version of Module if one is present
-	// in the build list. When set, we can't automatically upgrade.
-	newMissingVersion string
 }
 
 func (e *ImportMissingError) Error() string {
 	if e.Module.Path == "" {
-		if str.HasPathPrefix(e.ImportPath, "cmd") {
-			return fmt.Sprintf("package %s is not in GOROOT (%s)", e.ImportPath, filepath.Join(cfg.GOROOT, "src", e.ImportPath))
-		}
 		return "cannot find module providing package " + e.ImportPath
 	}
 	return "missing module for import: " + e.Module.Path + "@" + e.Module.Version + " provides " + e.ImportPath
@@ -68,24 +61,17 @@ func Import(path string) (m module.Version, dir string, err error) {
 	}
 
 	// Is the package in the standard library?
-	if search.IsStandardImportPath(path) &&
-		goroot.IsStandardPackage(cfg.GOROOT, cfg.BuildContext.Compiler, path) {
-		if targetInGorootSrc {
-			if dir, ok := dirInModule(path, targetPrefix, ModRoot(), true); ok {
-				return Target, dir, nil
-			}
+	if search.IsStandardImportPath(path) {
+		if goroot.IsStandardPackage(cfg.GOROOT, cfg.BuildContext.Compiler, path) {
+			dir := filepath.Join(cfg.GOROOT, "src", path)
+			return module.Version{}, dir, nil
 		}
-		dir := filepath.Join(cfg.GOROOT, "src", path)
-		return module.Version{}, dir, nil
-	}
-	if str.HasPathPrefix(path, "cmd") {
-		return module.Version{}, "", &ImportMissingError{ImportPath: path}
 	}
 
 	// -mod=vendor is special.
 	// Everything must be in the main module or the main module's vendor directory.
 	if cfg.BuildMod == "vendor" {
-		mainDir, mainOK := dirInModule(path, targetPrefix, ModRoot(), true)
+		mainDir, mainOK := dirInModule(path, Target.Path, ModRoot(), true)
 		vendorDir, vendorOK := dirInModule(path, "", filepath.Join(ModRoot(), "vendor"), false)
 		if mainOK && vendorOK {
 			return module.Version{}, "", fmt.Errorf("ambiguous import: found %s in multiple directories:\n\t%s\n\t%s", path, mainDir, vendorDir)
@@ -192,37 +178,14 @@ func Import(path string) (m module.Version, dir string, err error) {
 		}
 	}
 
-	candidates, err := QueryPackage(path, "latest", Allowed)
+	m, _, err = QueryPackage(path, "latest", Allowed)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			// Return "cannot find module providing package […]" instead of whatever
-			// low-level error QueryPackage produced.
-			return module.Version{}, "", &ImportMissingError{ImportPath: path}
-		} else {
+		if _, ok := err.(*codehost.VCSError); ok {
 			return module.Version{}, "", err
 		}
+		return module.Version{}, "", &ImportMissingError{ImportPath: path}
 	}
-	m = candidates[0].Mod
-	newMissingVersion := ""
-	for _, c := range candidates {
-		cm := c.Mod
-		for _, bm := range buildList {
-			if bm.Path == cm.Path && semver.Compare(bm.Version, cm.Version) > 0 {
-				// QueryPackage proposed that we add module cm to provide the package,
-				// but we already depend on a newer version of that module (and we don't
-				// have the package).
-				//
-				// This typically happens when a package is present at the "@latest"
-				// version (e.g., v1.0.0) of a module, but we have a newer version
-				// of the same module in the build list (e.g., v1.0.1-beta), and
-				// the package is not present there.
-				m = cm
-				newMissingVersion = bm.Version
-				break
-			}
-		}
-	}
-	return m, "", &ImportMissingError{ImportPath: path, Module: m, newMissingVersion: newMissingVersion}
+	return m, "", &ImportMissingError{ImportPath: path, Module: m}
 }
 
 // maybeInModule reports whether, syntactically,
@@ -266,8 +229,8 @@ func dirInModule(path, mpath, mdir string, isLocal bool) (dir string, haveGoFile
 	if isLocal {
 		for d := dir; d != mdir && len(d) > len(mdir); {
 			haveGoMod := haveGoModCache.Do(d, func() interface{} {
-				fi, err := os.Stat(filepath.Join(d, "go.mod"))
-				return err == nil && !fi.IsDir()
+				_, err := os.Stat(filepath.Join(d, "go.mod"))
+				return err == nil
 			}).(bool)
 
 			if haveGoMod {

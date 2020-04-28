@@ -22,27 +22,15 @@ import (
 //
 // Some relocations are created by cmd/link.
 type Reloc struct {
-	Off       int32            // offset to rewrite
-	Siz       uint8            // number of bytes to rewrite, 1, 2, or 4
-	Done      bool             // set to true when relocation is complete
-	Type      objabi.RelocType // the relocation type
-	Add       int64            // addend
-	Sym       *Symbol          // symbol the relocation addresses
-	*relocExt                  // extra fields (see below), may be nil, call InitExt before use
-}
-
-// relocExt contains extra fields in Reloc that are used only in
-// certain cases.
-type relocExt struct {
-	Xadd    int64        // addend passed to external linker
-	Xsym    *Symbol      // symbol passed to external linker
-	Variant RelocVariant // variation on Type, currently used only on PPC64 and S390X
-}
-
-func (r *Reloc) InitExt() {
-	if r.relocExt == nil {
-		r.relocExt = new(relocExt)
-	}
+	Off     int32            // offset to rewrite
+	Siz     uint8            // number of bytes to rewrite, 1, 2, or 4
+	Done    bool             // set to true when relocation is complete
+	Variant RelocVariant     // variation on Type
+	Type    objabi.RelocType // the relocation type
+	Add     int64            // addend
+	Xadd    int64            // addend passed to external linker
+	Sym     *Symbol          // symbol the relocation addresses
+	Xsym    *Symbol          // symbol passed to external linker
 }
 
 // RelocVariant is a linker-internal variation on a relocation.
@@ -69,8 +57,8 @@ func RelocName(arch *sys.Arch, r objabi.RelocType) string {
 	// Uncomment code when we include those in bootstrap code.
 
 	switch {
-	case r >= objabi.MachoRelocOffset: // Mach-O
-		// nr := (r - objabi.MachoRelocOffset)>>1
+	case r >= 512: // Mach-O
+		// nr := (r - 512)>>1
 		// switch ctxt.Arch.Family {
 		// case sys.AMD64:
 		// 	return macho.RelocTypeX86_64(nr).String()
@@ -83,8 +71,8 @@ func RelocName(arch *sys.Arch, r objabi.RelocType) string {
 		// default:
 		// 	panic("unreachable")
 		// }
-	case r >= objabi.ElfRelocOffset: // ELF
-		nr := r - objabi.ElfRelocOffset
+	case r >= 256: // ELF
+		nr := r - 256
 		switch arch.Family {
 		case sys.AMD64:
 			return elf.R_X86_64(nr).String()

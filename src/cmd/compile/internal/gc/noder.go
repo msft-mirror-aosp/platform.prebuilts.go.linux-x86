@@ -244,21 +244,10 @@ func (p *noder) node() {
 	xtop = append(xtop, p.decls(p.file.DeclList)...)
 
 	for _, n := range p.linknames {
-		if !imported_unsafe {
-			p.yyerrorpos(n.pos, "//go:linkname only allowed in Go files that import \"unsafe\"")
-			continue
-		}
-		s := lookup(n.local)
-		if n.remote != "" {
-			s.Linkname = n.remote
+		if imported_unsafe {
+			lookup(n.local).Linkname = n.remote
 		} else {
-			// Use the default object symbol name if the
-			// user didn't provide one.
-			if myimportpath == "" {
-				p.yyerrorpos(n.pos, "//go:linkname requires linkname argument or -p compiler flag")
-			} else {
-				s.Linkname = objabi.PathToPrefix(myimportpath) + "." + n.local
-			}
+			p.yyerrorpos(n.pos, "//go:linkname only allowed in Go files that import \"unsafe\"")
 		}
 	}
 
@@ -1321,35 +1310,6 @@ func (p *noder) binOp(op syntax.Operator) Op {
 	return binOps[op]
 }
 
-// checkLangCompat reports an error if the representation of a numeric
-// literal is not compatible with the current language version.
-func checkLangCompat(lit *syntax.BasicLit) {
-	s := lit.Value
-	if len(s) <= 2 || langSupported(1, 13) {
-		return
-	}
-	// len(s) > 2
-	if strings.Contains(s, "_") {
-		yyerror("underscores in numeric literals only supported as of -lang=go1.13")
-		return
-	}
-	if s[0] != '0' {
-		return
-	}
-	base := s[1]
-	if base == 'b' || base == 'B' {
-		yyerror("binary literals only supported as of -lang=go1.13")
-		return
-	}
-	if base == 'o' || base == 'O' {
-		yyerror("0o/0O-style octal literals only supported as of -lang=go1.13")
-		return
-	}
-	if lit.Kind != syntax.IntLit && (base == 'x' || base == 'X') {
-		yyerror("hexadecimal floating-point literals only supported as of -lang=go1.13")
-	}
-}
-
 func (p *noder) basicLit(lit *syntax.BasicLit) Val {
 	// TODO: Don't try to convert if we had syntax errors (conversions may fail).
 	//       Use dummy values so we can continue to compile. Eventually, use a
@@ -1357,20 +1317,17 @@ func (p *noder) basicLit(lit *syntax.BasicLit) Val {
 	//       we can continue type-checking w/o spurious follow-up errors.
 	switch s := lit.Value; lit.Kind {
 	case syntax.IntLit:
-		checkLangCompat(lit)
 		x := new(Mpint)
 		x.SetString(s)
 		return Val{U: x}
 
 	case syntax.FloatLit:
-		checkLangCompat(lit)
 		x := newMpflt()
 		x.SetString(s)
 		return Val{U: x}
 
 	case syntax.ImagLit:
-		checkLangCompat(lit)
-		x := newMpcmplx()
+		x := new(Mpcplx)
 		x.Imag.SetString(strings.TrimSuffix(s, "i"))
 		return Val{U: x}
 
@@ -1487,20 +1444,11 @@ func (p *noder) pragma(pos syntax.Pos, text string) syntax.Pragma {
 
 	case strings.HasPrefix(text, "go:linkname "):
 		f := strings.Fields(text)
-		if !(2 <= len(f) && len(f) <= 3) {
-			p.error(syntax.Error{Pos: pos, Msg: "usage: //go:linkname localname [linkname]"})
+		if len(f) != 3 {
+			p.error(syntax.Error{Pos: pos, Msg: "usage: //go:linkname localname linkname"})
 			break
 		}
-		// The second argument is optional. If omitted, we use
-		// the default object symbol name for this and
-		// linkname only serves to mark this symbol as
-		// something that may be referenced via the object
-		// symbol name from another package.
-		var target string
-		if len(f) == 3 {
-			target = f[2]
-		}
-		p.linknames = append(p.linknames, linkname{pos, f[1], target})
+		p.linknames = append(p.linknames, linkname{pos, f[1], f[2]})
 
 	case strings.HasPrefix(text, "go:cgo_import_dynamic "):
 		// This is permitted for general use because Solaris

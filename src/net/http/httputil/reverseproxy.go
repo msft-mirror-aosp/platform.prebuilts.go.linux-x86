@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/http/httpguts"
+	"internal/x/net/http/httpguts"
 )
 
 // ReverseProxy is an HTTP Handler that takes an incoming request and
@@ -51,7 +51,8 @@ type ReverseProxy struct {
 
 	// ErrorLog specifies an optional logger for errors
 	// that occur when attempting to proxy the request.
-	// If nil, logging is done via the log package's standard logger.
+	// If nil, logging goes to os.Stderr via the log package's
+	// standard logger.
 	ErrorLog *log.Logger
 
 	// BufferPool optionally specifies a buffer pool to
@@ -131,6 +132,16 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
+func cloneHeader(h http.Header) http.Header {
+	h2 := make(http.Header, len(h))
+	for k, vv := range h {
+		vv2 := make([]string, len(vv))
+		copy(vv2, vv)
+		h2[k] = vv2
+	}
+	return h2
+}
+
 // Hop-by-hop headers. These are removed when sent to the backend.
 // As of RFC 7230, hop-by-hop headers are required to appear in the
 // Connection header field. These are the headers defined by the
@@ -195,13 +206,12 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}()
 	}
 
-	outreq := req.Clone(ctx)
+	outreq := req.WithContext(ctx) // includes shallow copies of maps, but okay
 	if req.ContentLength == 0 {
 		outreq.Body = nil // Issue 16036: nil Body for http.Transport retries
 	}
-	if outreq.Header == nil {
-		outreq.Header = make(http.Header) // Issue 33142: historical behavior was to always allocate
-	}
+
+	outreq.Header = cloneHeader(req.Header)
 
 	p.Director(outreq)
 	outreq.Close = false
@@ -347,10 +357,10 @@ func shouldPanicOnCopyError(req *http.Request) bool {
 // removeConnectionHeaders removes hop-by-hop headers listed in the "Connection" header of h.
 // See RFC 7230, section 6.1
 func removeConnectionHeaders(h http.Header) {
-	for _, f := range h["Connection"] {
-		for _, sf := range strings.Split(f, ",") {
-			if sf = strings.TrimSpace(sf); sf != "" {
-				h.Del(sf)
+	if c := h.Get("Connection"); c != "" {
+		for _, f := range strings.Split(c, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				h.Del(f)
 			}
 		}
 	}
@@ -379,11 +389,6 @@ func (p *ReverseProxy) copyResponse(dst io.Writer, src io.Reader, flushInterval 
 				latency: flushInterval,
 			}
 			defer mlw.stop()
-
-			// set up initial timer so headers get flushed even if body writes are delayed
-			mlw.flushPending = true
-			mlw.t = time.AfterFunc(flushInterval, mlw.delayedFlush)
-
 			dst = mlw
 		}
 	}

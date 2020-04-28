@@ -26,7 +26,7 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/net/idna"
+	"internal/x/net/idna"
 )
 
 const (
@@ -237,12 +237,12 @@ type Request struct {
 	Host string
 
 	// Form contains the parsed form data, including both the URL
-	// field's query parameters and the PATCH, POST, or PUT form data.
+	// field's query parameters and the POST or PUT form data.
 	// This field is only available after ParseForm is called.
 	// The HTTP client ignores Form and uses Body instead.
 	Form url.Values
 
-	// PostForm contains the parsed form data from PATCH, POST
+	// PostForm contains the parsed form data from POST, PATCH,
 	// or PUT body parameters.
 	//
 	// This field is only available after ParseForm is called.
@@ -304,7 +304,7 @@ type Request struct {
 	//
 	// For server requests, this field is not applicable.
 	//
-	// Deprecated: Set the Request's context with NewRequestWithContext
+	// Deprecated: Use the Context and WithContext methods
 	// instead. If a Request's Cancel field and context are both
 	// set, it is undefined whether Cancel is respected.
 	Cancel <-chan struct{}
@@ -327,7 +327,7 @@ type Request struct {
 // The returned context is always non-nil; it defaults to the
 // background context.
 //
-// For outgoing client requests, the context controls cancellation.
+// For outgoing client requests, the context controls cancelation.
 //
 // For incoming server requests, the context is canceled when the
 // client's connection closes, the request is canceled (with HTTP/2),
@@ -345,11 +345,6 @@ func (r *Request) Context() context.Context {
 // For outgoing client request, the context controls the entire
 // lifetime of a request and its response: obtaining a connection,
 // sending the request, and reading the response headers and body.
-//
-// To create a new request with a context, use NewRequestWithContext.
-// To change the context of a request (such as an incoming) you then
-// also want to modify to send back out, use Request.Clone. Between
-// those two uses, it's rare to need WithContext.
 func (r *Request) WithContext(ctx context.Context) *Request {
 	if ctx == nil {
 		panic("nil context")
@@ -357,38 +352,16 @@ func (r *Request) WithContext(ctx context.Context) *Request {
 	r2 := new(Request)
 	*r2 = *r
 	r2.ctx = ctx
-	r2.URL = cloneURL(r.URL) // legacy behavior; TODO: try to remove. Issue 23544
-	return r2
-}
 
-// Clone returns a deep copy of r with its context changed to ctx.
-// The provided ctx must be non-nil.
-//
-// For an outgoing client request, the context controls the entire
-// lifetime of a request and its response: obtaining a connection,
-// sending the request, and reading the response headers and body.
-func (r *Request) Clone(ctx context.Context) *Request {
-	if ctx == nil {
-		panic("nil context")
+	// Deep copy the URL because it isn't
+	// a map and the URL is mutable by users
+	// of WithContext.
+	if r.URL != nil {
+		r2URL := new(url.URL)
+		*r2URL = *r.URL
+		r2.URL = r2URL
 	}
-	r2 := new(Request)
-	*r2 = *r
-	r2.ctx = ctx
-	r2.URL = cloneURL(r.URL)
-	if r.Header != nil {
-		r2.Header = r.Header.Clone()
-	}
-	if r.Trailer != nil {
-		r2.Trailer = r.Trailer.Clone()
-	}
-	if s := r.TransferEncoding; s != nil {
-		s2 := make([]string, len(s))
-		copy(s2, s)
-		r2.TransferEncoding = s
-	}
-	r2.Form = cloneURLValues(r.Form)
-	r2.PostForm = cloneURLValues(r.PostForm)
-	r2.MultipartForm = cloneMultipartForm(r.MultipartForm)
+
 	return r2
 }
 
@@ -450,7 +423,7 @@ func (r *Request) Referer() string {
 
 // multipartByReader is a sentinel value.
 // Its presence in Request.MultipartForm indicates that parsing of the request
-// body has been handed off to a MultipartReader instead of ParseMultipartForm.
+// body has been handed off to a MultipartReader instead of ParseMultipartFrom.
 var multipartByReader = &multipart.Form{
 	Value: make(map[string][]string),
 	File:  make(map[string][]*multipart.FileHeader),
@@ -808,34 +781,25 @@ func validMethod(method string) bool {
 	return len(method) > 0 && strings.IndexFunc(method, isNotToken) == -1
 }
 
-// NewRequest wraps NewRequestWithContext using the background context.
-func NewRequest(method, url string, body io.Reader) (*Request, error) {
-	return NewRequestWithContext(context.Background(), method, url, body)
-}
-
-// NewRequestWithContext returns a new Request given a method, URL, and
-// optional body.
+// NewRequest returns a new Request given a method, URL, and optional body.
 //
 // If the provided body is also an io.Closer, the returned
 // Request.Body is set to body and will be closed by the Client
 // methods Do, Post, and PostForm, and Transport.RoundTrip.
 //
-// NewRequestWithContext returns a Request suitable for use with
-// Client.Do or Transport.RoundTrip. To create a request for use with
-// testing a Server Handler, either use the NewRequest function in the
+// NewRequest returns a Request suitable for use with Client.Do or
+// Transport.RoundTrip. To create a request for use with testing a
+// Server Handler, either use the NewRequest function in the
 // net/http/httptest package, use ReadRequest, or manually update the
-// Request fields. For an outgoing client request, the context
-// controls the entire lifetime of a request and its response:
-// obtaining a connection, sending the request, and reading the
-// response headers and body. See the Request type's documentation for
-// the difference between inbound and outbound request fields.
+// Request fields. See the Request type's documentation for the
+// difference between inbound and outbound request fields.
 //
 // If body is of type *bytes.Buffer, *bytes.Reader, or
 // *strings.Reader, the returned request's ContentLength is set to its
 // exact value (instead of -1), GetBody is populated (so 307 and 308
 // redirects can replay the body), and Body is set to NoBody if the
 // ContentLength is 0.
-func NewRequestWithContext(ctx context.Context, method, url string, body io.Reader) (*Request, error) {
+func NewRequest(method, url string, body io.Reader) (*Request, error) {
 	if method == "" {
 		// We document that "" means "GET" for Request.Method, and people have
 		// relied on that from NewRequest, so keep that working.
@@ -844,9 +808,6 @@ func NewRequestWithContext(ctx context.Context, method, url string, body io.Read
 	}
 	if !validMethod(method) {
 		return nil, fmt.Errorf("net/http: invalid method %q", method)
-	}
-	if ctx == nil {
-		return nil, errors.New("net/http: nil Context")
 	}
 	u, err := parseURL(url) // Just url.Parse (url is shadowed for godoc).
 	if err != nil {
@@ -859,7 +820,6 @@ func NewRequestWithContext(ctx context.Context, method, url string, body io.Read
 	// The host's colon:port should be normalized. See Issue 14836.
 	u.Host = removeEmptyPort(u.Host)
 	req := &Request{
-		ctx:        ctx,
 		Method:     method,
 		URL:        u,
 		Proto:      "HTTP/1.1",
@@ -952,10 +912,6 @@ func parseBasicAuth(auth string) (username, password string, ok bool) {
 //
 // With HTTP Basic Authentication the provided username and password
 // are not encrypted.
-//
-// Some protocols may impose additional requirements on pre-escaping the
-// username and password. For instance, when used with OAuth2, both arguments
-// must be URL encoded first with url.QueryEscape.
 func (r *Request) SetBasicAuth(username, password string) {
 	r.Header.Set("Authorization", "Basic "+basicAuth(username, password))
 }

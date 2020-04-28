@@ -13,7 +13,6 @@ import (
 	"cmd/internal/src"
 	"cmd/internal/sys"
 	"fmt"
-	"internal/race"
 	"math/rand"
 	"sort"
 	"sync"
@@ -259,15 +258,17 @@ func compile(fn *Node) {
 	// be types of stack objects. We need to do this here
 	// because symbols must be allocated before the parallel
 	// phase of the compiler.
-	for _, n := range fn.Func.Dcl {
-		switch n.Class() {
-		case PPARAM, PPARAMOUT, PAUTO:
-			if livenessShouldTrack(n) && n.Addrtaken() {
-				dtypesym(n.Type)
-				// Also make sure we allocate a linker symbol
-				// for the stack object data, for the same reason.
-				if fn.Func.lsym.Func.StackObjects == nil {
-					fn.Func.lsym.Func.StackObjects = Ctxt.Lookup(fn.Func.lsym.Name + ".stkobj")
+	if fn.Func.lsym != nil { // not func _(){}
+		for _, n := range fn.Func.Dcl {
+			switch n.Class() {
+			case PPARAM, PPARAMOUT, PAUTO:
+				if livenessShouldTrack(n) && n.Addrtaken() {
+					dtypesym(n.Type)
+					// Also make sure we allocate a linker symbol
+					// for the stack object data, for the same reason.
+					if fn.Func.lsym.Func.StackObjects == nil {
+						fn.Func.lsym.Func.StackObjects = lookup(fmt.Sprintf("%s.stkobj", fn.funcname())).Linksym()
+					}
 				}
 			}
 		}
@@ -326,7 +327,7 @@ func compileSSA(fn *Node, worker int) {
 }
 
 func init() {
-	if race.Enabled {
+	if raceEnabled {
 		rand.Seed(time.Now().UnixNano())
 	}
 }
@@ -337,7 +338,7 @@ func init() {
 func compileFunctions() {
 	if len(compilequeue) != 0 {
 		sizeCalculationDisabled = true // not safe to calculate sizes concurrently
-		if race.Enabled {
+		if raceEnabled {
 			// Randomize compilation order to try to shake out races.
 			tmp := make([]*Node, len(compilequeue))
 			perm := rand.Perm(len(compilequeue))
@@ -349,7 +350,7 @@ func compileFunctions() {
 			// Compile the longest functions first,
 			// since they're most likely to be the slowest.
 			// This helps avoid stragglers.
-			sort.Slice(compilequeue, func(i, j int) bool {
+			obj.SortSlice(compilequeue, func(i, j int) bool {
 				return compilequeue[i].Nbody.Len() > compilequeue[j].Nbody.Len()
 			})
 		}
@@ -554,9 +555,11 @@ func createDwarfVars(fnsym *obj.LSym, fn *Func, automDecls []*Node) ([]*Node, []
 		decls, vars, selected = createSimpleVars(automDecls)
 	}
 
-	dcl := automDecls
+	var dcl []*Node
 	if fnsym.WasInlined() {
 		dcl = preInliningDcls(fnsym)
+	} else {
+		dcl = automDecls
 	}
 
 	// If optimization is enabled, the list above will typically be
@@ -594,22 +597,8 @@ func createDwarfVars(fnsym *obj.LSym, fn *Func, automDecls []*Node) ([]*Node, []
 		typename := dwarf.InfoPrefix + typesymname(n.Type)
 		decls = append(decls, n)
 		abbrev := dwarf.DW_ABRV_AUTO_LOCLIST
-		isReturnValue := (n.Class() == PPARAMOUT)
 		if n.Class() == PPARAM || n.Class() == PPARAMOUT {
 			abbrev = dwarf.DW_ABRV_PARAM_LOCLIST
-		} else if n.Class() == PAUTOHEAP {
-			// If dcl in question has been promoted to heap, do a bit
-			// of extra work to recover original class (auto or param);
-			// see issue 30908. This insures that we get the proper
-			// signature in the abstract function DIE, but leaves a
-			// misleading location for the param (we want pointer-to-heap
-			// and not stack).
-			// TODO(thanm): generate a better location expression
-			stackcopy := n.Name.Param.Stackcopy
-			if stackcopy != nil && (stackcopy.Class() == PPARAM || stackcopy.Class() == PPARAMOUT) {
-				abbrev = dwarf.DW_ABRV_PARAM_LOCLIST
-				isReturnValue = (stackcopy.Class() == PPARAMOUT)
-			}
 		}
 		inlIndex := 0
 		if genDwarfInline > 1 {
@@ -623,7 +612,7 @@ func createDwarfVars(fnsym *obj.LSym, fn *Func, automDecls []*Node) ([]*Node, []
 		declpos := Ctxt.InnermostPos(n.Pos)
 		vars = append(vars, &dwarf.Var{
 			Name:          n.Sym.Name,
-			IsReturnValue: isReturnValue,
+			IsReturnValue: n.Class() == PPARAMOUT,
 			Abbrev:        abbrev,
 			StackOffset:   int32(n.Xoffset),
 			Type:          Ctxt.Lookup(typename),

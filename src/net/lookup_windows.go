@@ -56,12 +56,7 @@ func lookupProtocol(ctx context.Context, name string) (int, error) {
 			if proto, err := lookupProtocolMap(name); err == nil {
 				return proto, nil
 			}
-
-			dnsError := &DNSError{Err: r.err.Error(), Name: name}
-			if r.err == errNoSuchHost {
-				dnsError.IsNotFound = true
-			}
-			r.err = dnsError
+			r.err = &DNSError{Err: r.err.Error(), Name: name}
 		}
 		return r.proto, r.err
 	case <-ctx.Done():
@@ -101,18 +96,9 @@ func (r *Resolver) lookupIP(ctx context.Context, network, name string) ([]IPAddr
 			Protocol: syscall.IPPROTO_IP,
 		}
 		var result *syscall.AddrinfoW
-		name16p, err := syscall.UTF16PtrFromString(name)
-		if err != nil {
-			return nil, &DNSError{Name: name, Err: err.Error()}
-		}
-		e := syscall.GetAddrInfoW(name16p, nil, &hints, &result)
+		e := syscall.GetAddrInfoW(syscall.StringToUTF16Ptr(name), nil, &hints, &result)
 		if e != nil {
-			err := winError("getaddrinfow", e)
-			dnsError := &DNSError{Err: err.Error(), Name: name}
-			if err == errNoSuchHost {
-				dnsError.IsNotFound = true
-			}
-			return nil, dnsError
+			return nil, &DNSError{Err: winError("getaddrinfow", e).Error(), Name: name}
 		}
 		defer syscall.FreeAddrInfoW(result)
 		addrs := make([]IPAddr, 0, 5)
@@ -138,14 +124,11 @@ func (r *Resolver) lookupIP(ctx context.Context, network, name string) ([]IPAddr
 		err   error
 	}
 
-	var ch chan ret
-	if ctx.Err() == nil {
-		ch = make(chan ret, 1)
-		go func() {
-			addr, err := getaddr()
-			ch <- ret{addrs: addr, err: err}
-		}()
-	}
+	ch := make(chan ret, 1)
+	go func() {
+		addr, err := getaddr()
+		ch <- ret{addrs: addr, err: err}
+	}()
 
 	select {
 	case r := <-ch:
@@ -193,12 +176,7 @@ func (r *Resolver) lookupPort(ctx context.Context, network, service string) (int
 		if port, err := lookupPortMap(network, service); err == nil {
 			return port, nil
 		}
-		err := winError("getaddrinfow", e)
-		dnsError := &DNSError{Err: err.Error(), Name: network + "/" + service}
-		if err == errNoSuchHost {
-			dnsError.IsNotFound = true
-		}
-		return 0, dnsError
+		return 0, &DNSError{Err: winError("getaddrinfow", e).Error(), Name: network + "/" + service}
 	}
 	defer syscall.FreeAddrInfoW(result)
 	if result == nil {

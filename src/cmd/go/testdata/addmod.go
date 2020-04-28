@@ -29,7 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"cmd/go/internal/txtar"
+	"../internal/txtar"
 )
 
 func usage() {
@@ -44,7 +44,7 @@ func fatalf(format string, args ...interface{}) {
 	log.Fatalf(format, args...)
 }
 
-const goCmd = "go"
+const goCmd = "vgo"
 
 func main() {
 	flag.Usage = usage

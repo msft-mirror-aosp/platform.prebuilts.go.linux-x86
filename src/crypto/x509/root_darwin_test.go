@@ -120,10 +120,12 @@ func TestSystemRoots(t *testing.T) {
 
 	if t.Failed() && debugDarwinRoots {
 		cmd := exec.Command("security", "dump-trust-settings")
-		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 		cmd.Run()
 		cmd = exec.Command("security", "dump-trust-settings", "-d")
-		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 		cmd.Run()
 	}
 }

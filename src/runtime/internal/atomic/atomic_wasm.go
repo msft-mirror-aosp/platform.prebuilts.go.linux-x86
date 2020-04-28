@@ -5,24 +5,6 @@
 // TODO(neelance): implement with actual atomic operations as soon as threads are available
 // See https://github.com/WebAssembly/design/issues/1073
 
-// Export some functions via linkname to assembly in sync/atomic.
-//go:linkname Load
-//go:linkname Loadp
-//go:linkname Load64
-//go:linkname Loaduintptr
-//go:linkname Xadd
-//go:linkname Xadd64
-//go:linkname Xadduintptr
-//go:linkname Xchg
-//go:linkname Xchg64
-//go:linkname Xchguintptr
-//go:linkname Cas
-//go:linkname Cas64
-//go:linkname Casuintptr
-//go:linkname Store
-//go:linkname Store64
-//go:linkname Storeuintptr
-
 package atomic
 
 import "unsafe"
@@ -42,12 +24,6 @@ func Loadp(ptr unsafe.Pointer) unsafe.Pointer {
 //go:nosplit
 //go:noinline
 func LoadAcq(ptr *uint32) uint32 {
-	return *ptr
-}
-
-//go:nosplit
-//go:noinline
-func Load8(ptr *uint8) uint8 {
 	return *ptr
 }
 
@@ -147,13 +123,10 @@ func Store64(ptr *uint64, val uint64) {
 	*ptr = val
 }
 
-//go:notinheap
-type noWB struct{}
-
 //go:noinline
 //go:nosplit
 func StorepNoWB(ptr unsafe.Pointer, val unsafe.Pointer) {
-	*(**noWB)(ptr) = (*noWB)(val)
+	*(*uintptr)(ptr) = uintptr(val)
 }
 
 //go:nosplit

@@ -202,7 +202,6 @@ func testFlags(usage func(), args []string) (packageNames, passToTest []string) 
 		}
 	}
 
-	testVetExplicit = testVetList != ""
 	if testVetList != "" && testVetList != "off" {
 		if strings.Contains(testVetList, "=") {
 			base.Fatalf("-vet argument cannot contain equal signs")

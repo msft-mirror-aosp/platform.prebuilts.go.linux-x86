@@ -116,7 +116,9 @@ func (cmsg *Cmsghdr) SetLen(length int) {
 	cmsg.Len = uint64(length)
 }
 
-func rawVforkSyscall(trap, a1 uintptr) (r1 uintptr, err Errno)
+func rawVforkSyscall(trap, a1 uintptr) (r1 uintptr, err Errno) {
+	panic("not implemented")
+}
 
 //sys	syncFileRange2(fd int, flags int, off int64, n int64) (err error) = SYS_SYNC_FILE_RANGE2
 

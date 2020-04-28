@@ -18,7 +18,6 @@ func Init() (*sys.Arch, ld.Arch) {
 		Archinit:      archinit,
 		AssignAddress: assignAddress,
 		Asmb:          asmb,
-		Asmb2:         asmb2,
 		Gentext:       gentext,
 	}
 

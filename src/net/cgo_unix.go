@@ -3,7 +3,7 @@
 // license that can be found in the LICENSE file.
 
 // +build cgo,!netgo
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris
+// +build darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package net
 
@@ -14,11 +14,6 @@ package net
 #include <netdb.h>
 #include <unistd.h>
 #include <string.h>
-
-// If nothing else defined EAI_OVERFLOW, make sure it has a value.
-#ifndef EAI_OVERFLOW
-#define EAI_OVERFLOW -12
-#endif
 */
 import "C"
 
@@ -106,7 +101,6 @@ func cgoLookupServicePort(hints *C.struct_addrinfo, network, service string) (po
 	var res *C.struct_addrinfo
 	gerrno, err := C.getaddrinfo(nil, (*C.char)(unsafe.Pointer(&cservice[0])), hints, &res)
 	if gerrno != 0 {
-		isTemporary := false
 		switch gerrno {
 		case C.EAI_SYSTEM:
 			if err == nil { // see golang.org/issue/6232
@@ -114,9 +108,8 @@ func cgoLookupServicePort(hints *C.struct_addrinfo, network, service string) (po
 			}
 		default:
 			err = addrinfoErrno(gerrno)
-			isTemporary = addrinfoErrno(gerrno).Temporary()
 		}
-		return 0, &DNSError{Err: err.Error(), Name: network + "/" + service, IsTemporary: isTemporary}
+		return 0, &DNSError{Err: err.Error(), Name: network + "/" + service}
 	}
 	defer C.freeaddrinfo(res)
 
@@ -160,8 +153,6 @@ func cgoLookupIPCNAME(network, name string) (addrs []IPAddr, cname string, err e
 	var res *C.struct_addrinfo
 	gerrno, err := C.getaddrinfo((*C.char)(unsafe.Pointer(&h[0])), nil, &hints, &res)
 	if gerrno != 0 {
-		isErrorNoSuchHost := false
-		isTemporary := false
 		switch gerrno {
 		case C.EAI_SYSTEM:
 			if err == nil {
@@ -176,13 +167,10 @@ func cgoLookupIPCNAME(network, name string) (addrs []IPAddr, cname string, err e
 			}
 		case C.EAI_NONAME:
 			err = errNoSuchHost
-			isErrorNoSuchHost = true
 		default:
 			err = addrinfoErrno(gerrno)
-			isTemporary = addrinfoErrno(gerrno).Temporary()
 		}
-
-		return nil, "", &DNSError{Err: err.Error(), Name: name, IsNotFound: isErrorNoSuchHost, IsTemporary: isTemporary}
+		return nil, "", &DNSError{Err: err.Error(), Name: name}
 	}
 	defer C.freeaddrinfo(res)
 
@@ -303,7 +291,6 @@ func cgoLookupAddrPTR(addr string, sa *C.struct_sockaddr, salen C.socklen_t) (na
 		}
 	}
 	if gerrno != 0 {
-		isTemporary := false
 		switch gerrno {
 		case C.EAI_SYSTEM:
 			if err == nil { // see golang.org/issue/6232
@@ -311,9 +298,8 @@ func cgoLookupAddrPTR(addr string, sa *C.struct_sockaddr, salen C.socklen_t) (na
 			}
 		default:
 			err = addrinfoErrno(gerrno)
-			isTemporary = addrinfoErrno(gerrno).Temporary()
 		}
-		return nil, &DNSError{Err: err.Error(), Name: addr, IsTemporary: isTemporary}
+		return nil, &DNSError{Err: err.Error(), Name: addr}
 	}
 	for i := 0; i < len(b); i++ {
 		if b[i] == 0 {

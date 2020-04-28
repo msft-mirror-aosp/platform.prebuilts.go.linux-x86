@@ -832,10 +832,7 @@ func partsFromReader(r *Reader) ([]headerBody, error) {
 
 func TestParseAllSizes(t *testing.T) {
 	t.Parallel()
-	maxSize := 5 << 10
-	if testing.Short() {
-		maxSize = 512
-	}
+	const maxSize = 5 << 10
 	var buf bytes.Buffer
 	body := strings.Repeat("a", maxSize)
 	bodyb := []byte(body)

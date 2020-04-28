@@ -110,13 +110,11 @@ specifies that the command "foo" represents the generator
 "go tool foo".
 
 Generate processes packages in the order given on the command line,
-one at a time. If the command line lists .go files from a single directory,
-they are treated as a single package. Within a package, generate processes the
+one at a time. If the command line lists .go files, they are treated
+as a single package. Within a package, generate processes the
 source files in a package in file name order, one at a time. Within
 a source file, generate runs generators in the order they appear
-in the file, one at a time. The go generate tool also sets the build
-tag "generate" so that files may be examined by go generate but ignored
-during build.
+in the file, one at a time.
 
 If any generator returns an error exit status, "go generate" skips
 all further processing for that package.
@@ -163,9 +161,6 @@ func runGenerate(cmd *base.Command, args []string) {
 			log.Fatalf("generate: %s", err)
 		}
 	}
-
-	cfg.BuildContext.BuildTags = append(cfg.BuildContext.BuildTags, "generate")
-
 	// Even if the arguments are .go files, this loop suffices.
 	printed := false
 	for _, pkg := range load.Packages(args) {
@@ -379,12 +374,7 @@ Words:
 	// Substitute command if required.
 	if len(words) > 0 && g.commands[words[0]] != nil {
 		// Replace 0th word by command substitution.
-		//
-		// Force a copy of the command definition to
-		// ensure words doesn't end up as a reference
-		// to the g.commands content.
-		tmpCmdWords := append([]string(nil), (g.commands[words[0]])...)
-		words = append(tmpCmdWords, words[1:]...)
+		words = append(g.commands[words[0]], words[1:]...)
 	}
 	// Substitute environment variables.
 	for i, word := range words {
@@ -438,7 +428,7 @@ func (g *Generator) exec(words []string) {
 	cmd.Stderr = os.Stderr
 	// Run the command in the package directory.
 	cmd.Dir = g.dir
-	cmd.Env = append(cfg.OrigEnv, g.env...)
+	cmd.Env = base.MergeEnvLists(g.env, cfg.OrigEnv)
 	err := cmd.Run()
 	if err != nil {
 		g.errorf("running %q: %s", words[0], err)

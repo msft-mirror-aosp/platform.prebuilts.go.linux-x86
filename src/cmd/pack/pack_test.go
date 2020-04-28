@@ -231,9 +231,6 @@ func TestHello(t *testing.T) {
 
 // Test that pack works with very long lines in PKGDEF.
 func TestLargeDefs(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in -short mode")
-	}
 	testenv.MustHaveGoBuild(t)
 
 	dir := tmpDir(t)

@@ -467,8 +467,8 @@ func idevCmd(cmd *exec.Cmd) *exec.Cmd {
 func run(appdir, bundleID string, args []string) error {
 	var env []string
 	for _, e := range os.Environ() {
-		// Don't override TMPDIR, HOME, GOCACHE on the device.
-		if strings.HasPrefix(e, "TMPDIR=") || strings.HasPrefix(e, "HOME=") || strings.HasPrefix(e, "GOCACHE=") {
+		// Don't override TMPDIR on the device.
+		if strings.HasPrefix(e, "TMPDIR=") {
 			continue
 		}
 		env = append(env, e)
@@ -633,16 +633,8 @@ func subdir() (pkgpath string, underGoRoot bool, err error) {
 	if err != nil {
 		return "", false, err
 	}
-	cwd, err = filepath.EvalSymlinks(cwd)
-	if err != nil {
-		log.Fatal(err)
-	}
-	goroot, err := filepath.EvalSymlinks(runtime.GOROOT())
-	if err != nil {
-		return "", false, err
-	}
-	if strings.HasPrefix(cwd, goroot) {
-		subdir, err := filepath.Rel(goroot, cwd)
+	if root := runtime.GOROOT(); strings.HasPrefix(cwd, root) {
+		subdir, err := filepath.Rel(root, cwd)
 		if err != nil {
 			return "", false, err
 		}
@@ -650,14 +642,10 @@ func subdir() (pkgpath string, underGoRoot bool, err error) {
 	}
 
 	for _, p := range filepath.SplitList(build.Default.GOPATH) {
-		pabs, err := filepath.EvalSymlinks(p)
-		if err != nil {
-			return "", false, err
-		}
-		if !strings.HasPrefix(cwd, pabs) {
+		if !strings.HasPrefix(cwd, p) {
 			continue
 		}
-		subdir, err := filepath.Rel(pabs, cwd)
+		subdir, err := filepath.Rel(p, cwd)
 		if err == nil {
 			return subdir, false, nil
 		}

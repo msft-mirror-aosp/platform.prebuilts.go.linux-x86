@@ -4,17 +4,10 @@
 
 package runtime
 
-// Called from compiler-generated code; declared for go vet.
+// Stubs to pacify vet. Not safe to call from Go.
+// Calls to these functions are inserted by the compiler or assembler.
 func udiv()
 func _div()
 func _divu()
 func _mod()
 func _modu()
-
-// Called from assembly only; declared for go vet.
-func usplitR0()
-func load_g()
-func save_g()
-func emptyfunc()
-func _initcgo()
-func read_tls_fallback()

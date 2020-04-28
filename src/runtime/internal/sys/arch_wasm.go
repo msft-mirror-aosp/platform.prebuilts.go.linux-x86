@@ -10,6 +10,7 @@ const (
 	DefaultPhysPageSize = 65536
 	PCQuantum           = 1
 	Int64Align          = 8
+	HugePageSize        = 0
 	MinFrameSize        = 0
 )
 

@@ -202,12 +202,13 @@ import (
 	"bufio"
 	"bytes"
 	"cmd/compile/internal/types"
+	"cmd/internal/obj"
 	"cmd/internal/src"
 	"encoding/binary"
 	"fmt"
+	"go/ast"
 	"io"
 	"math/big"
-	"sort"
 	"strings"
 )
 
@@ -321,12 +322,12 @@ func (w *exportWriter) writeIndex(index map[*Node]uint64, mainIndex bool) {
 	for pkg, objs := range pkgObjs {
 		pkgs = append(pkgs, pkg)
 
-		sort.Slice(objs, func(i, j int) bool {
+		obj.SortSlice(objs, func(i, j int) bool {
 			return objs[i].Sym.Name < objs[j].Sym.Name
 		})
 	}
 
-	sort.Slice(pkgs, func(i, j int) bool {
+	obj.SortSlice(pkgs, func(i, j int) bool {
 		return pkgs[i].Path < pkgs[j].Path
 	})
 
@@ -1276,7 +1277,6 @@ func (w *exportWriter) expr(n *Node) {
 	case OCALL, OCALLFUNC, OCALLMETH, OCALLINTER, OGETG:
 		w.op(OCALL)
 		w.pos(n.Pos)
-		w.stmtList(n.Ninit)
 		w.expr(n.Left)
 		w.exprList(n.List)
 		w.bool(n.IsDDD())
@@ -1387,8 +1387,7 @@ func (w *exportWriter) localIdent(s *types.Sym, v int32) {
 		return
 	}
 
-	// TODO(mdempsky): Fix autotmp hack.
-	if i := strings.LastIndex(name, "."); i >= 0 && !strings.HasPrefix(name, ".autotmp_") {
+	if i := strings.LastIndex(name, "."); i >= 0 {
 		Fatalf("unexpected dot in identifier: %v", name)
 	}
 
@@ -1399,7 +1398,7 @@ func (w *exportWriter) localIdent(s *types.Sym, v int32) {
 		name = fmt.Sprintf("%s·%d", name, v)
 	}
 
-	if !types.IsExported(name) && s.Pkg != w.currPkg {
+	if !ast.IsExported(name) && s.Pkg != w.currPkg {
 		Fatalf("weird package in name: %v => %v, not %q", s, name, w.currPkg.Path)
 	}
 

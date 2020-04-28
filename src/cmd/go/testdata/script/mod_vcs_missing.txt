@@ -2,7 +2,7 @@
 [!net] skip
 
 env GO111MODULE=on
-env GOPROXY=direct
+env GOPROXY=
 
 cd empty
 ! go list launchpad.net/gocheck

@@ -77,7 +77,7 @@ func mpreinit(mp *m) {
 	mp.gsignal.m = mp
 }
 
-func sigtramp(ctxt byte)
+func sigtramp()
 
 //go:nosplit
 func msigsave(mp *m) {

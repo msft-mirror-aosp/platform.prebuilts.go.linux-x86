@@ -136,7 +136,9 @@ L9:
     BYTE    $0x1B
     SUBW    R4, R2
     WFSDB   V3, V2, V3
-    RISBGZ  $32, $47, $0, R2, R1
+    WORD    $0xEC1220AF //risbg %r1,%r2,32,128+47,0
+    BYTE    $0x00
+    BYTE    $0x55
     SLD $32, R1, R1
     LDGR    R1, F2
     WFMADB  V4, V2, V16, V4
@@ -160,7 +162,9 @@ L9:
     WFMADB  V2, V6, V3, V6
     VLVGF   $0, R1, V4
     LDEBR   F4, F4
-    RISBGZ  $57, $60, $51, R2, R2
+    WORD    $0xEC2239BC //risbg %r2,%r2,57,128+60,64-13
+    BYTE    $0x33
+    BYTE    $0x55
     MOVD    $·atanhtab2076<>+0(SB), R1
     FMOVD   16(R5), F3
     WORD    $0x68521000 //ld    %f5,0(%r2,%r1)

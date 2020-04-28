@@ -6,7 +6,6 @@ package modcmd
 
 import (
 	"bytes"
-	"cmd/go/internal/cfg"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -36,14 +35,6 @@ func runVerify(cmd *base.Command, args []string) {
 	if len(args) != 0 {
 		// NOTE(rsc): Could take a module pattern.
 		base.Fatalf("go mod verify: verify takes no arguments")
-	}
-	// Checks go mod expected behavior
-	if !modload.Enabled() {
-		if cfg.Getenv("GO111MODULE") == "off" {
-			base.Fatalf("go: modules disabled by GO111MODULE=off; see 'go help modules'")
-		} else {
-			base.Fatalf("go: cannot find main module; see 'go help modules'")
-		}
 	}
 	ok := true
 	for _, mod := range modload.LoadBuildList()[1:] {

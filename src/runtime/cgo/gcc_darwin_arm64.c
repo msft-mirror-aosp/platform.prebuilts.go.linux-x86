@@ -48,7 +48,7 @@ inittls(void **tlsg, void **tlsbase)
 }
 
 static void *threadentry(void*);
-static void (*setg_gcc)(void*);
+void (*setg_gcc)(void*);
 
 void
 _cgo_sys_thread_start(ThreadStart *ts)
@@ -105,7 +105,7 @@ init_working_dir()
 	}
 	CFURLRef url_ref = CFBundleCopyResourceURL(bundle, CFSTR("Info"), CFSTR("plist"), NULL);
 	if (url_ref == NULL) {
-		// No Info.plist found. It can happen on Corellium virtual devices.
+		fprintf(stderr, "runtime/cgo: no Info.plist URL\n");
 		return;
 	}
 	CFStringRef url_str_ref = CFURLGetString(url_ref);

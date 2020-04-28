@@ -69,7 +69,7 @@ func main() {
 	if err := pprof.StartCPUProfile(os.Stdout); err != nil {
 		log.Fatal("can't start CPU profile: ", err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 	pprof.StopCPUProfile()
 
 	if err := os.Stdout.Close(); err != nil {

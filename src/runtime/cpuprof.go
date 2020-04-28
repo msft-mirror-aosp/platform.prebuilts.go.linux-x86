@@ -36,10 +36,9 @@ type cpuProfile struct {
 	// 300 words per second.
 	// Hopefully a normal Go thread will get the profiling
 	// signal at least once every few seconds.
-	extra      [1000]uintptr
-	numExtra   int
-	lostExtra  uint64 // count of frames lost because extra is full
-	lostAtomic uint64 // count of frames lost because of being in atomic64 on mips/arm; updated racily
+	extra     [1000]uintptr
+	numExtra  int
+	lostExtra uint64 // count of frames lost because extra is full
 }
 
 var cpuprof cpuProfile
@@ -95,7 +94,7 @@ func (p *cpuProfile) add(gp *g, stk []uintptr) {
 	}
 
 	if prof.hz != 0 { // implies cpuprof.log != nil
-		if p.numExtra > 0 || p.lostExtra > 0 || p.lostAtomic > 0 {
+		if p.numExtra > 0 || p.lostExtra > 0 {
 			p.addExtra()
 		}
 		hdr := [1]uint64{1}
@@ -160,20 +159,18 @@ func (p *cpuProfile) addExtra() {
 			funcPC(_LostExternalCode) + sys.PCQuantum,
 			funcPC(_ExternalCode) + sys.PCQuantum,
 		}
-		p.log.write(nil, 0, hdr[:], lostStk[:])
+		cpuprof.log.write(nil, 0, hdr[:], lostStk[:])
 		p.lostExtra = 0
 	}
+}
 
-	if p.lostAtomic > 0 {
-		hdr := [1]uint64{p.lostAtomic}
-		lostStk := [2]uintptr{
-			funcPC(_LostSIGPROFDuringAtomic64) + sys.PCQuantum,
-			funcPC(_System) + sys.PCQuantum,
-		}
-		p.log.write(nil, 0, hdr[:], lostStk[:])
-		p.lostAtomic = 0
+func (p *cpuProfile) addLostAtomic64(count uint64) {
+	hdr := [1]uint64{count}
+	lostStk := [2]uintptr{
+		funcPC(_LostSIGPROFDuringAtomic64) + sys.PCQuantum,
+		funcPC(_System) + sys.PCQuantum,
 	}
-
+	cpuprof.log.write(nil, 0, hdr[:], lostStk[:])
 }
 
 // CPUProfile panics.
@@ -182,7 +179,7 @@ func (p *cpuProfile) addExtra() {
 // The details of generating that format have changed,
 // so this functionality has been removed.
 //
-// Deprecated: Use the runtime/pprof package,
+// Deprecated: use the runtime/pprof package,
 // or the handlers in the net/http/pprof package,
 // or the testing package's -test.cpuprofile flag instead.
 func CPUProfile() []byte {
