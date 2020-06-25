@@ -6,7 +6,6 @@ package load
 
 import (
 	"bytes"
-	"cmd/go/internal/base"
 	"cmd/go/internal/str"
 	"errors"
 	"fmt"
@@ -26,6 +25,7 @@ import (
 var TestMainDeps = []string{
 	// Dependencies for testmain.
 	"os",
+	"reflect",
 	"testing",
 	"testing/internal/testdeps",
 }
@@ -55,7 +55,6 @@ func TestPackagesFor(p *Package, cover *TestCover) (pmain, ptest, pxtest *Packag
 		}
 		if len(p1.DepsErrors) > 0 {
 			perr := p1.DepsErrors[0]
-			perr.Pos = "" // show full import stack
 			err = perr
 			break
 		}
@@ -110,7 +109,7 @@ func TestPackagesAndErrors(p *Package, cover *TestCover) (pmain, ptest, pxtest *
 			// non-test copy of a package.
 			ptestErr = &PackageError{
 				ImportStack:   testImportStack(stk[0], p1, p.ImportPath),
-				Err:           "import cycle not allowed in test",
+				Err:           errors.New("import cycle not allowed in test"),
 				IsImportCycle: true,
 			}
 		}
@@ -271,7 +270,7 @@ func TestPackagesAndErrors(p *Package, cover *TestCover) (pmain, ptest, pxtest *
 	// afterward that gathers t.Cover information.
 	t, err := loadTestFuncs(ptest)
 	if err != nil && pmain.Error == nil {
-		pmain.Error = &PackageError{Err: err.Error()}
+		pmain.setLoadPackageDataError(err, p.ImportPath, &stk, nil)
 	}
 	t.Cover = cover
 	if len(ptest.GoFiles)+len(ptest.CgoFiles) > 0 {
@@ -322,7 +321,7 @@ func TestPackagesAndErrors(p *Package, cover *TestCover) (pmain, ptest, pxtest *
 
 	data, err := formatTestmain(t)
 	if err != nil && pmain.Error == nil {
-		pmain.Error = &PackageError{Err: err.Error()}
+		pmain.Error = &PackageError{Err: err}
 	}
 	if data != nil {
 		pmain.Internal.TestmainGo = &data
@@ -399,10 +398,13 @@ func recompileForTest(pmain, preal, ptest, pxtest *Package) {
 			}
 		}
 
-		// Don't compile build info from a main package. This can happen
-		// if -coverpkg patterns include main packages, since those packages
-		// are imported by pmain. See golang.org/issue/30907.
-		if p.Internal.BuildInfo != "" && p != pmain {
+		// Force main packages the test imports to be built as libraries.
+		// Normal imports of main packages are forbidden by the package loader,
+		// but this can still happen if -coverpkg patterns include main packages:
+		// covered packages are imported by pmain. Linking multiple packages
+		// compiled with '-p main' causes duplicate symbol errors.
+		// See golang.org/issue/30907, golang.org/issue/34114.
+		if p.Name == "main" && p != pmain && p != ptest {
 			split()
 		}
 	}
@@ -537,7 +539,7 @@ var testFileSet = token.NewFileSet()
 func (t *testFuncs) load(filename, pkg string, doImport, seen *bool) error {
 	f, err := parser.ParseFile(testFileSet, filename, nil, parser.ParseComments)
 	if err != nil {
-		return base.ExpandScanner(err)
+		return err
 	}
 	for _, d := range f.Decls {
 		n, ok := d.(*ast.FuncDecl)
@@ -609,8 +611,9 @@ var testmainTmpl = lazytemplate.New("main", `
 package main
 
 import (
-{{if not .TestMain}}
 	"os"
+{{if .TestMain}}
+	"reflect"
 {{end}}
 	"testing"
 	"testing/internal/testdeps"
@@ -701,6 +704,7 @@ func main() {
 	m := testing.MainStart(testdeps.TestDeps{}, tests, benchmarks, examples)
 {{with .TestMain}}
 	{{.Package}}.{{.Name}}(m)
+	os.Exit(int(reflect.ValueOf(m).Elem().FieldByName("exitCode").Int()))
 {{else}}
 	os.Exit(m.Run())
 {{end}}
