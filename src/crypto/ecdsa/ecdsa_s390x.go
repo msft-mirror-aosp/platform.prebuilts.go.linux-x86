@@ -1,8 +1,6 @@
-// Copyright 2019 The Go Authors. All rights reserved.
+// Copyright 2020 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
-
-// +build s390x,!gccgo
 
 package ecdsa
 
@@ -13,80 +11,34 @@ import (
 	"math/big"
 )
 
-// s390x accelerated signatures
+// kdsa invokes the "compute digital signature authentication"
+// instruction with the given function code and 4096 byte
+// parameter block.
+//
+// The return value corresponds to the condition code set by the
+// instruction. Interrupted invocations are handled by the
+// function.
 //go:noescape
-func kdsaSig(fc uint64, block *[1720]byte) (errn uint64)
+func kdsa(fc uint64, params *[4096]byte) (errn uint64)
 
-type signverify int
-
-const (
-	signing signverify = iota
-	verifying
-)
-
-// bufferOffsets represents the offset of a particular parameter in
-// the buffer passed to the KDSA instruction.
-type bufferOffsets struct {
-	baseSize       int
-	hashSize       int
-	offsetHash     int
-	offsetKey1     int
-	offsetRNorKey2 int
-	offsetR        int
-	offsetS        int
-	functionCode   uint64
-}
-
-func canUseKDSA(sv signverify, c elliptic.Curve, bo *bufferOffsets) bool {
+// canUseKDSA checks if KDSA instruction is available, and if it is, it checks
+// the name of the curve to see if it matches the curves supported(P-256, P-384, P-521).
+// Then, based on the curve name, a function code and a block size will be assigned.
+// If KDSA instruction is not available or if the curve is not supported, canUseKDSA
+// will set ok to false.
+func canUseKDSA(c elliptic.Curve) (functionCode uint64, blockSize int, ok bool) {
 	if !cpu.S390X.HasECDSA {
-		return false
+		return 0, 0, false
 	}
-
 	switch c.Params().Name {
 	case "P-256":
-		bo.baseSize = 32
-		bo.hashSize = 32
-		bo.offsetHash = 64
-		bo.offsetKey1 = 96
-		bo.offsetRNorKey2 = 128
-		bo.offsetR = 0
-		bo.offsetS = 32
-		if sv == signing {
-			bo.functionCode = 137
-		} else {
-			bo.functionCode = 1
-		}
-		return true
+		return 1, 32, true
 	case "P-384":
-		bo.baseSize = 48
-		bo.hashSize = 48
-		bo.offsetHash = 96
-		bo.offsetKey1 = 144
-		bo.offsetRNorKey2 = 192
-		bo.offsetR = 0
-		bo.offsetS = 48
-		if sv == signing {
-			bo.functionCode = 138
-		} else {
-			bo.functionCode = 2
-		}
-		return true
+		return 2, 48, true
 	case "P-521":
-		bo.baseSize = 66
-		bo.hashSize = 80
-		bo.offsetHash = 160
-		bo.offsetKey1 = 254
-		bo.offsetRNorKey2 = 334
-		bo.offsetR = 14
-		bo.offsetS = 94
-		if sv == signing {
-			bo.functionCode = 139
-		} else {
-			bo.functionCode = 3
-		}
-		return true
+		return 3, 80, true
 	}
-	return false
+	return 0, 0, false // A mismatch
 }
 
 // zeroExtendAndCopy pads src with leading zeros until it has the size given.
@@ -106,48 +58,105 @@ func zeroExtendAndCopy(dst, src []byte, size int) {
 	return
 }
 
-func sign(priv *PrivateKey, csprng *cipher.StreamReader, c elliptic.Curve, e *big.Int) (r, s *big.Int, err error) {
-	var bo bufferOffsets
-	if canUseKDSA(signing, c, &bo) && e.Sign() != 0 {
-		var buffer [1720]byte
+func sign(priv *PrivateKey, csprng *cipher.StreamReader, c elliptic.Curve, hash []byte) (r, s *big.Int, err error) {
+	if functionCode, blockSize, ok := canUseKDSA(c); ok {
+		e := hashToInt(hash, c)
 		for {
 			var k *big.Int
-			k, err = randFieldElement(c, csprng)
+			k, err = randFieldElement(c, *csprng)
 			if err != nil {
 				return nil, nil, err
 			}
-			zeroExtendAndCopy(buffer[bo.offsetHash:], e.Bytes(), bo.hashSize)
-			zeroExtendAndCopy(buffer[bo.offsetKey1:], priv.D.Bytes(), bo.baseSize)
-			zeroExtendAndCopy(buffer[bo.offsetRNorKey2:], k.Bytes(), bo.baseSize)
-			errn := kdsaSig(bo.functionCode, &buffer)
-			if errn == 2 {
-				return nil, nil, errZeroParam
+
+			// The parameter block looks like the following for sign.
+			// 	+---------------------+
+			// 	|   Signature(R)      |
+			//	+---------------------+
+			//	|   Signature(S)      |
+			//	+---------------------+
+			//	|   Hashed Message    |
+			//	+---------------------+
+			//	|   Private Key       |
+			//	+---------------------+
+			//	|   Random Number     |
+			//	+---------------------+
+			//	|                     |
+			//	|        ...          |
+			//	|                     |
+			//	+---------------------+
+			// The common components(signatureR, signatureS, hashedMessage, privateKey and
+			// random number) each takes block size of bytes. The block size is different for
+			// different curves and is set by canUseKDSA function.
+			var params [4096]byte
+
+			startingOffset := 2 * blockSize // Set the starting location for copying
+			// Copy content into the parameter block. In the sign case,
+			// we copy hashed message, private key and random number into
+			// the parameter block. Since those are consecutive components in the parameter
+			// block, we use a for loop here.
+			for i, v := range []*big.Int{e, priv.D, k} {
+				startPosition := startingOffset + i*blockSize
+				endPosition := startPosition + blockSize
+				zeroExtendAndCopy(params[startPosition:endPosition], v.Bytes(), blockSize)
 			}
-			if errn == 0 { // success == 0 means successful signing
+
+			// Convert verify function code into a sign function code by adding 8.
+			// We also need to set the 'deterministic' bit in the function code, by
+			// adding 128, in order to stop the instruction using its own random number
+			// generator in addition to the random number we supply.
+			switch kdsa(functionCode+136, &params) {
+			case 0: // success
 				r = new(big.Int)
-				r.SetBytes(buffer[bo.offsetR : bo.offsetR+bo.baseSize])
+				r.SetBytes(params[:blockSize])
 				s = new(big.Int)
-				s.SetBytes(buffer[bo.offsetS : bo.offsetS+bo.baseSize])
+				s.SetBytes(params[blockSize : 2*blockSize])
 				return
+			case 1: // error
+				return nil, nil, errZeroParam
+			case 2: // retry
+				continue
 			}
-			//at this point, it must be that errn == 1: retry
+			panic("unreachable")
 		}
 	}
-	r, s, err = signGeneric(priv, csprng, c, e)
-	return
+	return signGeneric(priv, csprng, c, hash)
 }
 
-func verify(pub *PublicKey, c elliptic.Curve, e, r, s *big.Int) bool {
-	var bo bufferOffsets
-	if canUseKDSA(verifying, c, &bo) && e.Sign() != 0 {
-		var buffer [1720]byte
-		zeroExtendAndCopy(buffer[bo.offsetR:], r.Bytes(), bo.baseSize)
-		zeroExtendAndCopy(buffer[bo.offsetS:], s.Bytes(), bo.baseSize)
-		zeroExtendAndCopy(buffer[bo.offsetHash:], e.Bytes(), bo.hashSize)
-		zeroExtendAndCopy(buffer[bo.offsetKey1:], pub.X.Bytes(), bo.baseSize)
-		zeroExtendAndCopy(buffer[bo.offsetRNorKey2:], pub.Y.Bytes(), bo.baseSize)
-		errn := kdsaSig(bo.functionCode, &buffer)
-		return errn == 0
+func verify(pub *PublicKey, c elliptic.Curve, hash []byte, r, s *big.Int) bool {
+	if functionCode, blockSize, ok := canUseKDSA(c); ok {
+		e := hashToInt(hash, c)
+		// The parameter block looks like the following for verify:
+		// 	+---------------------+
+		// 	|   Signature(R)      |
+		//	+---------------------+
+		//	|   Signature(S)      |
+		//	+---------------------+
+		//	|   Hashed Message    |
+		//	+---------------------+
+		//	|   Public Key X      |
+		//	+---------------------+
+		//	|   Public Key Y      |
+		//	+---------------------+
+		//	|                     |
+		//	|        ...          |
+		//	|                     |
+		//	+---------------------+
+		// The common components(signatureR, signatureS, hashed message, public key X,
+		// and public key Y) each takes block size of bytes. The block size is different for
+		// different curves and is set by canUseKDSA function.
+		var params [4096]byte
+
+		// Copy content into the parameter block. In the verify case,
+		// we copy signature (r), signature(s), hashed message, public key x component,
+		// and public key y component into the parameter block.
+		// Since those are consecutive components in the parameter block, we use a for loop here.
+		for i, v := range []*big.Int{r, s, e, pub.X, pub.Y} {
+			startPosition := i * blockSize
+			endPosition := startPosition + blockSize
+			zeroExtendAndCopy(params[startPosition:endPosition], v.Bytes(), blockSize)
+		}
+
+		return kdsa(functionCode, &params) == 0
 	}
-	return verifyGeneric(pub, c, e, r, s)
+	return verifyGeneric(pub, c, hash, r, s)
 }
