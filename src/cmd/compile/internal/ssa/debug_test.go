@@ -95,6 +95,8 @@ var optimizedLibs = (!strings.Contains(gogcflags, "-N") && !strings.Contains(gog
 // go test debug_test.go -args -u -d
 
 func TestNexting(t *testing.T) {
+	testenv.SkipFlaky(t, 37404)
+
 	skipReasons := "" // Many possible skip reasons, list all that apply
 	if testing.Short() {
 		skipReasons = "not run in short mode; "
@@ -959,7 +961,7 @@ func replaceEnv(env []string, ev string, evv string) []string {
 }
 
 // asCommandLine renders cmd as something that could be copy-and-pasted into a command line
-// If cwd is not empty and different from the command's directory, prepend an approprirate "cd"
+// If cwd is not empty and different from the command's directory, prepend an appropriate "cd"
 func asCommandLine(cwd string, cmd *exec.Cmd) string {
 	s := "("
 	if cmd.Dir != "" && cmd.Dir != cwd {
