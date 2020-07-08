@@ -8,10 +8,10 @@ import (
 	"bytes"
 	"cmd/internal/objabi"
 	"cmd/link/internal/ld"
+	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
 	"io"
 	"regexp"
-	"runtime"
 )
 
 const (
@@ -39,7 +39,7 @@ const (
 // funcValueOffset is the offset between the PC_F value of a function and the index of the function in WebAssembly
 const funcValueOffset = 0x1000 // TODO(neelance): make function addresses play nice with heap addresses
 
-func gentext(ctxt *ld.Link) {
+func gentext2(ctxt *ld.Link, ldr *loader.Loader) {
 }
 
 type wasmFunc struct {
@@ -71,7 +71,7 @@ var wasmFuncTypes = map[string]*wasmFuncType{
 	"memchr":                 {Params: []byte{I32, I32, I32}, Results: []byte{I32}},      // s, c, len -> index
 }
 
-func assignAddress(ctxt *ld.Link, sect *sym.Section, n int, s *sym.Symbol, va uint64, isTramp bool) (*sym.Section, int, uint64) {
+func assignAddress(ldr *loader.Loader, sect *sym.Section, n int, s loader.Sym, va uint64, isTramp bool) (*sym.Section, int, uint64) {
 	// WebAssembly functions do not live in the same address space as the linear memory.
 	// Instead, WebAssembly automatically assigns indices. Imported functions (section "import")
 	// have indices 0 to n. They are followed by native functions (sections "function" and "code")
@@ -86,21 +86,40 @@ func assignAddress(ctxt *ld.Link, sect *sym.Section, n int, s *sym.Symbol, va ui
 	// The field "s.Value" corresponds to the concept of PC at runtime.
 	// However, there is no PC register, only PC_F and PC_B. PC_F denotes the function,
 	// PC_B the resume point inside of that function. The entry of the function has PC_B = 0.
-	s.Sect = sect
-	s.Value = int64(funcValueOffset+va/ld.MINFUNC) << 16 // va starts at zero
+	ldr.SetSymSect(s, sect)
+	ldr.SetSymValue(s, int64(funcValueOffset+va/ld.MINFUNC)<<16) // va starts at zero
 	va += uint64(ld.MINFUNC)
 	return sect, n, va
 }
 
-func asmb(ctxt *ld.Link) {} // dummy
+type wasmDataSect struct {
+	sect *sym.Section
+	data []byte
+}
+
+var dataSects []wasmDataSect
+
+func asmb(ctxt *ld.Link, ldr *loader.Loader) {
+	sections := []*sym.Section{
+		ldr.SymSect(ldr.Lookup("runtime.rodata", 0)),
+		ldr.SymSect(ldr.Lookup("runtime.typelink", 0)),
+		ldr.SymSect(ldr.Lookup("runtime.itablink", 0)),
+		ldr.SymSect(ldr.Lookup("runtime.symtab", 0)),
+		ldr.SymSect(ldr.Lookup("runtime.pclntab", 0)),
+		ldr.SymSect(ldr.Lookup("runtime.noptrdata", 0)),
+		ldr.SymSect(ldr.Lookup("runtime.data", 0)),
+	}
+
+	dataSects = make([]wasmDataSect, len(sections))
+	for i, sect := range sections {
+		data := ld.DatblkBytes(ctxt, int64(sect.Vaddr), int64(sect.Length))
+		dataSects[i] = wasmDataSect{sect, data}
+	}
+}
 
 // asmb writes the final WebAssembly module binary.
 // Spec: https://webassembly.github.io/spec/core/binary/modules.html
 func asmb2(ctxt *ld.Link) {
-	if ctxt.Debugvlog != 0 {
-		ctxt.Logf("%5.2f asmb\n", ld.Cputime())
-	}
-
 	types := []*wasmFuncType{
 		// For normal Go functions, the single parameter is PC_B,
 		// the return value is
@@ -177,7 +196,6 @@ func asmb2(ctxt *ld.Link) {
 		writeBuildID(ctxt, buildid)
 	}
 
-	writeGoVersion(ctxt)
 	writeTypeSec(ctxt, types)
 	writeImportSec(ctxt, hostImports)
 	writeFunctionSec(ctxt, fns)
@@ -188,11 +206,10 @@ func asmb2(ctxt *ld.Link) {
 	writeElementSec(ctxt, uint64(len(hostImports)), uint64(len(fns)))
 	writeCodeSec(ctxt, fns)
 	writeDataSec(ctxt)
+	writeProducerSec(ctxt)
 	if !*ld.FlagS {
 		writeNameSec(ctxt, len(hostImports), fns)
 	}
-
-	ctxt.Out.Flush()
 }
 
 func lookupType(sig *wasmFuncType, types *[]*wasmFuncType) uint32 {
@@ -223,13 +240,6 @@ func writeBuildID(ctxt *ld.Link, buildid []byte) {
 	sizeOffset := writeSecHeader(ctxt, sectionCustom)
 	writeName(ctxt.Out, "go.buildid")
 	ctxt.Out.Write(buildid)
-	writeSecSize(ctxt, sizeOffset)
-}
-
-func writeGoVersion(ctxt *ld.Link) {
-	sizeOffset := writeSecHeader(ctxt, sectionCustom)
-	writeName(ctxt.Out, "go.version")
-	ctxt.Out.Write([]byte(runtime.Version()))
 	writeSecSize(ctxt, sizeOffset)
 }
 
@@ -304,10 +314,11 @@ func writeTableSec(ctxt *ld.Link, fns []*wasmFunc) {
 func writeMemorySec(ctxt *ld.Link) {
 	sizeOffset := writeSecHeader(ctxt, sectionMemory)
 
-	const (
-		initialSize  = 16 << 20 // 16MB, enough for runtime init without growing
-		wasmPageSize = 64 << 10 // 64KB
-	)
+	dataSection := ctxt.Syms.Lookup("runtime.data", 0).Sect
+	dataEnd := dataSection.Vaddr + dataSection.Length
+	var initialSize = dataEnd + 16<<20 // 16MB, enough for runtime init without growing
+
+	const wasmPageSize = 64 << 10 // 64KB
 
 	writeUleb128(ctxt.Out, 1)                        // number of memories
 	ctxt.Out.WriteByte(0x00)                         // no maximum memory size
@@ -408,16 +419,6 @@ func writeCodeSec(ctxt *ld.Link, fns []*wasmFunc) {
 func writeDataSec(ctxt *ld.Link) {
 	sizeOffset := writeSecHeader(ctxt, sectionData)
 
-	sections := []*sym.Section{
-		ctxt.Syms.Lookup("runtime.rodata", 0).Sect,
-		ctxt.Syms.Lookup("runtime.typelink", 0).Sect,
-		ctxt.Syms.Lookup("runtime.itablink", 0).Sect,
-		ctxt.Syms.Lookup("runtime.symtab", 0).Sect,
-		ctxt.Syms.Lookup("runtime.pclntab", 0).Sect,
-		ctxt.Syms.Lookup("runtime.noptrdata", 0).Sect,
-		ctxt.Syms.Lookup("runtime.data", 0).Sect,
-	}
-
 	type dataSegment struct {
 		offset int32
 		data   []byte
@@ -432,9 +433,9 @@ func writeDataSec(ctxt *ld.Link) {
 	const maxNumSegments = 100000
 
 	var segments []*dataSegment
-	for secIndex, sec := range sections {
-		data := ld.DatblkBytes(ctxt, int64(sec.Vaddr), int64(sec.Length))
-		offset := int32(sec.Vaddr)
+	for secIndex, ds := range dataSects {
+		data := ds.data
+		offset := int32(ds.sect.Vaddr)
 
 		// skip leading zeroes
 		for len(data) > 0 && data[0] == 0 {
@@ -445,7 +446,7 @@ func writeDataSec(ctxt *ld.Link) {
 		for len(data) > 0 {
 			dataLen := int32(len(data))
 			var segmentEnd, zeroEnd int32
-			if len(segments)+(len(sections)-secIndex) == maxNumSegments {
+			if len(segments)+(len(dataSects)-secIndex) == maxNumSegments {
 				segmentEnd = dataLen
 				zeroEnd = dataLen
 			} else {
@@ -484,6 +485,26 @@ func writeDataSec(ctxt *ld.Link) {
 		writeUleb128(ctxt.Out, uint64(len(seg.data)))
 		ctxt.Out.Write(seg.data)
 	}
+
+	writeSecSize(ctxt, sizeOffset)
+}
+
+// writeProducerSec writes an optional section that reports the source language and compiler version.
+func writeProducerSec(ctxt *ld.Link) {
+	sizeOffset := writeSecHeader(ctxt, sectionCustom)
+	writeName(ctxt.Out, "producers")
+
+	writeUleb128(ctxt.Out, 2) // number of fields
+
+	writeName(ctxt.Out, "language")     // field name
+	writeUleb128(ctxt.Out, 1)           // number of values
+	writeName(ctxt.Out, "Go")           // value: name
+	writeName(ctxt.Out, objabi.Version) // value: version
+
+	writeName(ctxt.Out, "processed-by")   // field name
+	writeUleb128(ctxt.Out, 1)             // number of values
+	writeName(ctxt.Out, "Go cmd/compile") // value: name
+	writeName(ctxt.Out, objabi.Version)   // value: version
 
 	writeSecSize(ctxt, sizeOffset)
 }
@@ -529,6 +550,10 @@ func writeName(w nameWriter, name string) {
 }
 
 func writeUleb128(w io.ByteWriter, v uint64) {
+	if v < 128 {
+		w.WriteByte(uint8(v))
+		return
+	}
 	more := true
 	for more {
 		c := uint8(v & 0x7f)

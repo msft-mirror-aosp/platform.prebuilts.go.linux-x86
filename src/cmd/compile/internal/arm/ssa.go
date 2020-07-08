@@ -10,6 +10,7 @@ import (
 	"math/bits"
 
 	"cmd/compile/internal/gc"
+	"cmd/compile/internal/logopt"
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
@@ -224,7 +225,9 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.Reg = r1
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = r
-	case ssa.OpARMMULAF, ssa.OpARMMULAD, ssa.OpARMMULSF, ssa.OpARMMULSD:
+	case ssa.OpARMSRR:
+		genregshift(s, arm.AMOVW, 0, v.Args[0].Reg(), v.Args[1].Reg(), v.Reg(), arm.SHIFT_RR)
+	case ssa.OpARMMULAF, ssa.OpARMMULAD, ssa.OpARMMULSF, ssa.OpARMMULSD, ssa.OpARMFMULAD:
 		r := v.Reg()
 		r0 := v.Args[0].Reg()
 		r1 := v.Args[1].Reg()
@@ -655,6 +658,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		ssa.OpARMSQRTD,
 		ssa.OpARMNEGF,
 		ssa.OpARMNEGD,
+		ssa.OpARMABSD,
 		ssa.OpARMMOVWF,
 		ssa.OpARMMOVWD,
 		ssa.OpARMMOVFW,
@@ -734,6 +738,9 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		gc.AddAux(&p.From, v)
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = arm.REGTMP
+		if logopt.Enabled() {
+			logopt.LogOpt(v.Pos, "nilcheck", "genssa", v.Block.Func.Name)
+		}
 		if gc.Debug_checknil != 0 && v.Pos.Line() > 1 { // v.Pos.Line()==1 in generated wrappers
 			gc.Warnl(v.Pos, "generated nil check")
 		}
@@ -881,16 +888,30 @@ var condBits = map[ssa.Op]uint8{
 var blockJump = map[ssa.BlockKind]struct {
 	asm, invasm obj.As
 }{
-	ssa.BlockARMEQ:  {arm.ABEQ, arm.ABNE},
-	ssa.BlockARMNE:  {arm.ABNE, arm.ABEQ},
-	ssa.BlockARMLT:  {arm.ABLT, arm.ABGE},
-	ssa.BlockARMGE:  {arm.ABGE, arm.ABLT},
-	ssa.BlockARMLE:  {arm.ABLE, arm.ABGT},
-	ssa.BlockARMGT:  {arm.ABGT, arm.ABLE},
-	ssa.BlockARMULT: {arm.ABLO, arm.ABHS},
-	ssa.BlockARMUGE: {arm.ABHS, arm.ABLO},
-	ssa.BlockARMUGT: {arm.ABHI, arm.ABLS},
-	ssa.BlockARMULE: {arm.ABLS, arm.ABHI},
+	ssa.BlockARMEQ:     {arm.ABEQ, arm.ABNE},
+	ssa.BlockARMNE:     {arm.ABNE, arm.ABEQ},
+	ssa.BlockARMLT:     {arm.ABLT, arm.ABGE},
+	ssa.BlockARMGE:     {arm.ABGE, arm.ABLT},
+	ssa.BlockARMLE:     {arm.ABLE, arm.ABGT},
+	ssa.BlockARMGT:     {arm.ABGT, arm.ABLE},
+	ssa.BlockARMULT:    {arm.ABLO, arm.ABHS},
+	ssa.BlockARMUGE:    {arm.ABHS, arm.ABLO},
+	ssa.BlockARMUGT:    {arm.ABHI, arm.ABLS},
+	ssa.BlockARMULE:    {arm.ABLS, arm.ABHI},
+	ssa.BlockARMLTnoov: {arm.ABMI, arm.ABPL},
+	ssa.BlockARMGEnoov: {arm.ABPL, arm.ABMI},
+}
+
+// To model a 'LEnoov' ('<=' without overflow checking) branching
+var leJumps = [2][2]gc.IndexJump{
+	{{Jump: arm.ABEQ, Index: 0}, {Jump: arm.ABPL, Index: 1}}, // next == b.Succs[0]
+	{{Jump: arm.ABMI, Index: 0}, {Jump: arm.ABEQ, Index: 0}}, // next == b.Succs[1]
+}
+
+// To model a 'GTnoov' ('>' without overflow checking) branching
+var gtJumps = [2][2]gc.IndexJump{
+	{{Jump: arm.ABMI, Index: 1}, {Jump: arm.ABEQ, Index: 1}}, // next == b.Succs[0]
+	{{Jump: arm.ABEQ, Index: 1}, {Jump: arm.ABPL, Index: 0}}, // next == b.Succs[1]
 }
 
 func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
@@ -934,7 +955,8 @@ func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
 		ssa.BlockARMLT, ssa.BlockARMGE,
 		ssa.BlockARMLE, ssa.BlockARMGT,
 		ssa.BlockARMULT, ssa.BlockARMUGT,
-		ssa.BlockARMULE, ssa.BlockARMUGE:
+		ssa.BlockARMULE, ssa.BlockARMUGE,
+		ssa.BlockARMLTnoov, ssa.BlockARMGEnoov:
 		jmp := blockJump[b.Kind]
 		switch next {
 		case b.Succs[0].Block():
@@ -951,7 +973,13 @@ func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
 			}
 		}
 
+	case ssa.BlockARMLEnoov:
+		s.CombJump(b, next, &leJumps)
+
+	case ssa.BlockARMGTnoov:
+		s.CombJump(b, next, &gtJumps)
+
 	default:
-		b.Fatalf("branch not implemented: %s. Control: %s", b.LongString(), b.Control.LongString())
+		b.Fatalf("branch not implemented: %s", b.LongString())
 	}
 }
