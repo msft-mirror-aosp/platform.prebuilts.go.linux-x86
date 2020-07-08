@@ -60,18 +60,29 @@ func libcCall(fn, arg unsafe.Pointer) int32 {
 //go:nosplit
 //go:cgo_unsafe_args
 func syscall_syscall(fn, a1, a2, a3 uintptr) (r1, r2, err uintptr) {
-	entersyscallblock()
+	entersyscall()
 	libcCall(unsafe.Pointer(funcPC(syscall)), unsafe.Pointer(&fn))
 	exitsyscall()
 	return
 }
 func syscall()
 
+//go:linkname syscall_syscallX syscall.syscallX
+//go:nosplit
+//go:cgo_unsafe_args
+func syscall_syscallX(fn, a1, a2, a3 uintptr) (r1, r2, err uintptr) {
+	entersyscallblock()
+	libcCall(unsafe.Pointer(funcPC(syscallX)), unsafe.Pointer(&fn))
+	exitsyscall()
+	return
+}
+func syscallX()
+
 //go:linkname syscall_syscall6 syscall.syscall6
 //go:nosplit
 //go:cgo_unsafe_args
 func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr) {
-	entersyscallblock()
+	entersyscall()
 	libcCall(unsafe.Pointer(funcPC(syscall6)), unsafe.Pointer(&fn))
 	exitsyscall()
 	return
@@ -82,7 +93,7 @@ func syscall6()
 //go:nosplit
 //go:cgo_unsafe_args
 func syscall_syscall6X(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr) {
-	entersyscallblock()
+	entersyscall()
 	libcCall(unsafe.Pointer(funcPC(syscall6X)), unsafe.Pointer(&fn))
 	exitsyscall()
 	return
@@ -93,7 +104,7 @@ func syscall6X()
 //go:nosplit
 //go:cgo_unsafe_args
 func syscall_syscallPtr(fn, a1, a2, a3 uintptr) (r1, r2, err uintptr) {
-	entersyscallblock()
+	entersyscall()
 	libcCall(unsafe.Pointer(funcPC(syscallPtr)), unsafe.Pointer(&fn))
 	exitsyscall()
 	return
@@ -115,6 +126,19 @@ func syscall_rawSyscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintpt
 	libcCall(unsafe.Pointer(funcPC(syscall6)), unsafe.Pointer(&fn))
 	return
 }
+
+// syscallNoErr is used in crypto/x509 to call into Security.framework and CF.
+
+//go:linkname crypto_x509_syscall crypto/x509/internal/macOS.syscall
+//go:nosplit
+//go:cgo_unsafe_args
+func crypto_x509_syscall(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1 uintptr) {
+	entersyscall()
+	libcCall(unsafe.Pointer(funcPC(syscallNoErr)), unsafe.Pointer(&fn))
+	exitsyscall()
+	return
+}
+func syscallNoErr()
 
 // The *_trampoline functions convert from the Go calling convention to the C calling convention
 // and then call the underlying libc function.  They are defined in sys_darwin_$ARCH.s.
@@ -162,6 +186,18 @@ func pthread_self() (t pthread) {
 }
 func pthread_self_trampoline()
 
+//go:nosplit
+//go:cgo_unsafe_args
+func pthread_kill(t pthread, sig uint32) {
+	libcCall(unsafe.Pointer(funcPC(pthread_kill_trampoline)), unsafe.Pointer(&t))
+	return
+}
+func pthread_kill_trampoline()
+
+// mmap is used to do low-level memory allocation via mmap. Don't allow stack
+// splits, since this function (used by sysAlloc) is called in a lot of low-level
+// parts of the runtime and callers often assume it won't acquire any locks.
+// go:nosplit
 func mmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uint32) (unsafe.Pointer, int) {
 	args := struct {
 		addr            unsafe.Pointer
@@ -230,7 +266,7 @@ func usleep_trampoline()
 
 //go:nosplit
 //go:cgo_unsafe_args
-func write(fd uintptr, p unsafe.Pointer, n int32) int32 {
+func write1(fd uintptr, p unsafe.Pointer, n int32) int32 {
 	return libcCall(unsafe.Pointer(funcPC(write_trampoline)), unsafe.Pointer(&fd))
 }
 func write_trampoline()
@@ -244,7 +280,7 @@ func open_trampoline()
 
 //go:nosplit
 //go:cgo_unsafe_args
-func nanotime() int64 {
+func nanotime1() int64 {
 	var r struct {
 		t            int64  // raw timer
 		numer, denom uint32 // conversion factors. nanoseconds = t * numer / denom.
@@ -266,7 +302,7 @@ func nanotime_trampoline()
 
 //go:nosplit
 //go:cgo_unsafe_args
-func walltime() (int64, int32) {
+func walltime1() (int64, int32) {
 	var t timeval
 	libcCall(unsafe.Pointer(funcPC(walltime_trampoline)), unsafe.Pointer(&t))
 	return int64(t.tv_sec), 1000 * t.tv_usec
@@ -415,6 +451,8 @@ func setNonblock(fd int32) {
 //go:cgo_import_dynamic libc_pthread_attr_getstacksize pthread_attr_getstacksize "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_pthread_attr_setdetachstate pthread_attr_setdetachstate "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_pthread_create pthread_create "/usr/lib/libSystem.B.dylib"
+//go:cgo_import_dynamic libc_pthread_self pthread_self "/usr/lib/libSystem.B.dylib"
+//go:cgo_import_dynamic libc_pthread_kill pthread_kill "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_exit exit "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_raise raise "/usr/lib/libSystem.B.dylib"
 
@@ -452,6 +490,8 @@ func setNonblock(fd int32) {
 //go:cgo_import_dynamic libc_pthread_cond_timedwait_relative_np pthread_cond_timedwait_relative_np "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_pthread_cond_signal pthread_cond_signal "/usr/lib/libSystem.B.dylib"
 
-// Magic incantation to get libSystem actually dynamically linked.
+// Magic incantation to get libSystem and friends actually dynamically linked.
 // TODO: Why does the code require this?  See cmd/link/internal/ld/go.go
 //go:cgo_import_dynamic _ _ "/usr/lib/libSystem.B.dylib"
+//go:cgo_import_dynamic _ _ "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic _ _ "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
