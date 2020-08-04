@@ -1,7 +1,7 @@
 !<arch>
-__.PKGDEF       0           0     0     644     8169      `
-go object linux amd64 go1.15beta1 X:framepointer
-build id "0wlnpGpAqj82m00sqITc/5vOTGQF5AoJRjwhNp_Pd"
+__.PKGDEF       0           0     0     644     8167      `
+go object linux amd64 go1.15rc1 X:framepointer
+build id "5VCZvucg9c3Y-64_GviA/uVm7Dq6uGSf4T2AeR4XH"
 
 
 $$B
@@ -295,9 +295,9 @@ function handleMouseUp(evt) {
 }
  svgpanJSSourceC& L >À> “>  ‘åŸè ≤
 $$
- _go_.o          0           0     0     644     441       `
-go object linux amd64 go1.15beta1 X:framepointer
-build id "0wlnpGpAqj82m00sqITc/5vOTGQF5AoJRjwhNp_Pd"
+ _go_.o          0           0     0     644     439       `
+go object linux amd64 go1.15rc1 X:framepointer
+build id "5VCZvucg9c3Y-64_GviA/uVm7Dq6uGSf4T2AeR4XH"
 
 
 !
