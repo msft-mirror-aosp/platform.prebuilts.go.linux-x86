@@ -1,7 +1,7 @@
 !<arch>
-__.PKGDEF       0           0     0     644     24255     `
-go object linux amd64 go1.15beta1 X:framepointer
-build id "gJvHO_KL8sSb0fuPa8sj/XCw5ys3bsBAnCD20Uoxy"
+__.PKGDEF       0           0     0     644     24253     `
+go object linux amd64 go1.15rc1 X:framepointer
+build id "QT7Exd-39PkxLRhMry5h/HufLNDl5nMA37tLrQtGb"
 
 
 $$B
@@ -1004,9 +1004,9 @@ Object.defineProperty(exports, '__esModule', { value: true });
 }
  d3flamegraph	CSSSourceJSSourceC& ZC“ –ØˇªÄº çºóº  ‘åŸè ≤
 $$
- _go_.o          0           0     0     644     467       `
-go object linux amd64 go1.15beta1 X:framepointer
-build id "gJvHO_KL8sSb0fuPa8sj/XCw5ys3bsBAnCD20Uoxy"
+ _go_.o          0           0     0     644     465       `
+go object linux amd64 go1.15rc1 X:framepointer
+build id "QT7Exd-39PkxLRhMry5h/HufLNDl5nMA37tLrQtGb"
 
 
 !
