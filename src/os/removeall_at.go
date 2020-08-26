@@ -9,7 +9,6 @@ package os
 import (
 	"internal/syscall/unix"
 	"io"
-	"runtime"
 	"syscall"
 )
 
@@ -153,7 +152,6 @@ func removeAllFrom(parent *File, base string) error {
 
 	// Remove the directory itself.
 	unlinkError := unix.Unlinkat(parentFd, base, unix.AT_REMOVEDIR)
-	unlinkError = removeAllTestHook(unlinkError)
 	if unlinkError == nil || IsNotExist(unlinkError) {
 		return nil
 	}
@@ -179,7 +177,7 @@ func openFdAt(dirfd int, name string) (*File, error) {
 		}
 
 		// See comment in openFileNolog.
-		if runtime.GOOS == "darwin" && e == syscall.EINTR {
+		if e == syscall.EINTR {
 			continue
 		}
 
