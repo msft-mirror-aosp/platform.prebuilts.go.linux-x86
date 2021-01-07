@@ -1,7 +1,7 @@
 !<arch>
 __.PKGDEF       0           0     0     644     24252     `
-go object linux amd64 go1.15.3 X:framepointer
-build id "bAN_TI-cPbIowf3YNiB7/Neo9seQBCrztkZ-O_4YC"
+go object linux amd64 go1.15.6 X:framepointer
+build id "U7iimBQfHvox82H2CdRU/11T_R_gcJ3KwGC6pMyMx"
 
 
 $$B
@@ -1005,8 +1005,8 @@ Object.defineProperty(exports, '__esModule', { value: true });
  d3flamegraph	CSSSourceJSSourceC& ZC“ –ØˇªÄº çºóº  ‘åŸè ≤
 $$
 _go_.o          0           0     0     644     464       `
-go object linux amd64 go1.15.3 X:framepointer
-build id "bAN_TI-cPbIowf3YNiB7/Neo9seQBCrztkZ-O_4YC"
+go object linux amd64 go1.15.6 X:framepointer
+build id "U7iimBQfHvox82H2CdRU/11T_R_gcJ3KwGC6pMyMx"
 
 
 !
