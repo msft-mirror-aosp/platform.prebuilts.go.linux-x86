@@ -358,6 +358,11 @@ func init() {
 		{name: "BTSQconst", argLength: 1, reg: gp11, asm: "BTSQ", resultInArg0: true, clobberFlags: true, aux: "Int8"}, // set bit auxint in arg0, 0 <= auxint < 64
 
 		// direct bit operation on memory operand
+		//
+		// Note that these operations do not mask the bit offset (arg1), and will write beyond their expected
+		// bounds if that argument is larger than 64/32 (for BT*Q and BT*L, respectively). If the compiler
+		// cannot prove that arg1 is in range, it must be explicitly masked (see e.g. the patterns that produce
+		// BT*modify from (MOVstore (BT* (MOVLload ptr mem) x) mem)).
 		{name: "BTCQmodify", argLength: 3, reg: gpstore, asm: "BTCQ", aux: "SymOff", typ: "Mem", clobberFlags: true, faultOnNilArg0: true, symEffect: "Read,Write"},     // complement bit arg1 in 64-bit arg0+auxint+aux, arg2=mem
 		{name: "BTCLmodify", argLength: 3, reg: gpstore, asm: "BTCL", aux: "SymOff", typ: "Mem", clobberFlags: true, faultOnNilArg0: true, symEffect: "Read,Write"},     // complement bit arg1 in 32-bit arg0+auxint+aux, arg2=mem
 		{name: "BTSQmodify", argLength: 3, reg: gpstore, asm: "BTSQ", aux: "SymOff", typ: "Mem", clobberFlags: true, faultOnNilArg0: true, symEffect: "Read,Write"},     // set bit arg1 in 64-bit arg0+auxint+aux, arg2=mem
@@ -748,6 +753,7 @@ func init() {
 				clobbers: buildReg("DI"),
 			},
 			faultOnNilArg0: true,
+			unsafePoint:    true, // FP maintenance around DUFFCOPY can be clobbered by interrupts
 		},
 		{name: "MOVOconst", reg: regInfo{nil, 0, []regMask{fp}}, typ: "Int128", aux: "Int128", rematerializeable: true},
 
@@ -766,9 +772,9 @@ func init() {
 			faultOnNilArg0: true,
 		},
 
-		{name: "CALLstatic", argLength: 1, reg: regInfo{clobbers: callerSave}, aux: "SymOff", clobberFlags: true, call: true, symEffect: "None"},                          // call static function aux.(*obj.LSym).  arg0=mem, auxint=argsize, returns mem
-		{name: "CALLclosure", argLength: 3, reg: regInfo{inputs: []regMask{gpsp, buildReg("DX"), 0}, clobbers: callerSave}, aux: "Int64", clobberFlags: true, call: true}, // call function via closure.  arg0=codeptr, arg1=closure, arg2=mem, auxint=argsize, returns mem
-		{name: "CALLinter", argLength: 2, reg: regInfo{inputs: []regMask{gp}, clobbers: callerSave}, aux: "Int64", clobberFlags: true, call: true},                        // call fn by pointer.  arg0=codeptr, arg1=mem, auxint=argsize, returns mem
+		{name: "CALLstatic", argLength: 1, reg: regInfo{clobbers: callerSave}, aux: "CallOff", clobberFlags: true, call: true},                                              // call static function aux.(*obj.LSym).  arg0=mem, auxint=argsize, returns mem
+		{name: "CALLclosure", argLength: 3, reg: regInfo{inputs: []regMask{gpsp, buildReg("DX"), 0}, clobbers: callerSave}, aux: "CallOff", clobberFlags: true, call: true}, // call function via closure.  arg0=codeptr, arg1=closure, arg2=mem, auxint=argsize, returns mem
+		{name: "CALLinter", argLength: 2, reg: regInfo{inputs: []regMask{gp}, clobbers: callerSave}, aux: "CallOff", clobberFlags: true, call: true},                        // call fn by pointer.  arg0=codeptr, arg1=mem, auxint=argsize, returns mem
 
 		// arg0 = destination pointer
 		// arg1 = source pointer
@@ -786,6 +792,7 @@ func init() {
 			clobberFlags:   true,
 			faultOnNilArg0: true,
 			faultOnNilArg1: true,
+			unsafePoint:    true, // FP maintenance around DUFFCOPY can be clobbered by interrupts
 		},
 
 		// arg0 = destination pointer
@@ -900,7 +907,9 @@ func init() {
 
 		// Atomic memory updates.
 		{name: "ANDBlock", argLength: 3, reg: gpstore, asm: "ANDB", aux: "SymOff", clobberFlags: true, faultOnNilArg0: true, hasSideEffects: true, symEffect: "RdWr"}, // *(arg0+auxint+aux) &= arg1
+		{name: "ANDLlock", argLength: 3, reg: gpstore, asm: "ANDL", aux: "SymOff", clobberFlags: true, faultOnNilArg0: true, hasSideEffects: true, symEffect: "RdWr"}, // *(arg0+auxint+aux) &= arg1
 		{name: "ORBlock", argLength: 3, reg: gpstore, asm: "ORB", aux: "SymOff", clobberFlags: true, faultOnNilArg0: true, hasSideEffects: true, symEffect: "RdWr"},   // *(arg0+auxint+aux) |= arg1
+		{name: "ORLlock", argLength: 3, reg: gpstore, asm: "ORL", aux: "SymOff", clobberFlags: true, faultOnNilArg0: true, hasSideEffects: true, symEffect: "RdWr"},   // *(arg0+auxint+aux) |= arg1
 	}
 
 	var AMD64blocks = []blockData{
