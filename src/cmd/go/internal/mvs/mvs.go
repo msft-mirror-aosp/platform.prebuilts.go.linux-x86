@@ -13,8 +13,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"cmd/go/internal/module"
 	"cmd/go/internal/par"
+
+	"golang.org/x/mod/module"
 )
 
 // A Reqs is the requirement graph on which Minimal Version Selection (MVS) operates.
@@ -114,7 +115,21 @@ func (e *BuildListError) Error() string {
 }
 
 // BuildList returns the build list for the target module.
-// The first element is the target itself, with the remainder of the list sorted by path.
+//
+// target is the root vertex of a module requirement graph. For cmd/go, this is
+// typically the main module, but note that this algorithm is not intended to
+// be Go-specific: module paths and versions are treated as opaque values.
+//
+// reqs describes the module requirement graph and provides an opaque method
+// for comparing versions.
+//
+// BuildList traverses the graph and returns a list containing the highest
+// version for each visited module. The first element of the returned list is
+// target itself; reqs.Max requires target.Version to compare higher than all
+// other versions, so no other version can be selected. The remaining elements
+// of the list are sorted by path.
+//
+// See https://research.swtch.com/vgo-mvs for details.
 func BuildList(target module.Version, reqs Reqs) ([]module.Version, error) {
 	return buildList(target, reqs, nil)
 }
@@ -219,10 +234,9 @@ func buildList(target module.Version, reqs Reqs, upgrade func(module.Version) (m
 	// The final list is the minimum version of each module found in the graph.
 
 	if v := min[target.Path]; v != target.Version {
-		// TODO(jayconrod): there is a special case in modload.mvsReqs.Max
-		// that prevents us from selecting a newer version of a module
-		// when the module has no version. This may only be the case for target.
-		// Should we always panic when target has a version?
+		// target.Version will be "" for modload, the main client of MVS.
+		// "" denotes the main module, which has no version. However, MVS treats
+		// version strings as opaque, so "" is not a special value here.
 		// See golang.org/issue/31491, golang.org/issue/29773.
 		panic(fmt.Sprintf("mistake: chose version %q instead of target %+v", v, target)) // TODO: Don't panic.
 	}
@@ -250,10 +264,15 @@ func buildList(target module.Version, reqs Reqs, upgrade func(module.Version) (m
 	return list, nil
 }
 
-// Req returns the minimal requirement list for the target module
-// that results in the given build list, with the constraint that all
-// module paths listed in base must appear in the returned list.
-func Req(target module.Version, list []module.Version, base []string, reqs Reqs) ([]module.Version, error) {
+// Req returns the minimal requirement list for the target module,
+// with the constraint that all module paths listed in base must
+// appear in the returned list.
+func Req(target module.Version, base []string, reqs Reqs) ([]module.Version, error) {
+	list, err := BuildList(target, reqs)
+	if err != nil {
+		return nil, err
+	}
+
 	// Note: Not running in parallel because we assume
 	// that list came from a previous operation that paged
 	// in all the requirements, so there's no I/O to overlap now.
