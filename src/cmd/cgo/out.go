@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -97,11 +98,19 @@ func (p *Package) writeDefs() {
 
 	typedefNames := make([]string, 0, len(typedef))
 	for name := range typedef {
+		if name == "_Ctype_void" {
+			// We provide an appropriate declaration for
+			// _Ctype_void below (#39877).
+			continue
+		}
 		typedefNames = append(typedefNames, name)
 	}
 	sort.Strings(typedefNames)
 	for _, name := range typedefNames {
 		def := typedef[name]
+		if def.NotInHeap {
+			fmt.Fprintf(fgo2, "//go:notinheap\n")
+		}
 		fmt.Fprintf(fgo2, "type %s ", name)
 		// We don't have source info for these types, so write them out without source info.
 		// Otherwise types would look like:
@@ -117,7 +126,9 @@ func (p *Package) writeDefs() {
 		// Moreover, empty file name makes compile emit no source debug info at all.
 		var buf bytes.Buffer
 		noSourceConf.Fprint(&buf, fset, def.Go)
-		if bytes.HasPrefix(buf.Bytes(), []byte("_Ctype_")) {
+		if bytes.HasPrefix(buf.Bytes(), []byte("_Ctype_")) ||
+			strings.HasPrefix(name, "_Ctype_enum_") ||
+			strings.HasPrefix(name, "_Ctype_union_") {
 			// This typedef is of the form `typedef a b` and should be an alias.
 			fmt.Fprintf(fgo2, "= ")
 		}
@@ -325,6 +336,8 @@ func dynimport(obj string) {
 			if s.Version != "" {
 				targ += "#" + s.Version
 			}
+			checkImportSymName(s.Name)
+			checkImportSymName(targ)
 			fmt.Fprintf(stdout, "//go:cgo_import_dynamic %s %s %q\n", s.Name, targ, s.Library)
 		}
 		lib, _ := f.ImportedLibraries()
@@ -340,6 +353,7 @@ func dynimport(obj string) {
 			if len(s) > 0 && s[0] == '_' {
 				s = s[1:]
 			}
+			checkImportSymName(s)
 			fmt.Fprintf(stdout, "//go:cgo_import_dynamic %s %s %q\n", s, s, "")
 		}
 		lib, _ := f.ImportedLibraries()
@@ -354,6 +368,8 @@ func dynimport(obj string) {
 		for _, s := range sym {
 			ss := strings.Split(s, ":")
 			name := strings.Split(ss[0], "@")[0]
+			checkImportSymName(name)
+			checkImportSymName(ss[0])
 			fmt.Fprintf(stdout, "//go:cgo_import_dynamic %s %s %q\n", name, ss[0], strings.ToLower(ss[1]))
 		}
 		return
@@ -371,6 +387,7 @@ func dynimport(obj string) {
 				// Go symbols.
 				continue
 			}
+			checkImportSymName(s.Name)
 			fmt.Fprintf(stdout, "//go:cgo_import_dynamic %s %s %q\n", s.Name, s.Name, s.Library)
 		}
 		lib, err := f.ImportedLibraries()
@@ -384,6 +401,23 @@ func dynimport(obj string) {
 	}
 
 	fatalf("cannot parse %s as ELF, Mach-O, PE or XCOFF", obj)
+}
+
+// checkImportSymName checks a symbol name we are going to emit as part
+// of a //go:cgo_import_dynamic pragma. These names come from object
+// files, so they may be corrupt. We are going to emit them unquoted,
+// so while they don't need to be valid symbol names (and in some cases,
+// involving symbol versions, they won't be) they must contain only
+// graphic characters and must not contain Go comments.
+func checkImportSymName(s string) {
+	for _, c := range s {
+		if !unicode.IsGraphic(c) || unicode.IsSpace(c) {
+			fatalf("dynamic symbol %q contains unsupported character", s)
+		}
+	}
+	if strings.Index(s, "//") >= 0 || strings.Index(s, "/*") >= 0 {
+		fatalf("dynamic symbol %q contains Go comment")
+	}
 }
 
 // Construct a gcc struct matching the gc argument frame.
@@ -802,6 +836,28 @@ func (p *Package) packedAttribute() string {
 	return s + "))"
 }
 
+// exportParamName returns the value of param as it should be
+// displayed in a c header file. If param contains any non-ASCII
+// characters, this function will return the character p followed by
+// the value of position; otherwise, this function will return the
+// value of param.
+func exportParamName(param string, position int) string {
+	if param == "" {
+		return fmt.Sprintf("p%d", position)
+	}
+
+	pname := param
+
+	for i := 0; i < len(param); i++ {
+		if param[i] > unicode.MaxASCII {
+			pname = fmt.Sprintf("p%d", position)
+			break
+		}
+	}
+
+	return pname
+}
+
 // Write out the various stubs we need to support functions exported
 // from Go so that they are callable from C.
 func (p *Package) writeExports(fgo2, fm, fgcc, fgcch io.Writer) {
@@ -915,42 +971,45 @@ func (p *Package) writeExports(fgo2, fm, fgcc, fgcch io.Writer) {
 				if i > 0 || fn.Recv != nil {
 					s += ", "
 				}
-				s += fmt.Sprintf("%s p%d", p.cgoType(atype).C, i)
+				s += fmt.Sprintf("%s %s", p.cgoType(atype).C, exportParamName(aname, i))
 			})
 		s += ")"
 
 		if len(exp.Doc) > 0 {
 			fmt.Fprintf(fgcch, "\n%s", exp.Doc)
+			if !strings.HasSuffix(exp.Doc, "\n") {
+				fmt.Fprint(fgcch, "\n")
+			}
 		}
-		fmt.Fprintf(fgcch, "\nextern %s;\n", s)
+		fmt.Fprintf(fgcch, "extern %s;\n", s)
 
 		fmt.Fprintf(fgcc, "extern void _cgoexp%s_%s(void *, int, __SIZE_TYPE__);\n", cPrefix, exp.ExpName)
 		fmt.Fprintf(fgcc, "\nCGO_NO_SANITIZE_THREAD")
 		fmt.Fprintf(fgcc, "\n%s\n", s)
 		fmt.Fprintf(fgcc, "{\n")
 		fmt.Fprintf(fgcc, "\t__SIZE_TYPE__ _cgo_ctxt = _cgo_wait_runtime_init_done();\n")
-		fmt.Fprintf(fgcc, "\t%s %v a;\n", ctype, p.packedAttribute())
+		fmt.Fprintf(fgcc, "\t%s %v _cgo_a;\n", ctype, p.packedAttribute())
 		if gccResult != "void" && (len(fntype.Results.List) > 1 || len(fntype.Results.List[0].Names) > 1) {
 			fmt.Fprintf(fgcc, "\t%s r;\n", gccResult)
 		}
 		if fn.Recv != nil {
-			fmt.Fprintf(fgcc, "\ta.recv = recv;\n")
+			fmt.Fprintf(fgcc, "\t_cgo_a.recv = recv;\n")
 		}
 		forFieldList(fntype.Params,
 			func(i int, aname string, atype ast.Expr) {
-				fmt.Fprintf(fgcc, "\ta.p%d = p%d;\n", i, i)
+				fmt.Fprintf(fgcc, "\t_cgo_a.p%d = %s;\n", i, exportParamName(aname, i))
 			})
 		fmt.Fprintf(fgcc, "\t_cgo_tsan_release();\n")
-		fmt.Fprintf(fgcc, "\tcrosscall2(_cgoexp%s_%s, &a, %d, _cgo_ctxt);\n", cPrefix, exp.ExpName, off)
+		fmt.Fprintf(fgcc, "\tcrosscall2(_cgoexp%s_%s, &_cgo_a, %d, _cgo_ctxt);\n", cPrefix, exp.ExpName, off)
 		fmt.Fprintf(fgcc, "\t_cgo_tsan_acquire();\n")
 		fmt.Fprintf(fgcc, "\t_cgo_release_context(_cgo_ctxt);\n")
 		if gccResult != "void" {
 			if len(fntype.Results.List) == 1 && len(fntype.Results.List[0].Names) <= 1 {
-				fmt.Fprintf(fgcc, "\treturn a.r0;\n")
+				fmt.Fprintf(fgcc, "\treturn _cgo_a.r0;\n")
 			} else {
 				forFieldList(fntype.Results,
 					func(i int, aname string, atype ast.Expr) {
-						fmt.Fprintf(fgcc, "\tr.r%d = a.r%d;\n", i, i)
+						fmt.Fprintf(fgcc, "\tr.r%d = _cgo_a.r%d;\n", i, i)
 					})
 				fmt.Fprintf(fgcc, "\treturn r;\n")
 			}
@@ -1313,8 +1372,10 @@ func gccgoPkgpathToSymbolNew(ppath string) string {
 	for _, c := range []byte(ppath) {
 		switch {
 		case 'A' <= c && c <= 'Z', 'a' <= c && c <= 'z',
-			'0' <= c && c <= '9', c == '_', c == '.':
+			'0' <= c && c <= '9', c == '_':
 			bsl = append(bsl, c)
+		case c == '.':
+			bsl = append(bsl, ".x2e"...)
 		default:
 			changed = true
 			encbytes := []byte(fmt.Sprintf("..z%02x", c))
@@ -1631,14 +1692,14 @@ func _cgo_runtime_cgocall(unsafe.Pointer, uintptr) int32
 func _cgo_runtime_cgocallback(unsafe.Pointer, unsafe.Pointer, uintptr, uintptr)
 
 //go:linkname _cgoCheckPointer runtime.cgoCheckPointer
-func _cgoCheckPointer(interface{}, ...interface{})
+func _cgoCheckPointer(interface{}, interface{})
 
 //go:linkname _cgoCheckResult runtime.cgoCheckResult
 func _cgoCheckResult(interface{})
 `
 
 const gccgoGoProlog = `
-func _cgoCheckPointer(interface{}, ...interface{})
+func _cgoCheckPointer(interface{}, interface{})
 
 func _cgoCheckResult(interface{})
 `
@@ -1825,16 +1886,16 @@ typedef struct __go_empty_interface {
 	void *__object;
 } Eface;
 
-extern void runtimeCgoCheckPointer(Eface, Slice)
+extern void runtimeCgoCheckPointer(Eface, Eface)
 	__asm__("runtime.cgoCheckPointer")
 	__attribute__((weak));
 
-extern void localCgoCheckPointer(Eface, Slice)
+extern void localCgoCheckPointer(Eface, Eface)
 	__asm__("GCCGOSYMBOLPREF._cgoCheckPointer");
 
-void localCgoCheckPointer(Eface ptr, Slice args) {
+void localCgoCheckPointer(Eface ptr, Eface arg) {
 	if(runtimeCgoCheckPointer) {
-		runtimeCgoCheckPointer(ptr, args);
+		runtimeCgoCheckPointer(ptr, arg);
 	}
 }
 
