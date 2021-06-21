@@ -20,6 +20,7 @@
 #define SYS_write		64
 #define SYS_openat		56
 #define SYS_close		57
+#define SYS_pipe2		59
 #define SYS_fcntl		25
 #define SYS_nanosleep		101
 #define SYS_mmap		222
@@ -91,16 +92,12 @@ done:
 	MOVW	R0, ret+8(FP)
 	RET
 
-TEXT runtime·write(SB),NOSPLIT|NOFRAME,$0-28
+TEXT runtime·write1(SB),NOSPLIT|NOFRAME,$0-28
 	MOVD	fd+0(FP), R0
 	MOVD	p+8(FP), R1
 	MOVW	n+16(FP), R2
 	MOVD	$SYS_write, R8
 	SVC
-	CMN	$4095, R0
-	BCC	done
-	MOVW	$-1, R0
-done:
 	MOVW	R0, ret+24(FP)
 	RET
 
@@ -110,11 +107,25 @@ TEXT runtime·read(SB),NOSPLIT|NOFRAME,$0-28
 	MOVW	n+16(FP), R2
 	MOVD	$SYS_read, R8
 	SVC
-	CMN	$4095, R0
-	BCC	done
-	MOVW	$-1, R0
-done:
 	MOVW	R0, ret+24(FP)
+	RET
+
+// func pipe() (r, w int32, errno int32)
+TEXT runtime·pipe(SB),NOSPLIT|NOFRAME,$0-12
+	MOVD	$r+0(FP), R0
+	MOVW	$0, R1
+	MOVW	$SYS_pipe2, R8
+	SVC
+	MOVW	R0, errno+8(FP)
+	RET
+
+// func pipe2(flags int32) (r, w int32, errno int32)
+TEXT runtime·pipe2(SB),NOSPLIT|NOFRAME,$0-20
+	MOVD	$r+8(FP), R0
+	MOVW	flags+0(FP), R1
+	MOVW	$SYS_pipe2, R8
+	SVC
+	MOVW	R0, errno+16(FP)
 	RET
 
 TEXT runtime·usleep(SB),NOSPLIT,$24-4
@@ -164,6 +175,20 @@ TEXT runtime·raiseproc(SB),NOSPLIT|NOFRAME,$0
 	SVC
 	RET
 
+TEXT ·getpid(SB),NOSPLIT|NOFRAME,$0-8
+	MOVD	$SYS_getpid, R8
+	SVC
+	MOVD	R0, ret+0(FP)
+	RET
+
+TEXT ·tgkill(SB),NOSPLIT,$0-24
+	MOVD	tgid+0(FP), R0
+	MOVD	tid+8(FP), R1
+	MOVD	sig+16(FP), R2
+	MOVD	$SYS_tgkill, R8
+	SVC
+	RET
+
 TEXT runtime·setitimer(SB),NOSPLIT|NOFRAME,$0-24
 	MOVW	mode+0(FP), R0
 	MOVD	new+8(FP), R1
@@ -181,14 +206,21 @@ TEXT runtime·mincore(SB),NOSPLIT|NOFRAME,$0-28
 	MOVW	R0, ret+24(FP)
 	RET
 
-// func walltime() (sec int64, nsec int32)
-TEXT runtime·walltime(SB),NOSPLIT,$24-12
+// func walltime1() (sec int64, nsec int32)
+TEXT runtime·walltime1(SB),NOSPLIT,$24-12
 	MOVD	RSP, R20	// R20 is unchanged by C code
 	MOVD	RSP, R1
 
 	MOVD	g_m(g), R21	// R21 = m
 
 	// Set vdsoPC and vdsoSP for SIGPROF traceback.
+	// Save the old values on stack and restore them on exit,
+	// so this function is reentrant.
+	MOVD	m_vdsoPC(R21), R2
+	MOVD	m_vdsoSP(R21), R3
+	MOVD	R2, 8(RSP)
+	MOVD	R3, 16(RSP)
+
 	MOVD	LR, m_vdsoPC(R21)
 	MOVD	R20, m_vdsoSP(R21)
 
@@ -207,6 +239,31 @@ noswitch:
 	MOVW	$CLOCK_REALTIME, R0
 	MOVD	runtime·vdsoClockgettimeSym(SB), R2
 	CBZ	R2, fallback
+
+	// Store g on gsignal's stack, so if we receive a signal
+	// during VDSO code we can find the g.
+	// If we don't have a signal stack, we won't receive signal,
+	// so don't bother saving g.
+	// When using cgo, we already saved g on TLS, also don't save
+	// g here.
+	// Also don't save g if we are already on the signal stack.
+	// We won't get a nested signal.
+	MOVBU	runtime·iscgo(SB), R22
+	CBNZ	R22, nosaveg
+	MOVD	m_gsignal(R21), R22          // g.m.gsignal
+	CBZ	R22, nosaveg
+	CMP	g, R22
+	BEQ	nosaveg
+	MOVD	(g_stack+stack_lo)(R22), R22 // g.m.gsignal.stack.lo
+	MOVD	g, (R22)
+
+	BL	(R2)
+
+	MOVD	ZR, (R22)  // clear g slot, R22 is unchanged by C code
+
+	B	finish
+
+nosaveg:
 	BL	(R2)
 	B	finish
 
@@ -219,19 +276,34 @@ finish:
 	MOVD	8(RSP), R5	// nsec
 
 	MOVD	R20, RSP	// restore SP
-	MOVD	$0, m_vdsoSP(R21)	// clear vdsoSP
+	// Restore vdsoPC, vdsoSP
+	// We don't worry about being signaled between the two stores.
+	// If we are not in a signal handler, we'll restore vdsoSP to 0,
+	// and no one will care about vdsoPC. If we are in a signal handler,
+	// we cannot receive another signal.
+	MOVD	16(RSP), R1
+	MOVD	R1, m_vdsoSP(R21)
+	MOVD	8(RSP), R1
+	MOVD	R1, m_vdsoPC(R21)
 
 	MOVD	R3, sec+0(FP)
 	MOVW	R5, nsec+8(FP)
 	RET
 
-TEXT runtime·nanotime(SB),NOSPLIT,$24-8
+TEXT runtime·nanotime1(SB),NOSPLIT,$24-8
 	MOVD	RSP, R20	// R20 is unchanged by C code
 	MOVD	RSP, R1
 
 	MOVD	g_m(g), R21	// R21 = m
 
 	// Set vdsoPC and vdsoSP for SIGPROF traceback.
+	// Save the old values on stack and restore them on exit,
+	// so this function is reentrant.
+	MOVD	m_vdsoPC(R21), R2
+	MOVD	m_vdsoSP(R21), R3
+	MOVD	R2, 8(RSP)
+	MOVD	R3, 16(RSP)
+
 	MOVD	LR, m_vdsoPC(R21)
 	MOVD	R20, m_vdsoSP(R21)
 
@@ -250,6 +322,31 @@ noswitch:
 	MOVW	$CLOCK_MONOTONIC, R0
 	MOVD	runtime·vdsoClockgettimeSym(SB), R2
 	CBZ	R2, fallback
+
+	// Store g on gsignal's stack, so if we receive a signal
+	// during VDSO code we can find the g.
+	// If we don't have a signal stack, we won't receive signal,
+	// so don't bother saving g.
+	// When using cgo, we already saved g on TLS, also don't save
+	// g here.
+	// Also don't save g if we are already on the signal stack.
+	// We won't get a nested signal.
+	MOVBU	runtime·iscgo(SB), R22
+	CBNZ	R22, nosaveg
+	MOVD	m_gsignal(R21), R22          // g.m.gsignal
+	CBZ	R22, nosaveg
+	CMP	g, R22
+	BEQ	nosaveg
+	MOVD	(g_stack+stack_lo)(R22), R22 // g.m.gsignal.stack.lo
+	MOVD	g, (R22)
+
+	BL	(R2)
+
+	MOVD	ZR, (R22)  // clear g slot, R22 is unchanged by C code
+
+	B	finish
+
+nosaveg:
 	BL	(R2)
 	B	finish
 
@@ -262,7 +359,15 @@ finish:
 	MOVD	8(RSP), R5	// nsec
 
 	MOVD	R20, RSP	// restore SP
-	MOVD	$0, m_vdsoSP(R21)	// clear vdsoSP
+	// Restore vdsoPC, vdsoSP
+	// We don't worry about being signaled between the two stores.
+	// If we are not in a signal handler, we'll restore vdsoSP to 0,
+	// and no one will care about vdsoPC. If we are in a signal handler,
+	// we cannot receive another signal.
+	MOVD	16(RSP), R1
+	MOVD	R1, m_vdsoSP(R21)
+	MOVD	8(RSP), R1
+	MOVD	R1, m_vdsoPC(R21)
 
 	// sec is in R3, nsec in R5
 	// return nsec in R3
@@ -344,8 +449,7 @@ TEXT runtime·sigtramp(SB),NOSPLIT,$192
 	// first save R0, because runtime·load_g will clobber it
 	MOVW	R0, 8(RSP)
 	MOVBU	runtime·iscgo(SB), R0
-	CMP	$0, R0
-	BEQ	2(PC)
+	CBZ	R0, 2(PC)
 	BL	runtime·load_g(SB)
 
 	MOVD	R1, 16(RSP)
@@ -601,6 +705,21 @@ TEXT runtime·closeonexec(SB),NOSPLIT|NOFRAME,$0
 	MOVW	fd+0(FP), R0  // fd
 	MOVD	$2, R1	// F_SETFD
 	MOVD	$1, R2	// FD_CLOEXEC
+	MOVD	$SYS_fcntl, R8
+	SVC
+	RET
+
+// func runtime·setNonblock(int32 fd)
+TEXT runtime·setNonblock(SB),NOSPLIT|NOFRAME,$0-4
+	MOVW	fd+0(FP), R0 // fd
+	MOVD	$3, R1	// F_GETFL
+	MOVD	$0, R2
+	MOVD	$SYS_fcntl, R8
+	SVC
+	MOVD	$0x800, R2 // O_NONBLOCK
+	ORR	R0, R2
+	MOVW	fd+0(FP), R0 // fd
+	MOVD	$4, R1	// F_SETFL
 	MOVD	$SYS_fcntl, R8
 	SVC
 	RET

@@ -57,16 +57,13 @@ const (
 	TUNSAFEPTR
 
 	// pseudo-types for literals
-	TIDEAL
+	TIDEAL // untyped numeric constants
 	TNIL
 	TBLANK
 
 	// pseudo-types for frame layout
 	TFUNCARGS
 	TCHANARGS
-
-	// pseudo-types for import/export
-	TDDDFIELD // wrapper: contained type is a ... field
 
 	// SSA backend types
 	TSSA   // internal types used by SSA backend (flags, memory, etc.)
@@ -94,7 +91,6 @@ const (
 // It also stores pointers to several special types:
 //   - Types[TANY] is the placeholder "any" type recognized by substArgTypes.
 //   - Types[TBLANK] represents the blank variable's type.
-//   - Types[TIDEAL] represents untyped numeric constants.
 //   - Types[TNIL] represents the predeclared "nil" value's type.
 //   - Types[TUNSAFEPTR] is package unsafe's Pointer type.
 var Types [NTYPE]*Type
@@ -112,8 +108,6 @@ var (
 	Idealbool   *Type
 
 	// Types to represent untyped numeric constants.
-	// Note: Currently these are only used within the binary export
-	// data format. The rest of the compiler only uses Types[TIDEAL].
 	Idealint     = New(TIDEAL)
 	Idealrune    = New(TIDEAL)
 	Idealfloat   = New(TIDEAL)
@@ -131,7 +125,6 @@ type Type struct {
 	// TFUNC: *Func
 	// TSTRUCT: *Struct
 	// TINTER: *Interface
-	// TDDDFIELD: DDDField
 	// TFUNCARGS: FuncArgs
 	// TCHANARGS: ChanArgs
 	// TCHAN: *Chan
@@ -236,7 +229,7 @@ func (t *Type) MapType() *Map {
 
 // Forward contains Type fields specific to forward types.
 type Forward struct {
-	Copyto      []*Node  // where to copy the eventual value to
+	Copyto      []*Type  // where to copy the eventual value to
 	Embedlineno src.XPos // first use of this type as an embedded type
 }
 
@@ -306,11 +299,6 @@ type Interface struct {
 // Ptr contains Type fields specific to pointer types.
 type Ptr struct {
 	Elem *Type // element type
-}
-
-// DDDField contains Type fields specific to TDDDFIELD types.
-type DDDField struct {
-	T *Type // reference to a slice type for ... args
 }
 
 // ChanArgs contains Type fields specific to TCHANARGS types.
@@ -473,8 +461,6 @@ func New(et EType) *Type {
 		t.Extra = ChanArgs{}
 	case TFUNCARGS:
 		t.Extra = FuncArgs{}
-	case TDDDFIELD:
-		t.Extra = DDDField{}
 	case TCHAN:
 		t.Extra = new(Chan)
 	case TTUPLE:
@@ -506,14 +492,6 @@ func NewSlice(elem *Type) *Type {
 	t := New(TSLICE)
 	t.Extra = Slice{Elem: elem}
 	elem.Cache.slice = t
-	return t
-}
-
-// NewDDDArray returns a new [...]T array Type.
-func NewDDDArray(elem *Type) *Type {
-	t := New(TARRAY)
-	t.Extra = &Array{Elem: elem, Bound: -1}
-	t.SetNotInHeap(elem.NotInHeap())
 	return t
 }
 
@@ -573,13 +551,6 @@ func NewPtr(elem *Type) *Type {
 	if NewPtrCacheEnabled {
 		elem.Cache.ptr = t
 	}
-	return t
-}
-
-// NewDDDField returns a new TDDDFIELD type for slice type s.
-func NewDDDField(s *Type) *Type {
-	t := New(TDDDFIELD)
-	t.Extra = DDDField{T: s}
 	return t
 }
 
@@ -802,12 +773,6 @@ func (t *Type) Elem() *Type {
 	return nil
 }
 
-// DDDField returns the slice ... type for TDDDFIELD type t.
-func (t *Type) DDDField() *Type {
-	t.wantEtype(TDDDFIELD)
-	return t.Extra.(DDDField).T
-}
-
 // ChanArgs returns the channel type for TCHANARGS type t.
 func (t *Type) ChanArgs() *Type {
 	t.wantEtype(TCHANARGS)
@@ -909,13 +874,6 @@ func (t *Type) SetInterface(methods []*Field) {
 	t.Methods().Set(methods)
 }
 
-func (t *Type) IsDDDArray() bool {
-	if t.Etype != TARRAY {
-		return false
-	}
-	return t.Extra.(*Array).Bound < 0
-}
-
 func (t *Type) WidthCalculated() bool {
 	return t.Align > 0
 }
@@ -1013,7 +971,7 @@ func (r *Sym) cmpsym(s *Sym) Cmp {
 // TODO(josharian): make this safe for recursive interface types
 // and use in signatlist sorting. See issue 19869.
 func (t *Type) cmp(x *Type) Cmp {
-	// This follows the structure of eqtype in subr.go
+	// This follows the structure of function identical in identity.go
 	// with two exceptions.
 	// 1. Symbols are compared more carefully because a <,=,> result is desired.
 	// 2. Maps are treated specially to avoid endless recursion -- maps
@@ -1281,6 +1239,15 @@ func (t *Type) IsPtrShaped() bool {
 		t.Etype == TMAP || t.Etype == TCHAN || t.Etype == TFUNC
 }
 
+// HasNil reports whether the set of values determined by t includes nil.
+func (t *Type) HasNil() bool {
+	switch t.Etype {
+	case TCHAN, TFUNC, TINTER, TMAP, TPTR, TSLICE, TUNSAFEPTR:
+		return true
+	}
+	return false
+}
+
 func (t *Type) IsString() bool {
 	return t.Etype == TSTRING
 }
@@ -1343,23 +1310,7 @@ func (t *Type) FieldName(i int) string {
 
 func (t *Type) NumElem() int64 {
 	t.wantEtype(TARRAY)
-	at := t.Extra.(*Array)
-	if at.Bound < 0 {
-		Fatalf("NumElem array %v does not have bound yet", t)
-	}
-	return at.Bound
-}
-
-// SetNumElem sets the number of elements in an array type.
-// The only allowed use is on array types created with NewDDDArray.
-// For other uses, create a new array with NewArray instead.
-func (t *Type) SetNumElem(n int64) {
-	t.wantEtype(TARRAY)
-	at := t.Extra.(*Array)
-	if at.Bound >= 0 {
-		Fatalf("SetNumElem array %v already has bound %d", t, at.Bound)
-	}
-	at.Bound = n
+	return t.Extra.(*Array).Bound
 }
 
 type componentsIncludeBlankFields bool
@@ -1446,14 +1397,9 @@ func (t *Type) IsUntyped() bool {
 	return false
 }
 
-// TODO(austin): We probably only need HasHeapPointer. See
-// golang.org/cl/73412 for discussion.
-
-func Haspointers(t *Type) bool {
-	return Haspointers1(t, false)
-}
-
-func Haspointers1(t *Type, ignoreNotInHeap bool) bool {
+// HasPointers reports whether t contains a heap pointer.
+// Note that this function ignores pointers to go:notinheap types.
+func (t *Type) HasPointers() bool {
 	switch t.Etype {
 	case TINT, TUINT, TINT8, TUINT8, TINT16, TUINT16, TINT32, TUINT32, TINT64,
 		TUINT64, TUINTPTR, TFLOAT32, TFLOAT64, TCOMPLEX64, TCOMPLEX128, TBOOL, TSSA:
@@ -1463,32 +1409,25 @@ func Haspointers1(t *Type, ignoreNotInHeap bool) bool {
 		if t.NumElem() == 0 { // empty array has no pointers
 			return false
 		}
-		return Haspointers1(t.Elem(), ignoreNotInHeap)
+		return t.Elem().HasPointers()
 
 	case TSTRUCT:
 		for _, t1 := range t.Fields().Slice() {
-			if Haspointers1(t1.Type, ignoreNotInHeap) {
+			if t1.Type.HasPointers() {
 				return true
 			}
 		}
 		return false
 
 	case TPTR, TSLICE:
-		return !(ignoreNotInHeap && t.Elem().NotInHeap())
+		return !t.Elem().NotInHeap()
 
 	case TTUPLE:
 		ttup := t.Extra.(*Tuple)
-		return Haspointers1(ttup.first, ignoreNotInHeap) || Haspointers1(ttup.second, ignoreNotInHeap)
+		return ttup.first.HasPointers() || ttup.second.HasPointers()
 	}
 
 	return true
-}
-
-// HasHeapPointer reports whether t contains a heap pointer.
-// This is used for write barrier insertion, so it ignores
-// pointers to go:notinheap types.
-func (t *Type) HasHeapPointer() bool {
-	return Haspointers1(t, true)
 }
 
 func (t *Type) Symbol() *obj.LSym {
@@ -1519,7 +1458,7 @@ func FakeRecvType() *Type {
 }
 
 var (
-	// TSSA types. Haspointers assumes these are pointer-free.
+	// TSSA types. HasPointers assumes these are pointer-free.
 	TypeInvalid = newSSA("invalid")
 	TypeMem     = newSSA("mem")
 	TypeFlags   = newSSA("flags")
