@@ -40,12 +40,15 @@ import (
 	"strings"
 	"time"
 
-	"cmd/go/internal/module"
-	"cmd/go/internal/semver"
 	"internal/lazyregexp"
+
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 var pseudoVersionRE = lazyregexp.New(`^v[0-9]+\.(0\.0-|\d+\.\d+-([^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+
+const pseudoVersionTimestampFormat = "20060102150405"
 
 // PseudoVersion returns a pseudo-version for the given major version ("v1")
 // preexisting older tagged version ("" or "v1.2.3" or "v1.2.3-pre"), revision time,
@@ -54,7 +57,7 @@ func PseudoVersion(major, older string, t time.Time, rev string) string {
 	if major == "" {
 		major = "v0"
 	}
-	segment := fmt.Sprintf("%s-%s", t.UTC().Format("20060102150405"), rev)
+	segment := fmt.Sprintf("%s-%s", t.UTC().Format(pseudoVersionTimestampFormat), rev)
 	build := semver.Build(older)
 	older = semver.Canonical(older)
 	if older == "" {

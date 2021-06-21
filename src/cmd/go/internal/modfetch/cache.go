@@ -7,6 +7,7 @@ package modfetch
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -18,25 +19,24 @@ import (
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/lockedfile"
 	"cmd/go/internal/modfetch/codehost"
-	"cmd/go/internal/module"
 	"cmd/go/internal/par"
 	"cmd/go/internal/renameio"
-	"cmd/go/internal/semver"
+
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
-var QuietLookup bool // do not print about lookups
-
-var PkgMod string // $GOPATH/pkg/mod; set by package modload
-
 func cacheDir(path string) (string, error) {
-	if PkgMod == "" {
-		return "", fmt.Errorf("internal error: modfetch.PkgMod not set")
+	if cfg.GOMODCACHE == "" {
+		// modload.Init exits if GOPATH[0] is empty, and cfg.GOMODCACHE
+		// is set to GOPATH[0]/pkg/mod if GOMODCACHE is empty, so this should never happen.
+		return "", fmt.Errorf("internal error: cfg.GOMODCACHE not set")
 	}
-	enc, err := module.EncodePath(path)
+	enc, err := module.EscapePath(path)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(PkgMod, "cache/download", enc, "/@v"), nil
+	return filepath.Join(cfg.GOMODCACHE, "cache/download", enc, "/@v"), nil
 }
 
 func CachePath(m module.Version, suffix string) (string, error) {
@@ -50,20 +50,25 @@ func CachePath(m module.Version, suffix string) (string, error) {
 	if module.CanonicalVersion(m.Version) != m.Version {
 		return "", fmt.Errorf("non-canonical module version %q", m.Version)
 	}
-	encVer, err := module.EncodeVersion(m.Version)
+	encVer, err := module.EscapeVersion(m.Version)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, encVer+"."+suffix), nil
 }
 
-// DownloadDir returns the directory to which m should be downloaded.
-// Note that the directory may not yet exist.
+// DownloadDir returns the directory to which m should have been downloaded.
+// An error will be returned if the module path or version cannot be escaped.
+// An error satisfying errors.Is(err, os.ErrNotExist) will be returned
+// along with the directory if the directory does not exist or if the directory
+// is not completely populated.
 func DownloadDir(m module.Version) (string, error) {
-	if PkgMod == "" {
-		return "", fmt.Errorf("internal error: modfetch.PkgMod not set")
+	if cfg.GOMODCACHE == "" {
+		// modload.Init exits if GOPATH[0] is empty, and cfg.GOMODCACHE
+		// is set to GOPATH[0]/pkg/mod if GOMODCACHE is empty, so this should never happen.
+		return "", fmt.Errorf("internal error: cfg.GOMODCACHE not set")
 	}
-	enc, err := module.EncodePath(m.Path)
+	enc, err := module.EscapePath(m.Path)
 	if err != nil {
 		return "", err
 	}
@@ -73,12 +78,42 @@ func DownloadDir(m module.Version) (string, error) {
 	if module.CanonicalVersion(m.Version) != m.Version {
 		return "", fmt.Errorf("non-canonical module version %q", m.Version)
 	}
-	encVer, err := module.EncodeVersion(m.Version)
+	encVer, err := module.EscapeVersion(m.Version)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(PkgMod, enc+"@"+encVer), nil
+
+	dir := filepath.Join(cfg.GOMODCACHE, enc+"@"+encVer)
+	if fi, err := os.Stat(dir); os.IsNotExist(err) {
+		return dir, err
+	} else if err != nil {
+		return dir, &DownloadDirPartialError{dir, err}
+	} else if !fi.IsDir() {
+		return dir, &DownloadDirPartialError{dir, errors.New("not a directory")}
+	}
+	partialPath, err := CachePath(m, "partial")
+	if err != nil {
+		return dir, err
+	}
+	if _, err := os.Stat(partialPath); err == nil {
+		return dir, &DownloadDirPartialError{dir, errors.New("not completely extracted")}
+	} else if !os.IsNotExist(err) {
+		return dir, err
+	}
+	return dir, nil
 }
+
+// DownloadDirPartialError is returned by DownloadDir if a module directory
+// exists but was not completely populated.
+//
+// DownloadDirPartialError is equivalent to os.ErrNotExist.
+type DownloadDirPartialError struct {
+	Dir string
+	Err error
+}
+
+func (e *DownloadDirPartialError) Error() string     { return fmt.Sprintf("%s: %v", e.Dir, e.Err) }
+func (e *DownloadDirPartialError) Is(err error) bool { return err == os.ErrNotExist }
 
 // lockVersion locks a file within the module cache that guards the downloading
 // and extraction of the zipfile for the given module version.
@@ -93,22 +128,23 @@ func lockVersion(mod module.Version) (unlock func(), err error) {
 	return lockedfile.MutexAt(path).Lock()
 }
 
-// SideLock locks a file within the module cache that that guards edits to files
-// outside the cache, such as go.sum and go.mod files in the user's working
-// directory. It returns a function that must be called to unlock the file.
-func SideLock() (unlock func()) {
-	if PkgMod == "" {
-		base.Fatalf("go: internal error: modfetch.PkgMod not set")
+// SideLock locks a file within the module cache that that previously guarded
+// edits to files outside the cache, such as go.sum and go.mod files in the
+// user's working directory.
+// If err is nil, the caller MUST eventually call the unlock function.
+func SideLock() (unlock func(), err error) {
+	if cfg.GOMODCACHE == "" {
+		// modload.Init exits if GOPATH[0] is empty, and cfg.GOMODCACHE
+		// is set to GOPATH[0]/pkg/mod if GOMODCACHE is empty, so this should never happen.
+		base.Fatalf("go: internal error: cfg.GOMODCACHE not set")
 	}
-	path := filepath.Join(PkgMod, "cache", "lock")
+
+	path := filepath.Join(cfg.GOMODCACHE, "cache", "lock")
 	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
-		base.Fatalf("go: failed to create cache directory %s: %v", filepath.Dir(path), err)
+		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
-	unlock, err := lockedfile.MutexAt(path).Lock()
-	if err != nil {
-		base.Fatalf("go: failed to lock file at %v", path)
-	}
-	return unlock
+
+	return lockedfile.MutexAt(path).Lock()
 }
 
 // A cachingRepo is a cache around an underlying Repo,
@@ -161,9 +197,6 @@ func (r *cachingRepo) Stat(rev string) (*RevInfo, error) {
 			return cachedInfo{info, nil}
 		}
 
-		if !QuietLookup {
-			fmt.Fprintf(os.Stderr, "go: finding %s %s\n", r.path, rev)
-		}
 		info, err = r.r.Stat(rev)
 		if err == nil {
 			// If we resolved, say, 1234abcde to v0.0.0-20180604122334-1234abcdef78,
@@ -191,9 +224,6 @@ func (r *cachingRepo) Stat(rev string) (*RevInfo, error) {
 
 func (r *cachingRepo) Latest() (*RevInfo, error) {
 	c := r.cache.Do("latest:", func() interface{} {
-		if !QuietLookup {
-			fmt.Fprintf(os.Stderr, "go: finding %s latest\n", r.path)
-		}
 		info, err := r.r.Latest()
 
 		// Save info for likely future Stat call.
@@ -230,7 +260,9 @@ func (r *cachingRepo) GoMod(version string) ([]byte, error) {
 
 		text, err = r.r.GoMod(version)
 		if err == nil {
-			checkGoMod(r.path, version, text)
+			if err := checkGoMod(r.path, version, text); err != nil {
+				return cached{text, err}
+			}
 			if err := writeDiskGoMod(file, text); err != nil {
 				fmt.Fprintf(os.Stderr, "go: writing go.mod cache: %v\n", err)
 			}
@@ -428,7 +460,7 @@ func readDiskStat(path, rev string) (file string, info *RevInfo, err error) {
 // just to find out about a commit we already know about
 // (and have cached under its pseudo-version).
 func readDiskStatByHash(path, rev string) (file string, info *RevInfo, err error) {
-	if PkgMod == "" {
+	if cfg.GOMODCACHE == "" {
 		// Do not download to current directory.
 		return "", nil, errNotCached
 	}
@@ -490,7 +522,9 @@ func readDiskGoMod(path, rev string) (file string, data []byte, err error) {
 	}
 
 	if err == nil {
-		checkGoMod(path, rev, data)
+		if err := checkGoMod(path, rev, data); err != nil {
+			return "", nil, err
+		}
 	}
 
 	return file, data, err
