@@ -34,11 +34,31 @@ func isLXC() bool {
 }
 
 func skipInContainer(t *testing.T) {
+	// TODO: the callers of this func are using this func to skip
+	// tests when running as some sort of "fake root" that's uid 0
+	// but lacks certain Linux capabilities. Most of the Go builds
+	// run in privileged containers, though, where root is much
+	// closer (if not identical) to the real root. We should test
+	// for what we need exactly (which capabilities are active?),
+	// instead of just assuming "docker == bad". Then we'd get more test
+	// coverage on a bunch of builders too.
 	if isDocker() {
 		t.Skip("skip this test in Docker container")
 	}
 	if isLXC() {
 		t.Skip("skip this test in LXC container")
+	}
+}
+
+func skipNoUserNamespaces(t *testing.T) {
+	if _, err := os.Stat("/proc/self/ns/user"); err != nil {
+		if os.IsNotExist(err) {
+			t.Skip("kernel doesn't support user namespaces")
+		}
+		if os.IsPermission(err) {
+			t.Skip("unable to test user namespaces due to permissions")
+		}
+		t.Fatalf("Failed to stat /proc/self/ns/user: %v", err)
 	}
 }
 
@@ -64,15 +84,7 @@ func isChrooted(t *testing.T) bool {
 
 func checkUserNS(t *testing.T) {
 	skipInContainer(t)
-	if _, err := os.Stat("/proc/self/ns/user"); err != nil {
-		if os.IsNotExist(err) {
-			t.Skip("kernel doesn't support user namespaces")
-		}
-		if os.IsPermission(err) {
-			t.Skip("unable to test user namespaces due to permissions")
-		}
-		t.Fatalf("Failed to stat /proc/self/ns/user: %v", err)
-	}
+	skipNoUserNamespaces(t)
 	if isChrooted(t) {
 		// create_user_ns in the kernel (see
 		// https://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/tree/kernel/user_namespace.c)
@@ -305,6 +317,7 @@ func TestGroupCleanupUserNamespace(t *testing.T) {
 		"uid=0(root) gid=0(root) groups=0(root),65534(nogroup)",
 		"uid=0(root) gid=0(root) groups=0(root),65534",
 		"uid=0(root) gid=0(root) groups=0(root),65534(nobody),65534(nobody),65534(nobody),65534(nobody),65534(nobody),65534(nobody),65534(nobody),65534(nobody),65534(nobody),65534(nobody)", // Alpine; see https://golang.org/issue/19938
+		"uid=0(root) gid=0(root) groups=0(root) context=unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023",                                                                               // CentOS with SELinux context, see https://golang.org/issue/34547
 	}
 	for _, e := range expected {
 		if strOut == e {
@@ -336,21 +349,13 @@ func TestUnshareMountNameSpace(t *testing.T) {
 		t.Skip("kernel prohibits unshare in unprivileged process, unless using user namespace")
 	}
 
-	// When running under the Go continuous build, skip tests for
-	// now when under Kubernetes. (where things are root but not quite)
-	// Both of these are our own environment variables.
-	// See Issue 12815.
-	if os.Getenv("GO_BUILDER_NAME") != "" && os.Getenv("IN_KUBERNETES") == "1" {
-		t.Skip("skipping test on Kubernetes-based builders; see Issue 12815")
-	}
-
 	d, err := ioutil.TempDir("", "unshare")
 	if err != nil {
 		t.Fatalf("tempdir: %v", err)
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestUnshareMountNameSpaceHelper", d)
-	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Unshareflags: syscall.CLONE_NEWNS}
 
 	o, err := cmd.CombinedOutput()
@@ -386,14 +391,6 @@ func TestUnshareMountNameSpaceChroot(t *testing.T) {
 		t.Skip("kernel prohibits unshare in unprivileged process, unless using user namespace")
 	}
 
-	// When running under the Go continuous build, skip tests for
-	// now when under Kubernetes. (where things are root but not quite)
-	// Both of these are our own environment variables.
-	// See Issue 12815.
-	if os.Getenv("GO_BUILDER_NAME") != "" && os.Getenv("IN_KUBERNETES") == "1" {
-		t.Skip("skipping test on Kubernetes-based builders; see Issue 12815")
-	}
-
 	d, err := ioutil.TempDir("", "unshare")
 	if err != nil {
 		t.Fatalf("tempdir: %v", err)
@@ -409,7 +406,7 @@ func TestUnshareMountNameSpaceChroot(t *testing.T) {
 	}
 
 	cmd = exec.Command("/syscall.test", "-test.run=TestUnshareMountNameSpaceHelper", "/")
-	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: d, Unshareflags: syscall.CLONE_NEWNS}
 
 	o, err := cmd.CombinedOutput()
@@ -573,20 +570,13 @@ func TestAmbientCaps(t *testing.T) {
 }
 
 func TestAmbientCapsUserns(t *testing.T) {
+	checkUserNS(t)
 	testAmbientCaps(t, true)
 }
 
 func testAmbientCaps(t *testing.T, userns bool) {
 	skipInContainer(t)
 	mustSupportAmbientCaps(t)
-
-	// When running under the Go continuous build, skip tests for
-	// now when under Kubernetes. (where things are root but not quite)
-	// Both of these are our own environment variables.
-	// See Issue 12815.
-	if os.Getenv("GO_BUILDER_NAME") != "" && os.Getenv("IN_KUBERNETES") == "1" {
-		t.Skip("skipping test on Kubernetes-based builders; see Issue 12815")
-	}
 
 	skipUnprivilegedUserClone(t)
 
@@ -631,7 +621,7 @@ func testAmbientCaps(t *testing.T, userns bool) {
 	}
 
 	cmd := exec.Command(f.Name(), "-test.run=TestAmbientCapsHelper")
-	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{
