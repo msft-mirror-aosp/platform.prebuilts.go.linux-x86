@@ -31,7 +31,10 @@ const (
 // be an IPv4 address.
 type IP []byte
 
-// An IP mask is an IP address.
+// An IPMask is a bitmask that can be used to manipulate
+// IP addresses for IP addressing and routing.
+//
+// See type IPNet and func ParseCIDR for details.
 type IPMask []byte
 
 // An IPNet represents an IP network.
@@ -65,8 +68,8 @@ func IPv4Mask(a, b, c, d byte) IPMask {
 	return p
 }
 
-// CIDRMask returns an IPMask consisting of `ones' 1 bits
-// followed by 0s up to a total length of `bits' bits.
+// CIDRMask returns an IPMask consisting of 'ones' 1 bits
+// followed by 0s up to a total length of 'bits' bits.
 // For a mask of this form, CIDRMask is the inverse of IPMask.Size.
 func CIDRMask(ones, bits int) IPMask {
 	if bits != 8*IPv4len && bits != 8*IPv6len {
@@ -668,8 +671,8 @@ func parseIPv6(s string) (ip IP) {
 }
 
 // ParseIP parses s as an IP address, returning the result.
-// The string s can be in dotted decimal ("192.0.2.1")
-// or IPv6 ("2001:db8::68") form.
+// The string s can be in IPv4 dotted decimal ("192.0.2.1"), IPv6
+// ("2001:db8::68"), or IPv4-mapped IPv6 ("::ffff:192.0.2.1") form.
 // If s is not a valid textual representation of an IP address,
 // ParseIP returns nil.
 func ParseIP(s string) IP {
