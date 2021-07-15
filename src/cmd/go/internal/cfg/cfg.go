@@ -27,6 +27,7 @@ var (
 	BuildBuildmode         string // -buildmode flag
 	BuildContext           = defaultContext()
 	BuildMod               string             // -mod flag
+	BuildModReason         string             // reason -mod flag is set, if set by default
 	BuildI                 bool               // -i flag
 	BuildLinkshared        bool               // -linkshared flag
 	BuildMSan              bool               // -msan flag
@@ -43,6 +44,9 @@ var (
 	BuildV                 bool // -v flag
 	BuildWork              bool // -work flag
 	BuildX                 bool // -x flag
+
+	ModCacheRW bool   // -modcacherw flag
+	ModFile    string // -modfile flag
 
 	CmdName string // "build", "install", "list", "mod tidy", etc.
 
@@ -232,6 +236,7 @@ var (
 	GOROOTpkg    = filepath.Join(GOROOT, "pkg")
 	GOROOTsrc    = filepath.Join(GOROOT, "src")
 	GOROOT_FINAL = findGOROOT_FINAL()
+	GOMODCACHE   = envOr("GOMODCACHE", gopathDir("pkg/mod"))
 
 	// Used in envcmd.MkEnv and build ID computations.
 	GOARM    = envOr("GOARM", fmt.Sprint(objabi.GOARM))
@@ -241,12 +246,15 @@ var (
 	GOPPC64  = envOr("GOPPC64", fmt.Sprintf("%s%d", "power", objabi.GOPPC64))
 	GOWASM   = envOr("GOWASM", fmt.Sprint(objabi.GOWASM))
 
-	GOPROXY   = envOr("GOPROXY", "https://proxy.golang.org,direct")
-	GOSUMDB   = envOr("GOSUMDB", "sum.golang.org")
-	GOPRIVATE = Getenv("GOPRIVATE")
-	GONOPROXY = envOr("GONOPROXY", GOPRIVATE)
-	GONOSUMDB = envOr("GONOSUMDB", GOPRIVATE)
+	GOPROXY    = envOr("GOPROXY", "https://proxy.golang.org,direct")
+	GOSUMDB    = envOr("GOSUMDB", "sum.golang.org")
+	GOPRIVATE  = Getenv("GOPRIVATE")
+	GONOPROXY  = envOr("GONOPROXY", GOPRIVATE)
+	GONOSUMDB  = envOr("GONOSUMDB", GOPRIVATE)
+	GOINSECURE = Getenv("GOINSECURE")
 )
+
+var SumdbDir = gopathDir("pkg/sumdb")
 
 // GetArchEnv returns the name and setting of the
 // GOARCH-specific architecture environment variable.
@@ -358,4 +366,12 @@ func isGOROOT(path string) bool {
 		return false
 	}
 	return stat.IsDir()
+}
+
+func gopathDir(rel string) string {
+	list := filepath.SplitList(BuildContext.GOPATH)
+	if len(list) == 0 || list[0] == "" {
+		return ""
+	}
+	return filepath.Join(list[0], rel)
 }
