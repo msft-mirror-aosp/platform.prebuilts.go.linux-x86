@@ -22,9 +22,10 @@ import (
 	"cmd/go/internal/base"
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/modfetch/codehost"
-	"cmd/go/internal/module"
-	"cmd/go/internal/semver"
 	"cmd/go/internal/web"
+
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 var HelpGoproxy = &base.Command{
@@ -38,8 +39,8 @@ can be a module proxy.
 
 The GET requests sent to a Go module proxy are:
 
-GET $GOPROXY/<module>/@v/list returns a list of all known versions of the
-given module, one per line.
+GET $GOPROXY/<module>/@v/list returns a list of known versions of the given
+module, one per line.
 
 GET $GOPROXY/<module>/@v/<version>.info returns JSON-formatted metadata
 about that version of the given module.
@@ -49,6 +50,21 @@ for that version of the given module.
 
 GET $GOPROXY/<module>/@v/<version>.zip returns the zip archive
 for that version of the given module.
+
+GET $GOPROXY/<module>/@latest returns JSON-formatted metadata about the
+latest known version of the given module in the same format as
+<module>/@v/<version>.info. The latest version should be the version of
+the module the go command may use if <module>/@v/list is empty or no
+listed version is suitable. <module>/@latest is optional and may not
+be implemented by a module proxy.
+
+When resolving the latest version of a module, the go command will request
+<module>/@v/list, then, if no suitable versions are found, <module>/@latest.
+The go command prefers, in order: the semantically highest release version,
+the semantically highest pre-release version, and the chronologically
+most recent pseudo-version. In Go 1.12 and earlier, the go command considered
+pseudo-versions in <module>/@v/list to be pre-release versions, but this is
+no longer true since Go 1.13.
 
 To avoid problems when serving from case-sensitive file systems,
 the <module> and <version> elements are case-encoded, replacing every
@@ -85,27 +101,51 @@ cached module versions with GOPROXY=https://example.com/proxy.
 
 var proxyOnce struct {
 	sync.Once
-	list []string
+	list []proxySpec
 	err  error
 }
 
-func proxyURLs() ([]string, error) {
+type proxySpec struct {
+	// url is the proxy URL or one of "off", "direct", "noproxy".
+	url string
+
+	// fallBackOnError is true if a request should be attempted on the next proxy
+	// in the list after any error from this proxy. If fallBackOnError is false,
+	// the request will only be attempted on the next proxy if the error is
+	// equivalent to os.ErrNotFound, which is true for 404 and 410 responses.
+	fallBackOnError bool
+}
+
+func proxyList() ([]proxySpec, error) {
 	proxyOnce.Do(func() {
 		if cfg.GONOPROXY != "" && cfg.GOPROXY != "direct" {
-			proxyOnce.list = append(proxyOnce.list, "noproxy")
+			proxyOnce.list = append(proxyOnce.list, proxySpec{url: "noproxy"})
 		}
-		for _, proxyURL := range strings.Split(cfg.GOPROXY, ",") {
-			proxyURL = strings.TrimSpace(proxyURL)
-			if proxyURL == "" {
+
+		goproxy := cfg.GOPROXY
+		for goproxy != "" {
+			var url string
+			fallBackOnError := false
+			if i := strings.IndexAny(goproxy, ",|"); i >= 0 {
+				url = goproxy[:i]
+				fallBackOnError = goproxy[i] == '|'
+				goproxy = goproxy[i+1:]
+			} else {
+				url = goproxy
+				goproxy = ""
+			}
+
+			url = strings.TrimSpace(url)
+			if url == "" {
 				continue
 			}
-			if proxyURL == "off" {
+			if url == "off" {
 				// "off" always fails hard, so can stop walking list.
-				proxyOnce.list = append(proxyOnce.list, "off")
+				proxyOnce.list = append(proxyOnce.list, proxySpec{url: "off"})
 				break
 			}
-			if proxyURL == "direct" {
-				proxyOnce.list = append(proxyOnce.list, "direct")
+			if url == "direct" {
+				proxyOnce.list = append(proxyOnce.list, proxySpec{url: "direct"})
 				// For now, "direct" is the end of the line. We may decide to add some
 				// sort of fallback behavior for them in the future, so ignore
 				// subsequent entries for forward-compatibility.
@@ -115,18 +155,29 @@ func proxyURLs() ([]string, error) {
 			// Single-word tokens are reserved for built-in behaviors, and anything
 			// containing the string ":/" or matching an absolute file path must be a
 			// complete URL. For all other paths, implicitly add "https://".
-			if strings.ContainsAny(proxyURL, ".:/") && !strings.Contains(proxyURL, ":/") && !filepath.IsAbs(proxyURL) && !path.IsAbs(proxyURL) {
-				proxyURL = "https://" + proxyURL
+			if strings.ContainsAny(url, ".:/") && !strings.Contains(url, ":/") && !filepath.IsAbs(url) && !path.IsAbs(url) {
+				url = "https://" + url
 			}
 
 			// Check that newProxyRepo accepts the URL.
 			// It won't do anything with the path.
-			_, err := newProxyRepo(proxyURL, "golang.org/x/text")
-			if err != nil {
+			if _, err := newProxyRepo(url, "golang.org/x/text"); err != nil {
 				proxyOnce.err = err
 				return
 			}
-			proxyOnce.list = append(proxyOnce.list, proxyURL)
+
+			proxyOnce.list = append(proxyOnce.list, proxySpec{
+				url:             url,
+				fallBackOnError: fallBackOnError,
+			})
+		}
+
+		if len(proxyOnce.list) == 0 ||
+			len(proxyOnce.list) == 1 && proxyOnce.list[0].url == "noproxy" {
+			// There were no proxies, other than the implicit "noproxy" added when
+			// GONOPROXY is set. This can happen if GOPROXY is a non-empty string
+			// like "," or " ".
+			proxyOnce.err = fmt.Errorf("GOPROXY list is not the empty string, but contains no entries")
 		}
 	})
 
@@ -134,29 +185,60 @@ func proxyURLs() ([]string, error) {
 }
 
 // TryProxies iterates f over each configured proxy (including "noproxy" and
-// "direct" if applicable) until f returns an error that is not
-// equivalent to os.ErrNotExist.
+// "direct" if applicable) until f returns no error or until f returns an
+// error that is not equivalent to os.ErrNotExist on a proxy configured
+// not to fall back on errors.
 //
 // TryProxies then returns that final error.
 //
 // If GOPROXY is set to "off", TryProxies invokes f once with the argument
 // "off".
 func TryProxies(f func(proxy string) error) error {
-	proxies, err := proxyURLs()
+	proxies, err := proxyList()
 	if err != nil {
 		return err
 	}
 	if len(proxies) == 0 {
-		return f("off")
+		panic("GOPROXY list is empty")
 	}
 
+	// We try to report the most helpful error to the user. "direct" and "noproxy"
+	// errors are best, followed by proxy errors other than ErrNotExist, followed
+	// by ErrNotExist.
+	//
+	// Note that errProxyOff, errNoproxy, and errUseProxy are equivalent to
+	// ErrNotExist. errUseProxy should only be returned if "noproxy" is the only
+	// proxy. errNoproxy should never be returned, since there should always be a
+	// more useful error from "noproxy" first.
+	const (
+		notExistRank = iota
+		proxyRank
+		directRank
+	)
+	var bestErr error
+	bestErrRank := notExistRank
 	for _, proxy := range proxies {
-		err = f(proxy)
-		if !errors.Is(err, os.ErrNotExist) {
+		err := f(proxy.url)
+		if err == nil {
+			return nil
+		}
+		isNotExistErr := errors.Is(err, os.ErrNotExist)
+
+		if proxy.url == "direct" || (proxy.url == "noproxy" && err != errUseProxy) {
+			bestErr = err
+			bestErrRank = directRank
+		} else if bestErrRank <= proxyRank && !isNotExistErr {
+			bestErr = err
+			bestErrRank = proxyRank
+		} else if bestErrRank == notExistRank {
+			bestErr = err
+		}
+
+		if !proxy.fallBackOnError && !isNotExistErr {
 			break
 		}
 	}
-	return err
+	return bestErr
 }
 
 type proxyRepo struct {
@@ -174,15 +256,15 @@ func newProxyRepo(baseURL, path string) (Repo, error) {
 		// ok
 	case "file":
 		if *base != (url.URL{Scheme: base.Scheme, Path: base.Path, RawPath: base.RawPath}) {
-			return nil, fmt.Errorf("invalid file:// proxy URL with non-path elements: %s", web.Redacted(base))
+			return nil, fmt.Errorf("invalid file:// proxy URL with non-path elements: %s", base.Redacted())
 		}
 	case "":
-		return nil, fmt.Errorf("invalid proxy URL missing scheme: %s", web.Redacted(base))
+		return nil, fmt.Errorf("invalid proxy URL missing scheme: %s", base.Redacted())
 	default:
-		return nil, fmt.Errorf("invalid proxy URL scheme (must be https, http, file): %s", web.Redacted(base))
+		return nil, fmt.Errorf("invalid proxy URL scheme (must be https, http, file): %s", base.Redacted())
 	}
 
-	enc, err := module.EncodePath(path)
+	enc, err := module.EscapePath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +403,7 @@ func (p *proxyRepo) latest() (*RevInfo, error) {
 }
 
 func (p *proxyRepo) Stat(rev string) (*RevInfo, error) {
-	encRev, err := module.EncodeVersion(rev)
+	encRev, err := module.EscapeVersion(rev)
 	if err != nil {
 		return nil, p.versionError(rev, err)
 	}
@@ -362,7 +444,7 @@ func (p *proxyRepo) GoMod(version string) ([]byte, error) {
 		return nil, p.versionError(version, fmt.Errorf("internal error: version passed to GoMod is not canonical"))
 	}
 
-	encVer, err := module.EncodeVersion(version)
+	encVer, err := module.EscapeVersion(version)
 	if err != nil {
 		return nil, p.versionError(version, err)
 	}
@@ -378,7 +460,7 @@ func (p *proxyRepo) Zip(dst io.Writer, version string) error {
 		return p.versionError(version, fmt.Errorf("internal error: version passed to Zip is not canonical"))
 	}
 
-	encVer, err := module.EncodeVersion(version)
+	encVer, err := module.EscapeVersion(version)
 	if err != nil {
 		return p.versionError(version, err)
 	}
