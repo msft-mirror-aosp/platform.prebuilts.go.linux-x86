@@ -1,4 +1,4 @@
-// Copyright 2019 The Go Authors. All rights reserved.
+// Copyright 2020 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -12,11 +12,10 @@ import (
 	"math/big"
 )
 
-func sign(priv *PrivateKey, csprng *cipher.StreamReader, c elliptic.Curve, e *big.Int) (r, s *big.Int, err error) {
-	r, s, err = signGeneric(priv, csprng, c, e)
-	return
+func sign(priv *PrivateKey, csprng *cipher.StreamReader, c elliptic.Curve, hash []byte) (r, s *big.Int, err error) {
+	return signGeneric(priv, csprng, c, hash)
 }
 
-func verify(pub *PublicKey, c elliptic.Curve, e, r, s *big.Int) bool {
-	return verifyGeneric(pub, c, e, r, s)
+func verify(pub *PublicKey, c elliptic.Curve, hash []byte, r, s *big.Int) bool {
+	return verifyGeneric(pub, c, hash, r, s)
 }
