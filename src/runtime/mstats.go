@@ -31,7 +31,7 @@ type mstats struct {
 	nfree       uint64 // number of frees
 
 	// Statistics about malloc heap.
-	// Protected by mheap.lock
+	// Updated atomically, or with the world stopped.
 	//
 	// Like MemStats, heap_sys and heap_inuse do not count memory
 	// in manually-managed spans.
@@ -40,19 +40,22 @@ type mstats struct {
 	heap_idle     uint64 // bytes in idle spans
 	heap_inuse    uint64 // bytes in mSpanInUse spans
 	heap_released uint64 // bytes released to the os
-	heap_objects  uint64 // total number of allocated objects
+
+	// heap_objects is not used by the runtime directly and instead
+	// computed on the fly by updatememstats.
+	heap_objects uint64 // total number of allocated objects
 
 	// Statistics about allocation of low-level fixed-size structures.
 	// Protected by FixAlloc locks.
-	stacks_inuse uint64 // bytes in manually-managed stack spans
+	stacks_inuse uint64 // bytes in manually-managed stack spans; updated atomically or during STW
 	stacks_sys   uint64 // only counts newosproc0 stack in mstats; differs from MemStats.StackSys
 	mspan_inuse  uint64 // mspan structures
 	mspan_sys    uint64
 	mcache_inuse uint64 // mcache structures
 	mcache_sys   uint64
 	buckhash_sys uint64 // profiling bucket hash table
-	gc_sys       uint64
-	other_sys    uint64
+	gc_sys       uint64 // updated atomically or during STW
+	other_sys    uint64 // updated atomically or during STW
 
 	// Statistics about garbage collector.
 	// Protected by mheap or stopping the world during GC.
@@ -79,6 +82,8 @@ type mstats struct {
 
 	last_gc_nanotime uint64 // last gc (monotonic time)
 	tinyallocs       uint64 // number of tiny allocations that didn't cause actual allocation; not exported to go directly
+	last_next_gc     uint64 // next_gc for the previous GC
+	last_heap_inuse  uint64 // heap_inuse at mark termination of the previous GC
 
 	// triggerRatio is the heap growth ratio that triggers marking.
 	//
@@ -508,6 +513,12 @@ func readGCStats_m(pauses *[]uint64) {
 
 //go:nowritebarrier
 func updatememstats() {
+	// Flush mcaches to mcentral before doing anything else.
+	//
+	// Flushing to the mcentral may in general cause stats to
+	// change as mcentral data structures are manipulated.
+	systemstack(flushallmcaches)
+
 	memstats.mcache_inuse = uint64(mheap_.cachealloc.inuse)
 	memstats.mspan_inuse = uint64(mheap_.spanalloc.inuse)
 	memstats.sys = memstats.heap_sys + memstats.stacks_sys + memstats.mspan_sys +
@@ -518,7 +529,7 @@ func updatememstats() {
 
 	// Calculate memory allocator stats.
 	// During program execution we only count number of frees and amount of freed memory.
-	// Current number of alive object in the heap and amount of alive heap memory
+	// Current number of alive objects in the heap and amount of alive heap memory
 	// are calculated by scanning all spans.
 	// Total number of mallocs is calculated as number of frees plus number of alive objects.
 	// Similarly, total amount of allocated memory is calculated as amount of freed memory
@@ -531,9 +542,6 @@ func updatememstats() {
 		memstats.by_size[i].nmalloc = 0
 		memstats.by_size[i].nfree = 0
 	}
-
-	// Flush mcache's to mcentral.
-	systemstack(flushallmcaches)
 
 	// Aggregate local stats.
 	cachestats()
