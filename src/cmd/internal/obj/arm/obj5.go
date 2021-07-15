@@ -1,5 +1,5 @@
 // Derived from Inferno utils/5c/swt.c
-// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/5c/swt.c
+// https://bitbucket.org/inferno-os/inferno-os/src/master/utils/5c/swt.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -276,67 +276,21 @@ func preprocess(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 
 	/*
 	 * find leaf subroutines
-	 * strip NOPs
-	 * expand RET
-	 * expand BECOME pseudo
 	 */
-	var q1 *obj.Prog
-	var q *obj.Prog
 	for p := cursym.Func.Text; p != nil; p = p.Link {
 		switch p.As {
 		case obj.ATEXT:
 			p.Mark |= LEAF
 
-		case obj.ARET:
-			break
-
 		case ADIV, ADIVU, AMOD, AMODU:
-			q = p
 			cursym.Func.Text.Mark &^= LEAF
-			continue
-
-		case obj.ANOP:
-			q1 = p.Link
-			q.Link = q1 /* q is non-nop */
-			if q1 != nil {
-				q1.Mark |= p.Mark
-			}
-			continue
 
 		case ABL,
 			ABX,
 			obj.ADUFFZERO,
 			obj.ADUFFCOPY:
 			cursym.Func.Text.Mark &^= LEAF
-			fallthrough
-
-		case AB,
-			ABEQ,
-			ABNE,
-			ABCS,
-			ABHS,
-			ABCC,
-			ABLO,
-			ABMI,
-			ABPL,
-			ABVS,
-			ABVC,
-			ABHI,
-			ABLS,
-			ABGE,
-			ABLT,
-			ABGT,
-			ABLE:
-			q1 = p.Pcond
-			if q1 != nil {
-				for q1.As == obj.ANOP {
-					q1 = q1.Link
-					p.Pcond = q1
-				}
-			}
 		}
-
-		q = p
 	}
 
 	var q2 *obj.Prog
@@ -674,6 +628,12 @@ func (c *ctxt5) stacksplit(p *obj.Prog, framesize int32) *obj.Prog {
 	p.To.Type = obj.TYPE_REG
 	p.To.Reg = REG_R1
 
+	// Mark the stack bound check and morestack call async nonpreemptible.
+	// If we get preempted here, when resumed the preemption request is
+	// cleared, but we'll still call morestack, which will double the stack
+	// unnecessarily. See issue #35470.
+	p = c.ctxt.StartUnsafePoint(p, c.newprog)
+
 	if framesize <= objabi.StackSmall {
 		// small stack: SP < stackguard
 		//	CMP	stackguard, SP
@@ -757,6 +717,8 @@ func (c *ctxt5) stacksplit(p *obj.Prog, framesize int32) *obj.Prog {
 	bls.As = ABLS
 	bls.To.Type = obj.TYPE_BRANCH
 
+	end := c.ctxt.EndUnsafePoint(bls, c.newprog, -1)
+
 	var last *obj.Prog
 	for last = c.cursym.Func.Text; last.Link != nil; last = last.Link {
 	}
@@ -768,7 +730,8 @@ func (c *ctxt5) stacksplit(p *obj.Prog, framesize int32) *obj.Prog {
 	spfix.As = obj.ANOP
 	spfix.Spadj = -framesize
 
-	pcdata := c.ctxt.EmitEntryLiveness(c.cursym, spfix, c.newprog)
+	pcdata := c.ctxt.EmitEntryStackMap(c.cursym, spfix, c.newprog)
+	pcdata = c.ctxt.StartUnsafePoint(pcdata, c.newprog)
 
 	// MOVW	LR, R3
 	movw := obj.Appendp(pcdata, c.newprog)
@@ -793,14 +756,16 @@ func (c *ctxt5) stacksplit(p *obj.Prog, framesize int32) *obj.Prog {
 	}
 	call.To.Sym = c.ctxt.Lookup(morestack)
 
+	pcdata = c.ctxt.EndUnsafePoint(call, c.newprog, -1)
+
 	// B start
-	b := obj.Appendp(call, c.newprog)
+	b := obj.Appendp(pcdata, c.newprog)
 	b.As = obj.AJMP
 	b.To.Type = obj.TYPE_BRANCH
 	b.Pcond = c.cursym.Func.Text.Link
 	b.Spadj = +framesize
 
-	return bls
+	return end
 }
 
 var unaryDst = map[obj.As]bool{
