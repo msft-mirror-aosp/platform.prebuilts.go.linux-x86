@@ -25,7 +25,7 @@ import (
 // and its root represented by *Node is appended to xtop.
 // Returns the total count of parsed lines.
 func parseFiles(filenames []string) uint {
-	var noders []*noder
+	noders := make([]*noder, 0, len(filenames))
 	// Limit the number of simultaneously open files.
 	sem := make(chan struct{}, runtime.GOMAXPROCS(0)+10)
 
@@ -44,7 +44,7 @@ func parseFiles(filenames []string) uint {
 
 			f, err := os.Open(filename)
 			if err != nil {
-				p.error(syntax.Error{Pos: syntax.MakePos(base, 0, 0), Msg: err.Error()})
+				p.error(syntax.Error{Msg: err.Error()})
 				return
 			}
 			defer f.Close()
@@ -241,6 +241,10 @@ func (p *noder) node() {
 	p.setlineno(p.file.PkgName)
 	mkpackage(p.file.PkgName.Value)
 
+	if pragma, ok := p.file.Pragma.(*Pragma); ok {
+		p.checkUnused(pragma)
+	}
+
 	xtop = append(xtop, p.decls(p.file.DeclList)...)
 
 	for _, n := range p.linknames {
@@ -309,6 +313,14 @@ func (p *noder) decls(decls []syntax.Decl) (l []*Node) {
 }
 
 func (p *noder) importDecl(imp *syntax.ImportDecl) {
+	if imp.Path.Bad {
+		return // avoid follow-on errors if there was a syntax error
+	}
+
+	if pragma, ok := imp.Pragma.(*Pragma); ok {
+		p.checkUnused(pragma)
+	}
+
 	val := p.basicLit(imp.Path)
 	ipkg := importfile(&val)
 
@@ -359,6 +371,10 @@ func (p *noder) varDecl(decl *syntax.VarDecl) []*Node {
 		exprs = p.exprList(decl.Values)
 	}
 
+	if pragma, ok := decl.Pragma.(*Pragma); ok {
+		p.checkUnused(pragma)
+	}
+
 	p.setlineno(decl)
 	return variter(names, typ, exprs)
 }
@@ -380,6 +396,10 @@ func (p *noder) constDecl(decl *syntax.ConstDecl, cs *constState) []*Node {
 		}
 	}
 
+	if pragma, ok := decl.Pragma.(*Pragma); ok {
+		p.checkUnused(pragma)
+	}
+
 	names := p.declNames(decl.NameList)
 	typ := p.typeExprOrNil(decl.Type)
 
@@ -394,7 +414,7 @@ func (p *noder) constDecl(decl *syntax.ConstDecl, cs *constState) []*Node {
 		typ, values = cs.typ, cs.values
 	}
 
-	var nn []*Node
+	nn := make([]*Node, 0, len(names))
 	for i, n := range names {
 		if i >= len(values) {
 			yyerror("missing value in const declaration")
@@ -434,22 +454,24 @@ func (p *noder) typeDecl(decl *syntax.TypeDecl) *Node {
 
 	param := n.Name.Param
 	param.Ntype = typ
-	param.Pragma = decl.Pragma
 	param.Alias = decl.Alias
-	if param.Alias && param.Pragma != 0 {
-		yyerror("cannot specify directive with type alias")
-		param.Pragma = 0
+	if pragma, ok := decl.Pragma.(*Pragma); ok {
+		if !decl.Alias {
+			param.Pragma = pragma.Flag & TypePragmas
+			pragma.Flag &^= TypePragmas
+		}
+		p.checkUnused(pragma)
 	}
 
 	nod := p.nod(decl, ODCLTYPE, n, nil)
-	if param.Alias && !langSupported(1, 9) {
+	if param.Alias && !langSupported(1, 9, localpkg) {
 		yyerrorl(nod.Pos, "type aliases only supported as of -lang=go1.9")
 	}
 	return nod
 }
 
 func (p *noder) declNames(names []*syntax.Name) []*Node {
-	var nodes []*Node
+	nodes := make([]*Node, 0, len(names))
 	for _, name := range names {
 		nodes = append(nodes, p.declName(name))
 	}
@@ -489,11 +511,13 @@ func (p *noder) funcDecl(fun *syntax.FuncDecl) *Node {
 	f.Func.Nname.Name.Defn = f
 	f.Func.Nname.Name.Param.Ntype = t
 
-	pragma := fun.Pragma
-	f.Func.Pragma = fun.Pragma
-	f.SetNoescape(pragma&Noescape != 0)
-	if pragma&Systemstack != 0 && pragma&Nosplit != 0 {
-		yyerrorl(f.Pos, "go:nosplit and go:systemstack cannot be combined")
+	if pragma, ok := fun.Pragma.(*Pragma); ok {
+		f.Func.Pragma = pragma.Flag & FuncPragmas
+		if pragma.Flag&Systemstack != 0 && pragma.Flag&Nosplit != 0 {
+			yyerrorl(f.Pos, "go:nosplit and go:systemstack cannot be combined")
+		}
+		pragma.Flag &^= FuncPragmas
+		p.checkUnused(pragma)
 	}
 
 	if fun.Recv == nil {
@@ -503,7 +527,7 @@ func (p *noder) funcDecl(fun *syntax.FuncDecl) *Node {
 	p.funcBody(f, fun.Body)
 
 	if fun.Body != nil {
-		if f.Noescape() {
+		if f.Func.Pragma&Noescape != 0 {
 			yyerrorl(f.Pos, "can only use //go:noescape with external func implementations")
 		}
 	} else {
@@ -537,7 +561,7 @@ func (p *noder) signature(recv *syntax.Field, typ *syntax.FuncType) *Node {
 }
 
 func (p *noder) params(params []*syntax.Field, dddOk bool) []*Node {
-	var nodes []*Node
+	nodes := make([]*Node, 0, len(params))
 	for i, param := range params {
 		p.setlineno(param)
 		nodes = append(nodes, p.param(param, dddOk, i+1 == len(params)))
@@ -587,7 +611,7 @@ func (p *noder) exprList(expr syntax.Expr) []*Node {
 }
 
 func (p *noder) exprs(exprs []syntax.Expr) []*Node {
-	var nodes []*Node
+	nodes := make([]*Node, 0, len(exprs))
 	for _, expr := range exprs {
 		nodes = append(nodes, p.expr(expr))
 	}
@@ -602,7 +626,9 @@ func (p *noder) expr(expr syntax.Expr) *Node {
 	case *syntax.Name:
 		return p.mkname(expr)
 	case *syntax.BasicLit:
-		return nodlit(p.basicLit(expr))
+		n := nodlit(p.basicLit(expr))
+		n.SetDiag(expr.Bad) // avoid follow-on errors if there was a syntax error
+		return n
 	case *syntax.CompositeLit:
 		n := p.nod(expr, OCOMPLIT, nil, nil)
 		if expr.Type != nil {
@@ -641,7 +667,7 @@ func (p *noder) expr(expr syntax.Expr) *Node {
 		}
 		n := p.nod(expr, op, p.expr(expr.X), nil)
 		var index [3]*Node
-		for i, x := range expr.Index {
+		for i, x := range &expr.Index {
 			if x != nil {
 				index[i] = p.expr(x)
 			}
@@ -656,15 +682,6 @@ func (p *noder) expr(expr syntax.Expr) *Node {
 		}
 		x := p.expr(expr.X)
 		if expr.Y == nil {
-			if expr.Op == syntax.And {
-				x = unparen(x) // TODO(mdempsky): Needed?
-				if x.Op == OCOMPLIT {
-					// Special case for &T{...}: turn into (*T){...}.
-					x.Right = p.nod(expr, ODEREF, x.Right, nil)
-					x.Right.SetImplicit(true)
-					return x
-				}
-			}
 			return p.nod(expr, p.unOp(expr.Op), x, nil)
 		}
 		return p.nod(expr, p.binOp(expr.Op), x, p.expr(expr.Y))
@@ -756,7 +773,7 @@ func (p *noder) sum(x syntax.Expr) *Node {
 	n := p.expr(x)
 	if Isconst(n, CTSTR) && n.Sym == nil {
 		nstr = n
-		chunks = append(chunks, nstr.Val().U.(string))
+		chunks = append(chunks, strlit(nstr))
 	}
 
 	for i := len(adds) - 1; i >= 0; i-- {
@@ -766,12 +783,12 @@ func (p *noder) sum(x syntax.Expr) *Node {
 		if Isconst(r, CTSTR) && r.Sym == nil {
 			if nstr != nil {
 				// Collapse r into nstr instead of adding to n.
-				chunks = append(chunks, r.Val().U.(string))
+				chunks = append(chunks, strlit(r))
 				continue
 			}
 
 			nstr = r
-			chunks = append(chunks, nstr.Val().U.(string))
+			chunks = append(chunks, strlit(nstr))
 		} else {
 			if len(chunks) > 1 {
 				nstr.SetVal(Val{U: strings.Join(chunks, "")})
@@ -813,7 +830,7 @@ func (p *noder) chanDir(dir syntax.ChanDir) types.ChanDir {
 }
 
 func (p *noder) structType(expr *syntax.StructType) *Node {
-	var l []*Node
+	l := make([]*Node, 0, len(expr.FieldList))
 	for i, field := range expr.FieldList {
 		p.setlineno(field)
 		var n *Node
@@ -835,7 +852,7 @@ func (p *noder) structType(expr *syntax.StructType) *Node {
 }
 
 func (p *noder) interfaceType(expr *syntax.InterfaceType) *Node {
-	var l []*Node
+	l := make([]*Node, 0, len(expr.MethodList))
 	for _, method := range expr.MethodList {
 		p.setlineno(method)
 		var n *Node
@@ -1174,7 +1191,7 @@ func (p *noder) switchStmt(stmt *syntax.SwitchStmt) *Node {
 }
 
 func (p *noder) caseClauses(clauses []*syntax.CaseClause, tswitch *Node, rbrace syntax.Pos) []*Node {
-	var nodes []*Node
+	nodes := make([]*Node, 0, len(clauses))
 	for i, clause := range clauses {
 		p.setlineno(clause)
 		if i > 0 {
@@ -1182,7 +1199,7 @@ func (p *noder) caseClauses(clauses []*syntax.CaseClause, tswitch *Node, rbrace 
 		}
 		p.openScope(clause.Pos())
 
-		n := p.nod(clause, OXCASE, nil, nil)
+		n := p.nod(clause, OCASE, nil, nil)
 		if clause.Cases != nil {
 			n.List.Set(p.exprList(clause.Cases))
 		}
@@ -1230,7 +1247,7 @@ func (p *noder) selectStmt(stmt *syntax.SelectStmt) *Node {
 }
 
 func (p *noder) commClauses(clauses []*syntax.CommClause, rbrace syntax.Pos) []*Node {
-	var nodes []*Node
+	nodes := make([]*Node, 0, len(clauses))
 	for i, clause := range clauses {
 		p.setlineno(clause)
 		if i > 0 {
@@ -1238,7 +1255,7 @@ func (p *noder) commClauses(clauses []*syntax.CommClause, rbrace syntax.Pos) []*
 		}
 		p.openScope(clause.Pos())
 
-		n := p.nod(clause, OXCASE, nil, nil)
+		n := p.nod(clause, OCASE, nil, nil)
 		if clause.Comm != nil {
 			n.List.Set1(p.stmt(clause.Comm))
 		}
@@ -1325,12 +1342,12 @@ func (p *noder) binOp(op syntax.Operator) Op {
 // literal is not compatible with the current language version.
 func checkLangCompat(lit *syntax.BasicLit) {
 	s := lit.Value
-	if len(s) <= 2 || langSupported(1, 13) {
+	if len(s) <= 2 || langSupported(1, 13, localpkg) {
 		return
 	}
 	// len(s) > 2
 	if strings.Contains(s, "_") {
-		yyerror("underscores in numeric literals only supported as of -lang=go1.13")
+		yyerrorv("go1.13", "underscores in numeric literals")
 		return
 	}
 	if s[0] != '0' {
@@ -1338,68 +1355,73 @@ func checkLangCompat(lit *syntax.BasicLit) {
 	}
 	base := s[1]
 	if base == 'b' || base == 'B' {
-		yyerror("binary literals only supported as of -lang=go1.13")
+		yyerrorv("go1.13", "binary literals")
 		return
 	}
 	if base == 'o' || base == 'O' {
-		yyerror("0o/0O-style octal literals only supported as of -lang=go1.13")
+		yyerrorv("go1.13", "0o/0O-style octal literals")
 		return
 	}
 	if lit.Kind != syntax.IntLit && (base == 'x' || base == 'X') {
-		yyerror("hexadecimal floating-point literals only supported as of -lang=go1.13")
+		yyerrorv("go1.13", "hexadecimal floating-point literals")
 	}
 }
 
 func (p *noder) basicLit(lit *syntax.BasicLit) Val {
-	// TODO: Don't try to convert if we had syntax errors (conversions may fail).
-	//       Use dummy values so we can continue to compile. Eventually, use a
-	//       form of "unknown" literals that are ignored during type-checking so
-	//       we can continue type-checking w/o spurious follow-up errors.
+	// We don't use the errors of the conversion routines to determine
+	// if a literal string is valid because the conversion routines may
+	// accept a wider syntax than the language permits. Rely on lit.Bad
+	// instead.
 	switch s := lit.Value; lit.Kind {
 	case syntax.IntLit:
 		checkLangCompat(lit)
 		x := new(Mpint)
-		x.SetString(s)
+		if !lit.Bad {
+			x.SetString(s)
+		}
 		return Val{U: x}
 
 	case syntax.FloatLit:
 		checkLangCompat(lit)
 		x := newMpflt()
-		x.SetString(s)
+		if !lit.Bad {
+			x.SetString(s)
+		}
 		return Val{U: x}
 
 	case syntax.ImagLit:
 		checkLangCompat(lit)
 		x := newMpcmplx()
-		x.Imag.SetString(strings.TrimSuffix(s, "i"))
+		if !lit.Bad {
+			x.Imag.SetString(strings.TrimSuffix(s, "i"))
+		}
 		return Val{U: x}
 
 	case syntax.RuneLit:
-		var r rune
-		if u, err := strconv.Unquote(s); err == nil && len(u) > 0 {
-			// Package syntax already reported any errors.
-			// Check for them again though because 0 is a
-			// better fallback value for invalid rune
-			// literals than 0xFFFD.
+		x := new(Mpint)
+		x.Rune = true
+		if !lit.Bad {
+			u, _ := strconv.Unquote(s)
+			var r rune
 			if len(u) == 1 {
 				r = rune(u[0])
 			} else {
 				r, _ = utf8.DecodeRuneInString(u)
 			}
+			x.SetInt64(int64(r))
 		}
-		x := new(Mpint)
-		x.SetInt64(int64(r))
-		x.Rune = true
 		return Val{U: x}
 
 	case syntax.StringLit:
-		if len(s) > 0 && s[0] == '`' {
-			// strip carriage returns from raw string
-			s = strings.Replace(s, "\r", "", -1)
+		var x string
+		if !lit.Bad {
+			if len(s) > 0 && s[0] == '`' {
+				// strip carriage returns from raw string
+				s = strings.Replace(s, "\r", "", -1)
+			}
+			x, _ = strconv.Unquote(s)
 		}
-		// Ignore errors because package syntax already reported them.
-		u, _ := strconv.Unquote(s)
-		return Val{U: u}
+		return Val{U: x}
 
 	default:
 		panic("unhandled BasicLit kind")
@@ -1478,13 +1500,58 @@ var allowedStdPragmas = map[string]bool{
 	"go:generate":           true,
 }
 
+// *Pragma is the value stored in a syntax.Pragma during parsing.
+type Pragma struct {
+	Flag PragmaFlag  // collected bits
+	Pos  []PragmaPos // position of each individual flag
+}
+
+type PragmaPos struct {
+	Flag PragmaFlag
+	Pos  syntax.Pos
+}
+
+func (p *noder) checkUnused(pragma *Pragma) {
+	for _, pos := range pragma.Pos {
+		if pos.Flag&pragma.Flag != 0 {
+			p.yyerrorpos(pos.Pos, "misplaced compiler directive")
+		}
+	}
+}
+
+func (p *noder) checkUnusedDuringParse(pragma *Pragma) {
+	for _, pos := range pragma.Pos {
+		if pos.Flag&pragma.Flag != 0 {
+			p.error(syntax.Error{Pos: pos.Pos, Msg: "misplaced compiler directive"})
+		}
+	}
+}
+
 // pragma is called concurrently if files are parsed concurrently.
-func (p *noder) pragma(pos syntax.Pos, text string) syntax.Pragma {
-	switch {
-	case strings.HasPrefix(text, "line "):
+func (p *noder) pragma(pos syntax.Pos, blankLine bool, text string, old syntax.Pragma) syntax.Pragma {
+	pragma, _ := old.(*Pragma)
+	if pragma == nil {
+		pragma = new(Pragma)
+	}
+
+	if text == "" {
+		// unused pragma; only called with old != nil.
+		p.checkUnusedDuringParse(pragma)
+		return nil
+	}
+
+	if strings.HasPrefix(text, "line ") {
 		// line directives are handled by syntax package
 		panic("unreachable")
+	}
 
+	if !blankLine {
+		// directive must be on line by itself
+		p.error(syntax.Error{Pos: pos, Msg: "misplaced compiler directive"})
+		return pragma
+	}
+
+	switch {
 	case strings.HasPrefix(text, "go:linkname "):
 		f := strings.Fields(text)
 		if !(2 <= len(f) && len(f) <= 3) {
@@ -1512,7 +1579,8 @@ func (p *noder) pragma(pos syntax.Pos, text string) syntax.Pragma {
 				p.error(syntax.Error{Pos: pos, Msg: fmt.Sprintf("invalid library name %q in cgo_import_dynamic directive", lib)})
 			}
 			p.pragcgo(pos, text)
-			return pragmaValue("go:cgo_import_dynamic")
+			pragma.Flag |= pragmaFlag("go:cgo_import_dynamic")
+			break
 		}
 		fallthrough
 	case strings.HasPrefix(text, "go:cgo_"):
@@ -1529,18 +1597,19 @@ func (p *noder) pragma(pos syntax.Pos, text string) syntax.Pragma {
 		if i := strings.Index(text, " "); i >= 0 {
 			verb = verb[:i]
 		}
-		prag := pragmaValue(verb)
+		flag := pragmaFlag(verb)
 		const runtimePragmas = Systemstack | Nowritebarrier | Nowritebarrierrec | Yeswritebarrierrec
-		if !compiling_runtime && prag&runtimePragmas != 0 {
+		if !compiling_runtime && flag&runtimePragmas != 0 {
 			p.error(syntax.Error{Pos: pos, Msg: fmt.Sprintf("//%s only allowed in runtime", verb)})
 		}
-		if prag == 0 && !allowedStdPragmas[verb] && compiling_std {
+		if flag == 0 && !allowedStdPragmas[verb] && compiling_std {
 			p.error(syntax.Error{Pos: pos, Msg: fmt.Sprintf("//%s is not allowed in the standard library", verb)})
 		}
-		return prag
+		pragma.Flag |= flag
+		pragma.Pos = append(pragma.Pos, PragmaPos{flag, pos})
 	}
 
-	return 0
+	return pragma
 }
 
 // isCgoGeneratedFile reports whether pos is in a file
