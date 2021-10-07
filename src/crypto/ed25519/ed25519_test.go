@@ -88,6 +88,28 @@ func TestCryptoSigner(t *testing.T) {
 	}
 }
 
+func TestEqual(t *testing.T) {
+	public, private, _ := GenerateKey(rand.Reader)
+
+	if !public.Equal(public) {
+		t.Errorf("public key is not equal to itself: %q", public)
+	}
+	if !public.Equal(crypto.Signer(private).Public()) {
+		t.Errorf("private.Public() is not Equal to public: %q", public)
+	}
+	if !private.Equal(private) {
+		t.Errorf("private key is not equal to itself: %q", private)
+	}
+
+	otherPub, otherPriv, _ := GenerateKey(rand.Reader)
+	if public.Equal(otherPub) {
+		t.Errorf("different public keys are Equal")
+	}
+	if private.Equal(otherPriv) {
+		t.Errorf("different private keys are Equal")
+	}
+}
+
 func TestGolden(t *testing.T) {
 	// sign.input.gz is a selection of test cases from
 	// https://ed25519.cr.yp.to/python/sign.input
@@ -191,6 +213,14 @@ func BenchmarkKeyGeneration(b *testing.B) {
 	}
 }
 
+func BenchmarkNewKeyFromSeed(b *testing.B) {
+	seed := make([]byte, SeedSize)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = NewKeyFromSeed(seed)
+	}
+}
+
 func BenchmarkSigning(b *testing.B) {
 	var zero zeroReader
 	_, priv, err := GenerateKey(zero)
@@ -198,6 +228,7 @@ func BenchmarkSigning(b *testing.B) {
 		b.Fatal(err)
 	}
 	message := []byte("Hello, world!")
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		Sign(priv, message)
