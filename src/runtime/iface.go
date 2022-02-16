@@ -5,9 +5,8 @@
 package runtime
 
 import (
-	"internal/abi"
-	"internal/goarch"
 	"runtime/internal/atomic"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -64,7 +63,7 @@ func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {
 	}
 
 	// Entry doesn't exist yet. Make a new entry & add it.
-	m = (*itab)(persistentalloc(unsafe.Sizeof(itab{})+uintptr(len(inter.mhdr)-1)*goarch.PtrSize, 0, &memstats.other_sys))
+	m = (*itab)(persistentalloc(unsafe.Sizeof(itab{})+uintptr(len(inter.mhdr)-1)*sys.PtrSize, 0, &memstats.other_sys))
 	m.inter = inter
 	m._type = typ
 	// The hash is used in type switches. However, compiler statically generates itab's
@@ -101,7 +100,7 @@ func (t *itabTableType) find(inter *interfacetype, typ *_type) *itab {
 	mask := t.size - 1
 	h := itabHashFunc(inter, typ) & mask
 	for i := uintptr(1); ; i++ {
-		p := (**itab)(add(unsafe.Pointer(&t.entries), h*goarch.PtrSize))
+		p := (**itab)(add(unsafe.Pointer(&t.entries), h*sys.PtrSize))
 		// Use atomic read here so if we see m != nil, we also see
 		// the initializations of the fields of m.
 		// m := *p
@@ -134,7 +133,7 @@ func itabAdd(m *itab) {
 		// t2 = new(itabTableType) + some additional entries
 		// We lie and tell malloc we want pointer-free memory because
 		// all the pointed-to values are not in the heap.
-		t2 := (*itabTableType)(mallocgc((2+2*t.size)*goarch.PtrSize, nil, true))
+		t2 := (*itabTableType)(mallocgc((2+2*t.size)*sys.PtrSize, nil, true))
 		t2.size = t.size * 2
 
 		// Copy over entries.
@@ -162,7 +161,7 @@ func (t *itabTableType) add(m *itab) {
 	mask := t.size - 1
 	h := itabHashFunc(m.inter, m._type) & mask
 	for i := uintptr(1); ; i++ {
-		p := (**itab)(add(unsafe.Pointer(&t.entries), h*goarch.PtrSize))
+		p := (**itab)(add(unsafe.Pointer(&t.entries), h*sys.PtrSize))
 		m2 := *p
 		if m2 == m {
 			// A given itab may be used in more than one module
@@ -296,11 +295,11 @@ type (
 )
 
 var (
-	uint16Eface any = uint16InterfacePtr(0)
-	uint32Eface any = uint32InterfacePtr(0)
-	uint64Eface any = uint64InterfacePtr(0)
-	stringEface any = stringInterfacePtr("")
-	sliceEface  any = sliceInterfacePtr(nil)
+	uint16Eface interface{} = uint16InterfacePtr(0)
+	uint32Eface interface{} = uint32InterfacePtr(0)
+	uint64Eface interface{} = uint64InterfacePtr(0)
+	stringEface interface{} = stringInterfacePtr("")
+	sliceEface  interface{} = sliceInterfacePtr(nil)
 
 	uint16Type *_type = efaceOf(&uint16Eface)._type
 	uint32Type *_type = efaceOf(&uint32Eface)._type
@@ -316,43 +315,26 @@ var (
 // The convXXX functions succeed on a nil input, whereas the assertXXX
 // functions fail on a nil input.
 
-// convT converts a value of type t, which is pointed to by v, to a pointer that can
-// be used as the second word of an interface value.
-func convT(t *_type, v unsafe.Pointer) unsafe.Pointer {
+func convT2E(t *_type, elem unsafe.Pointer) (e eface) {
 	if raceenabled {
-		raceReadObjectPC(t, v, getcallerpc(), abi.FuncPCABIInternal(convT))
+		raceReadObjectPC(t, elem, getcallerpc(), funcPC(convT2E))
 	}
 	if msanenabled {
-		msanread(v, t.size)
-	}
-	if asanenabled {
-		asanread(v, t.size)
+		msanread(elem, t.size)
 	}
 	x := mallocgc(t.size, t, true)
-	typedmemmove(t, x, v)
-	return x
-}
-func convTnoptr(t *_type, v unsafe.Pointer) unsafe.Pointer {
-	// TODO: maybe take size instead of type?
-	if raceenabled {
-		raceReadObjectPC(t, v, getcallerpc(), abi.FuncPCABIInternal(convTnoptr))
-	}
-	if msanenabled {
-		msanread(v, t.size)
-	}
-	if asanenabled {
-		asanread(v, t.size)
-	}
-
-	x := mallocgc(t.size, t, false)
-	memmove(x, v, t.size)
-	return x
+	// TODO: We allocate a zeroed object only to overwrite it with actual data.
+	// Figure out how to avoid zeroing. Also below in convT2Eslice, convT2I, convT2Islice.
+	typedmemmove(t, x, elem)
+	e._type = t
+	e.data = x
+	return
 }
 
 func convT16(val uint16) (x unsafe.Pointer) {
 	if val < uint16(len(staticuint64s)) {
 		x = unsafe.Pointer(&staticuint64s[val])
-		if goarch.BigEndian {
+		if sys.BigEndian {
 			x = add(x, 6)
 		}
 	} else {
@@ -365,7 +347,7 @@ func convT16(val uint16) (x unsafe.Pointer) {
 func convT32(val uint32) (x unsafe.Pointer) {
 	if val < uint32(len(staticuint64s)) {
 		x = unsafe.Pointer(&staticuint64s[val])
-		if goarch.BigEndian {
+		if sys.BigEndian {
 			x = add(x, 4)
 		}
 	} else {
@@ -406,30 +388,82 @@ func convTslice(val []byte) (x unsafe.Pointer) {
 	return
 }
 
-// convI2I returns the new itab to be used for the destination value
-// when converting a value with itab src to the dst interface.
-func convI2I(dst *interfacetype, src *itab) *itab {
-	if src == nil {
-		return nil
+func convT2Enoptr(t *_type, elem unsafe.Pointer) (e eface) {
+	if raceenabled {
+		raceReadObjectPC(t, elem, getcallerpc(), funcPC(convT2Enoptr))
 	}
-	if src.inter == dst {
-		return src
+	if msanenabled {
+		msanread(elem, t.size)
 	}
-	return getitab(dst, src._type, false)
+	x := mallocgc(t.size, t, false)
+	memmove(x, elem, t.size)
+	e._type = t
+	e.data = x
+	return
 }
 
-func assertI2I(inter *interfacetype, tab *itab) *itab {
+func convT2I(tab *itab, elem unsafe.Pointer) (i iface) {
+	t := tab._type
+	if raceenabled {
+		raceReadObjectPC(t, elem, getcallerpc(), funcPC(convT2I))
+	}
+	if msanenabled {
+		msanread(elem, t.size)
+	}
+	x := mallocgc(t.size, t, true)
+	typedmemmove(t, x, elem)
+	i.tab = tab
+	i.data = x
+	return
+}
+
+func convT2Inoptr(tab *itab, elem unsafe.Pointer) (i iface) {
+	t := tab._type
+	if raceenabled {
+		raceReadObjectPC(t, elem, getcallerpc(), funcPC(convT2Inoptr))
+	}
+	if msanenabled {
+		msanread(elem, t.size)
+	}
+	x := mallocgc(t.size, t, false)
+	memmove(x, elem, t.size)
+	i.tab = tab
+	i.data = x
+	return
+}
+
+func convI2I(inter *interfacetype, i iface) (r iface) {
+	tab := i.tab
+	if tab == nil {
+		return
+	}
+	if tab.inter == inter {
+		r.tab = tab
+		r.data = i.data
+		return
+	}
+	r.tab = getitab(inter, tab._type, false)
+	r.data = i.data
+	return
+}
+
+func assertI2I(inter *interfacetype, i iface) (r iface) {
+	tab := i.tab
 	if tab == nil {
 		// explicit conversions require non-nil interface value.
 		panic(&TypeAssertionError{nil, nil, &inter.typ, ""})
 	}
 	if tab.inter == inter {
-		return tab
+		r.tab = tab
+		r.data = i.data
+		return
 	}
-	return getitab(inter, tab._type, false)
+	r.tab = getitab(inter, tab._type, false)
+	r.data = i.data
+	return
 }
 
-func assertI2I2(inter *interfacetype, i iface) (r iface) {
+func assertI2I2(inter *interfacetype, i iface) (r iface, b bool) {
 	tab := i.tab
 	if tab == nil {
 		return
@@ -442,18 +476,22 @@ func assertI2I2(inter *interfacetype, i iface) (r iface) {
 	}
 	r.tab = tab
 	r.data = i.data
+	b = true
 	return
 }
 
-func assertE2I(inter *interfacetype, t *_type) *itab {
+func assertE2I(inter *interfacetype, e eface) (r iface) {
+	t := e._type
 	if t == nil {
 		// explicit conversions require non-nil interface value.
 		panic(&TypeAssertionError{nil, nil, &inter.typ, ""})
 	}
-	return getitab(inter, t, false)
+	r.tab = getitab(inter, t, false)
+	r.data = e.data
+	return
 }
 
-func assertE2I2(inter *interfacetype, e eface) (r iface) {
+func assertE2I2(inter *interfacetype, e eface) (r iface, b bool) {
 	t := e._type
 	if t == nil {
 		return
@@ -464,17 +502,18 @@ func assertE2I2(inter *interfacetype, e eface) (r iface) {
 	}
 	r.tab = tab
 	r.data = e.data
+	b = true
 	return
 }
 
 //go:linkname reflect_ifaceE2I reflect.ifaceE2I
 func reflect_ifaceE2I(inter *interfacetype, e eface, dst *iface) {
-	*dst = iface{assertE2I(inter, e._type), e.data}
+	*dst = assertE2I(inter, e)
 }
 
 //go:linkname reflectlite_ifaceE2I internal/reflectlite.ifaceE2I
 func reflectlite_ifaceE2I(inter *interfacetype, e eface, dst *iface) {
-	*dst = iface{assertE2I(inter, e._type), e.data}
+	*dst = assertE2I(inter, e)
 }
 
 func iterate_itabs(fn func(*itab)) {
@@ -482,7 +521,7 @@ func iterate_itabs(fn func(*itab)) {
 	// so no other locks/atomics needed.
 	t := itabTable
 	for i := uintptr(0); i < t.size; i++ {
-		m := *(**itab)(add(unsafe.Pointer(&t.entries), i*goarch.PtrSize))
+		m := *(**itab)(add(unsafe.Pointer(&t.entries), i*sys.PtrSize))
 		if m != nil {
 			fn(m)
 		}
@@ -523,11 +562,4 @@ var staticuint64s = [...]uint64{
 	0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef,
 	0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
 	0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
-}
-
-// The linker redirects a reference of a method that it determined
-// unreachable to a reference to this function, so it will throw if
-// ever called.
-func unreachableMethod() {
-	throw("unreachable method called. linker bug?")
 }

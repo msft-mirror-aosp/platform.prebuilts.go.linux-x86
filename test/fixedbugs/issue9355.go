@@ -1,4 +1,3 @@
-// +build !js,gc
 // run
 
 // Copyright 2014 The Go Authors. All rights reserved.
@@ -14,9 +13,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 )
 
 func main() {
+	if runtime.Compiler != "gc" || runtime.GOOS == "nacl" || runtime.GOOS == "js" {
+		return
+	}
+
 	err := os.Chdir(filepath.Join("fixedbugs", "issue9355.dir"))
 	check(err)
 

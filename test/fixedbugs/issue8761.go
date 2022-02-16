@@ -10,17 +10,17 @@
 
 package p
 
-func f1() {
+func _() {
 	type C chan int
 	_ = [1][]C{[]C{make(chan int)}}
 }
 
-func f2() {
+func _() {
 	type C interface{}
 	_ = [1][]C{[]C{recover()}}
 }
 
-func f3() {
+func _() {
 	type C *int
 	_ = [1][]C{[]C{new(int)}}
 }

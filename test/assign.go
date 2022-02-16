@@ -56,13 +56,13 @@ func main() {
 	{
 		var x = 1
 		{
-			x, x := 2, 3 // ERROR ".*x.* repeated on left side of :=|x redeclared in this block"
+			x, x := 2, 3 // ERROR "x repeated on left side of :="
 			_ = x
 		}
 		_ = x
 	}
 	{
-		a, a := 1, 2 // ERROR ".*a.* repeated on left side of :=|a redeclared in this block"
+		a, a := 1, 2 // ERROR "a repeated on left side of :="
 		_ = a
 	}
 }

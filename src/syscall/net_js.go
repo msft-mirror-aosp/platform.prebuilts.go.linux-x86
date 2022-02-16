@@ -5,7 +5,7 @@
 // js/wasm uses fake networking directly implemented in the net package.
 // This file only exists to make the compiler happy.
 
-//go:build js && wasm
+// +build js,wasm
 
 package syscall
 
@@ -45,7 +45,8 @@ const (
 	SYS_FCNTL = 500 // unsupported
 )
 
-type Sockaddr any
+type Sockaddr interface {
+}
 
 type SockaddrInet4 struct {
 	Port int

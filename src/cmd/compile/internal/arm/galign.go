@@ -5,21 +5,22 @@
 package arm
 
 import (
+	"cmd/compile/internal/gc"
 	"cmd/compile/internal/ssa"
-	"cmd/compile/internal/ssagen"
 	"cmd/internal/obj/arm"
-	"internal/buildcfg"
+	"cmd/internal/objabi"
 )
 
-func Init(arch *ssagen.ArchInfo) {
+func Init(arch *gc.Arch) {
 	arch.LinkArch = &arm.Linkarm
 	arch.REGSP = arm.REGSP
 	arch.MAXWIDTH = (1 << 32) - 1
-	arch.SoftFloat = buildcfg.GOARM == 5
+	arch.SoftFloat = objabi.GOARM == 5
 	arch.ZeroRange = zerorange
 	arch.Ginsnop = ginsnop
+	arch.Ginsnopdefer = ginsnop
 
-	arch.SSAMarkMoves = func(s *ssagen.State, b *ssa.Block) {}
+	arch.SSAMarkMoves = func(s *gc.SSAGenState, b *ssa.Block) {}
 	arch.SSAGenValue = ssaGenValue
 	arch.SSAGenBlock = ssaGenBlock
 }

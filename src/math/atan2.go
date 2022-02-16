@@ -26,12 +26,7 @@ package math
 //	Atan2(y<0, -Inf) = -Pi
 //	Atan2(+Inf, x) = +Pi/2
 //	Atan2(-Inf, x) = -Pi/2
-func Atan2(y, x float64) float64 {
-	if haveArchAtan2 {
-		return archAtan2(y, x)
-	}
-	return atan2(y, x)
-}
+func Atan2(y, x float64) float64
 
 func atan2(y, x float64) float64 {
 	// special cases

@@ -13,6 +13,7 @@ import (
 	"go/parser"
 	"go/token"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,7 +81,7 @@ var debug = flag.Bool("debug", false, "keep rewritten files for debugging")
 // We use TestMain to set up a temporary directory and remove it when
 // the tests are done.
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "go-testcover")
+	dir, err := ioutil.TempDir("", "go-testcover")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -172,13 +173,13 @@ func TestCover(t *testing.T) {
 	buildCover(t)
 
 	// Read in the test file (testTest) and write it, with LINEs specified, to coverInput.
-	file, err := os.ReadFile(testTest)
+	file, err := ioutil.ReadFile(testTest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := bytes.Split(file, []byte("\n"))
 	for i, line := range lines {
-		lines[i] = bytes.ReplaceAll(line, []byte("LINE"), []byte(fmt.Sprint(i+1)))
+		lines[i] = bytes.Replace(line, []byte("LINE"), []byte(fmt.Sprint(i+1)), -1)
 	}
 
 	// Add a function that is not gofmt'ed. This used to cause a crash.
@@ -191,7 +192,7 @@ func TestCover(t *testing.T) {
 		[]byte("}"))
 	lines = append(lines, []byte("func unFormatted2(b bool) {if b{}else{}}"))
 
-	if err := os.WriteFile(coverInput, bytes.Join(lines, []byte("\n")), 0666); err != nil {
+	if err := ioutil.WriteFile(coverInput, bytes.Join(lines, []byte("\n")), 0666); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,11 +208,11 @@ func TestCover(t *testing.T) {
 
 	// Copy testmain to testTempDir, so that it is in the same directory
 	// as coverOutput.
-	b, err := os.ReadFile(testMain)
+	b, err := ioutil.ReadFile(testMain)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tmpTestMain, b, 0444); err != nil {
+	if err := ioutil.WriteFile(tmpTestMain, b, 0444); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,7 +220,7 @@ func TestCover(t *testing.T) {
 	cmd = exec.Command(testenv.GoToolPath(t), "run", tmpTestMain, coverOutput)
 	run(cmd, t)
 
-	file, err = os.ReadFile(coverOutput)
+	file, err = ioutil.ReadFile(coverOutput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +251,7 @@ func TestDirectives(t *testing.T) {
 	// Read the source file and find all the directives. We'll keep
 	// track of whether each one has been seen in the output.
 	testDirectives := filepath.Join(testdata, "directives.go")
-	source, err := os.ReadFile(testDirectives)
+	source, err := ioutil.ReadFile(testDirectives)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +398,7 @@ func TestCoverHTML(t *testing.T) {
 
 	// Extract the parts of the HTML with comment markers,
 	// and compare against a golden file.
-	entireHTML, err := os.ReadFile(htmlHTML)
+	entireHTML, err := ioutil.ReadFile(htmlHTML)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +420,7 @@ func TestCoverHTML(t *testing.T) {
 	if scan.Err() != nil {
 		t.Error(scan.Err())
 	}
-	golden, err := os.ReadFile(htmlGolden)
+	golden, err := ioutil.ReadFile(htmlGolden)
 	if err != nil {
 		t.Fatalf("reading golden file: %v", err)
 	}
@@ -456,7 +457,7 @@ func TestHtmlUnformatted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(htmlUDir, "go.mod"), []byte("module htmlunformatted\n"), 0666); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(htmlUDir, "go.mod"), []byte("module htmlunformatted\n"), 0666); err != nil {
 		t.Fatal(err)
 	}
 
@@ -473,10 +474,10 @@ lab:
 
 	const htmlUTestContents = `package htmlunformatted`
 
-	if err := os.WriteFile(htmlU, []byte(htmlUContents), 0444); err != nil {
+	if err := ioutil.WriteFile(htmlU, []byte(htmlUContents), 0444); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(htmlUTest, []byte(htmlUTestContents), 0444); err != nil {
+	if err := ioutil.WriteFile(htmlUTest, []byte(htmlUTestContents), 0444); err != nil {
 		t.Fatal(err)
 	}
 
@@ -539,13 +540,13 @@ func TestFuncWithDuplicateLines(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(lineDupDir, "go.mod"), []byte("module linedup\n"), 0666); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(lineDupDir, "go.mod"), []byte("module linedup\n"), 0666); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(lineDupGo, []byte(lineDupContents), 0444); err != nil {
+	if err := ioutil.WriteFile(lineDupGo, []byte(lineDupContents), 0444); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(lineDupTestGo, []byte(lineDupTestContents), 0444); err != nil {
+	if err := ioutil.WriteFile(lineDupTestGo, []byte(lineDupTestContents), 0444); err != nil {
 		t.Fatal(err)
 	}
 

@@ -7,7 +7,6 @@ package errors_test
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"reflect"
 	"testing"
@@ -62,17 +61,17 @@ type poser struct {
 	f   func(error) bool
 }
 
-var poserPathErr = &fs.PathError{Op: "poser"}
+var poserPathErr = &os.PathError{Op: "poser"}
 
 func (p *poser) Error() string     { return p.msg }
 func (p *poser) Is(err error) bool { return p.f(err) }
-func (p *poser) As(err any) bool {
+func (p *poser) As(err interface{}) bool {
 	switch x := err.(type) {
 	case **poser:
 		*x = p
 	case *errorT:
 		*x = errorT{"poser"}
-	case **fs.PathError:
+	case **os.PathError:
 		*x = poserPathErr
 	default:
 		return false
@@ -82,7 +81,7 @@ func (p *poser) As(err any) bool {
 
 func TestAs(t *testing.T) {
 	var errT errorT
-	var errP *fs.PathError
+	var errP *os.PathError
 	var timeout interface{ Timeout() bool }
 	var p *poser
 	_, errF := os.Open("non-existing")
@@ -90,9 +89,9 @@ func TestAs(t *testing.T) {
 
 	testCases := []struct {
 		err    error
-		target any
+		target interface{}
 		match  bool
-		want   any // value of target on match
+		want   interface{} // value of target on match
 	}{{
 		nil,
 		&errP,
@@ -171,7 +170,7 @@ func TestAs(t *testing.T) {
 
 func TestAsValidation(t *testing.T) {
 	var s string
-	testCases := []any{
+	testCases := []interface{}{
 		nil,
 		(*int)(nil),
 		"error",
@@ -241,7 +240,7 @@ func (errorUncomparable) Is(target error) bool {
 
 func ExampleIs() {
 	if _, err := os.Open("non-existing"); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) {
 			fmt.Println("file does not exist")
 		} else {
 			fmt.Println(err)
@@ -254,7 +253,7 @@ func ExampleIs() {
 
 func ExampleAs() {
 	if _, err := os.Open("non-existing"); err != nil {
-		var pathError *fs.PathError
+		var pathError *os.PathError
 		if errors.As(err, &pathError) {
 			fmt.Println("Failed at path:", pathError.Path)
 		} else {
@@ -264,14 +263,4 @@ func ExampleAs() {
 
 	// Output:
 	// Failed at path: non-existing
-}
-
-func ExampleUnwrap() {
-	err1 := errors.New("error1")
-	err2 := fmt.Errorf("error2: [%w]", err1)
-	fmt.Println(err2)
-	fmt.Println(errors.Unwrap(err2))
-	// Output
-	// error2: [error1]
-	// error1
 }

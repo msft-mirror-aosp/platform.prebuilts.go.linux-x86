@@ -410,7 +410,7 @@ func span0(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 		ctxt.Retpoline = false // don't keep printing
 	}
 
-	p := cursym.Func().Text
+	p := cursym.Func.Text
 	if p == nil || p.Link == nil { // handle external functions and ELF section symbols
 		return
 	}
@@ -455,13 +455,13 @@ func span0(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 	for bflag != 0 {
 		bflag = 0
 		pc = 0
-		for p = c.cursym.Func().Text.Link; p != nil; p = p.Link {
+		for p = c.cursym.Func.Text.Link; p != nil; p = p.Link {
 			p.Pc = pc
 			o = c.oplook(p)
 
 			// very large conditional branches
-			if o.type_ == 6 && p.To.Target() != nil {
-				otxt = p.To.Target().Pc - pc
+			if o.type_ == 6 && p.Pcond != nil {
+				otxt = p.Pcond.Pc - pc
 				if otxt < -(1<<17)+10 || otxt >= (1<<17)-10 {
 					q = c.newprog()
 					q.Link = p.Link
@@ -469,15 +469,15 @@ func span0(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 					q.As = AJMP
 					q.Pos = p.Pos
 					q.To.Type = obj.TYPE_BRANCH
-					q.To.SetTarget(p.To.Target())
-					p.To.SetTarget(q)
+					q.Pcond = p.Pcond
+					p.Pcond = q
 					q = c.newprog()
 					q.Link = p.Link
 					p.Link = q
 					q.As = AJMP
 					q.Pos = p.Pos
 					q.To.Type = obj.TYPE_BRANCH
-					q.To.SetTarget(q.Link.Link)
+					q.Pcond = q.Link.Link
 
 					c.addnop(p.Link)
 					c.addnop(p)
@@ -512,7 +512,7 @@ func span0(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 	bp := c.cursym.P
 	var i int32
 	var out [4]uint32
-	for p := c.cursym.Func().Text.Link; p != nil; p = p.Link {
+	for p := c.cursym.Func.Text.Link; p != nil; p = p.Link {
 		c.pc = p.Pc
 		o = c.oplook(p)
 		if int(o.size) > 4*len(out) {
@@ -529,7 +529,7 @@ func span0(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 	// We use REGTMP as a scratch register during call injection,
 	// so instruction sequences that use REGTMP are unsafe to
 	// preempt asynchronously.
-	obj.MarkUnsafePoints(c.ctxt, c.cursym.Func().Text, c.newprog, c.isUnsafePoint, c.isRestartable)
+	obj.MarkUnsafePoints(c.ctxt, c.cursym.Func.Text, c.newprog, c.isUnsafePoint, c.isRestartable)
 }
 
 // isUnsafePoint returns whether p is an unsafe point.
@@ -1022,12 +1022,10 @@ func buildop(ctxt *obj.Link) {
 		case ASLL:
 			opset(ASRL, r0)
 			opset(ASRA, r0)
-			opset(AROTR, r0)
 
 		case ASLLV:
 			opset(ASRAV, r0)
 			opset(ASRLV, r0)
-			opset(AROTRV, r0)
 
 		case ASUB:
 			opset(ASUBU, r0)
@@ -1232,10 +1230,10 @@ func (c *ctxt0) asmout(p *obj.Prog, o *Optab, out []uint32) {
 
 	case 6: /* beq r1,[r2],sbra */
 		v := int32(0)
-		if p.To.Target() == nil {
+		if p.Pcond == nil {
 			v = int32(-4) >> 2
 		} else {
-			v = int32(p.To.Target().Pc-p.Pc-4) >> 2
+			v = int32(p.Pcond.Pc-p.Pc-4) >> 2
 		}
 		if (v<<16)>>16 != v {
 			c.ctxt.Diag("short branch too far\n%v", p)
@@ -1287,25 +1285,25 @@ func (c *ctxt0) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		if c.aclass(&p.To) == C_SBRA && p.To.Sym == nil && p.As == AJMP {
 			// use PC-relative branch for short branches
 			// BEQ	R0, R0, sbra
-			if p.To.Target() == nil {
+			if p.Pcond == nil {
 				v = int32(-4) >> 2
 			} else {
-				v = int32(p.To.Target().Pc-p.Pc-4) >> 2
+				v = int32(p.Pcond.Pc-p.Pc-4) >> 2
 			}
 			if (v<<16)>>16 == v {
 				o1 = OP_IRR(c.opirr(ABEQ), uint32(v), uint32(REGZERO), uint32(REGZERO))
 				break
 			}
 		}
-		if p.To.Target() == nil {
+		if p.Pcond == nil {
 			v = int32(p.Pc) >> 2
 		} else {
-			v = int32(p.To.Target().Pc) >> 2
+			v = int32(p.Pcond.Pc) >> 2
 		}
 		o1 = OP_JMP(c.opirr(p.As), uint32(v))
 		if p.To.Sym == nil {
-			p.To.Sym = c.cursym.Func().Text.From.Sym
-			p.To.Offset = p.To.Target().Pc
+			p.To.Sym = c.cursym.Func.Text.From.Sym
+			p.To.Offset = p.Pcond.Pc
 		}
 		rel := obj.Addrel(c.cursym)
 		rel.Off = int32(c.pc)
@@ -1734,16 +1732,12 @@ func (c *ctxt0) oprrr(a obj.As) uint32 {
 		return OP(0, 6)
 	case ASRA:
 		return OP(0, 7)
-	case AROTR:
-		return OP(8, 6)
 	case ASLLV:
 		return OP(2, 4)
 	case ASRLV:
 		return OP(2, 6)
 	case ASRAV:
 		return OP(2, 7)
-	case AROTRV:
-		return OP(10, 6)
 	case AADDV:
 		return OP(5, 4)
 	case AADDVU:
@@ -1922,8 +1916,6 @@ func (c *ctxt0) opirr(a obj.As) uint32 {
 		return OP(0, 2)
 	case ASRA:
 		return OP(0, 3)
-	case AROTR:
-		return OP(0, 2) | 1<<21
 	case AADDV:
 		return SP(3, 0)
 	case AADDVU:
@@ -2036,16 +2028,12 @@ func (c *ctxt0) opirr(a obj.As) uint32 {
 		return OP(7, 2)
 	case ASRAV:
 		return OP(7, 3)
-	case AROTRV:
-		return OP(7, 2) | 1<<21
 	case -ASLLV:
 		return OP(7, 4)
 	case -ASRLV:
 		return OP(7, 6)
 	case -ASRAV:
 		return OP(7, 7)
-	case -AROTRV:
-		return OP(7, 6) | 1<<21
 
 	case ATEQ:
 		return OP(6, 4)
@@ -2073,8 +2061,7 @@ func vshift(a obj.As) bool {
 	switch a {
 	case ASLLV,
 		ASRLV,
-		ASRAV,
-		AROTRV:
+		ASRAV:
 		return true
 	}
 	return false

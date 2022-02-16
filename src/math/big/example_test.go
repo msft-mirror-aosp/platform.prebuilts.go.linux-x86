@@ -25,13 +25,6 @@ func ExampleInt_SetString() {
 	// Output: 420
 }
 
-func ExampleFloat_SetString() {
-	f := new(big.Float)
-	f.SetString("3.14159")
-	fmt.Println(f)
-	// Output: 3.14159
-}
-
 func ExampleRat_Scan() {
 	// The Scan function is rarely used directly;
 	// the fmt package recognizes it as an implementation of fmt.Scanner.

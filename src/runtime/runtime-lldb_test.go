@@ -6,6 +6,7 @@ package runtime_test
 
 import (
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -142,16 +143,20 @@ func TestLldbPython(t *testing.T) {
 
 	checkLldbPython(t)
 
-	dir := t.TempDir()
+	dir, err := ioutil.TempDir("", "go-build")
+	if err != nil {
+		t.Fatalf("failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(dir)
 
 	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(lldbHelloSource), 0644)
+	err = ioutil.WriteFile(src, []byte(lldbHelloSource), 0644)
 	if err != nil {
 		t.Fatalf("failed to create src file: %v", err)
 	}
 
 	mod := filepath.Join(dir, "go.mod")
-	err = os.WriteFile(mod, []byte("module lldbtest"), 0644)
+	err = ioutil.WriteFile(mod, []byte("module lldbtest"), 0644)
 	if err != nil {
 		t.Fatalf("failed to create mod file: %v", err)
 	}
@@ -167,7 +172,7 @@ func TestLldbPython(t *testing.T) {
 	}
 
 	src = filepath.Join(dir, "script.py")
-	err = os.WriteFile(src, []byte(lldbScriptSource), 0755)
+	err = ioutil.WriteFile(src, []byte(lldbScriptSource), 0755)
 	if err != nil {
 		t.Fatalf("failed to create script: %v", err)
 	}

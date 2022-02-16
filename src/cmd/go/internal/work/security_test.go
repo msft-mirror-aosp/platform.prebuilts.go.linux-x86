@@ -65,8 +65,6 @@ var goodCompilerFlags = [][]string{
 	{"-I", "=/usr/include/libxml2"},
 	{"-I", "dir"},
 	{"-I", "$SYSROOT/dir"},
-	{"-isystem", "/usr/include/mozjs-68"},
-	{"-include", "/usr/include/mozjs-68/RequiredDefines.h"},
 	{"-framework", "Chocolate"},
 	{"-x", "c"},
 	{"-v"},
@@ -98,7 +96,6 @@ var badCompilerFlags = [][]string{
 	{"-I", "@foo"},
 	{"-I", "-foo"},
 	{"-I", "=@obj"},
-	{"-include", "@foo"},
 	{"-framework", "-Caffeine"},
 	{"-framework", "@Home"},
 	{"-x", "--c"},
@@ -164,8 +161,6 @@ var goodLinkerFlags = [][]string{
 	{"-Wl,-framework", "-Wl,Chocolate"},
 	{"-Wl,-framework,Chocolate"},
 	{"-Wl,-unresolved-symbols=ignore-all"},
-	{"libcgotbdtest.tbd"},
-	{"./libcgotbdtest.tbd"},
 }
 
 var badLinkerFlags = [][]string{

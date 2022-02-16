@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build darwin || dragonfly || freebsd
+// +build dragonfly freebsd
 
 package poll
 
@@ -18,11 +18,7 @@ func SendFile(dstFD *FD, src int, pos, remain int64) (int64, error) {
 		return 0, err
 	}
 	defer dstFD.writeUnlock()
-	if err := dstFD.pd.prepareWrite(dstFD.isFile); err != nil {
-		return 0, err
-	}
-
-	dst := dstFD.Sysfd
+	dst := int(dstFD.Sysfd)
 	var written int64
 	var err error
 	for remain > 0 {
