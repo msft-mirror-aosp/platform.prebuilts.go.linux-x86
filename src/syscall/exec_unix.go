@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
+// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris
 
 // Fork, exec, wait, etc.
 
@@ -152,6 +152,9 @@ func forkExec(argv0 string, argv []string, attr *ProcAttr) (pid int, err error) 
 		sys = &zeroSysProcAttr
 	}
 
+	p[0] = -1
+	p[1] = -1
+
 	// Convert args to C form.
 	argv0p, err := BytePtrFromString(argv0)
 	if err != nil {
@@ -201,17 +204,14 @@ func forkExec(argv0 string, argv []string, attr *ProcAttr) (pid int, err error) 
 
 	// Allocate child status pipe close on exec.
 	if err = forkExecPipe(p[:]); err != nil {
-		ForkLock.Unlock()
-		return 0, err
+		goto error
 	}
 
 	// Kick off child.
 	pid, err1 = forkAndExecInChild(argv0p, argvp, envvp, chroot, dir, attr, sys, p[1])
 	if err1 != 0 {
-		Close(p[0])
-		Close(p[1])
-		ForkLock.Unlock()
-		return 0, Errno(err1)
+		err = Errno(err1)
+		goto error
 	}
 	ForkLock.Unlock()
 
@@ -243,6 +243,14 @@ func forkExec(argv0 string, argv []string, attr *ProcAttr) (pid int, err error) 
 
 	// Read got EOF, so pipe closed on exec, so exec succeeded.
 	return pid, nil
+
+error:
+	if p[0] >= 0 {
+		Close(p[0])
+		Close(p[1])
+	}
+	ForkLock.Unlock()
+	return 0, err
 }
 
 // Combination of fork and exec, careful to be thread safe.
@@ -264,7 +272,6 @@ func runtime_AfterExec()
 // avoids a build dependency for other platforms.
 var execveLibc func(path uintptr, argv uintptr, envp uintptr) Errno
 var execveDarwin func(path *byte, argv **byte, envp **byte) error
-var execveOpenBSD func(path *byte, argv **byte, envp **byte) error
 
 // Exec invokes the execve(2) system call.
 func Exec(argv0 string, argv []string, envv []string) (err error) {
@@ -289,12 +296,9 @@ func Exec(argv0 string, argv []string, envv []string) (err error) {
 			uintptr(unsafe.Pointer(argv0p)),
 			uintptr(unsafe.Pointer(&argvp[0])),
 			uintptr(unsafe.Pointer(&envvp[0])))
-	} else if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+	} else if runtime.GOOS == "darwin" {
 		// Similarly on Darwin.
 		err1 = execveDarwin(argv0p, &argvp[0], &envvp[0])
-	} else if runtime.GOOS == "openbsd" && (runtime.GOARCH == "386" || runtime.GOARCH == "amd64" || runtime.GOARCH == "arm" || runtime.GOARCH == "arm64") {
-		// Similarly on OpenBSD.
-		err1 = execveOpenBSD(argv0p, &argvp[0], &envvp[0])
 	} else {
 		_, _, err1 = RawSyscall(SYS_EXECVE,
 			uintptr(unsafe.Pointer(argv0p)),

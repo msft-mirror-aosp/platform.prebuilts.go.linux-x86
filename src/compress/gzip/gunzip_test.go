@@ -9,6 +9,7 @@ import (
 	"compress/flate"
 	"encoding/base64"
 	"io"
+	"io/ioutil"
 	"os"
 	"strings"
 	"testing"
@@ -429,7 +430,7 @@ func TestIssue6550(t *testing.T) {
 	defer gzip.Close()
 	done := make(chan bool, 1)
 	go func() {
-		_, err := io.Copy(io.Discard, gzip)
+		_, err := io.Copy(ioutil.Discard, gzip)
 		if err == nil {
 			t.Errorf("Copy succeeded")
 		} else {
@@ -466,7 +467,7 @@ Found:
 	const hello = "hello world\n"
 
 	r.Multistream(false)
-	data, err := io.ReadAll(&r)
+	data, err := ioutil.ReadAll(&r)
 	if string(data) != hello || err != nil {
 		t.Fatalf("first stream = %q, %v, want %q, %v", string(data), err, hello, nil)
 	}
@@ -475,7 +476,7 @@ Found:
 		t.Fatalf("second reset: %v", err)
 	}
 	r.Multistream(false)
-	data, err = io.ReadAll(&r)
+	data, err = ioutil.ReadAll(&r)
 	if string(data) != hello || err != nil {
 		t.Fatalf("second stream = %q, %v, want %q, %v", string(data), err, hello, nil)
 	}
@@ -506,7 +507,7 @@ func TestTruncatedStreams(t *testing.T) {
 			}
 			continue
 		}
-		_, err = io.Copy(io.Discard, r)
+		_, err = io.Copy(ioutil.Discard, r)
 		if ferr, ok := err.(*flate.ReadError); ok {
 			err = ferr.Err
 		}

@@ -13,9 +13,10 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	exec "internal/execabs"
 	"io"
+	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,7 +31,7 @@ type Importer struct {
 	packages map[string]*types.Package
 }
 
-// New returns a new Importer for the given context, file set, and map
+// NewImporter returns a new Importer for the given context, file set, and map
 // of packages. The context is used to resolve import paths to package paths,
 // and identifying the files belonging to the package. If the context provides
 // non-nil file system functions, they are used instead of the regular package
@@ -199,7 +200,7 @@ func (p *Importer) parseFiles(dir string, filenames []string) ([]*ast.File, erro
 }
 
 func (p *Importer) cgo(bp *build.Package) (*ast.File, error) {
-	tmpdir, err := os.MkdirTemp("", "srcimporter")
+	tmpdir, err := ioutil.TempDir("", "srcimporter")
 	if err != nil {
 		return nil, err
 	}

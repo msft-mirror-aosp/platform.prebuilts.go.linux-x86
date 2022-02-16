@@ -51,7 +51,6 @@ type encoder struct {
 	bw      *bufio.Writer
 }
 
-// CompressionLevel indicates the compression level.
 type CompressionLevel int
 
 const (

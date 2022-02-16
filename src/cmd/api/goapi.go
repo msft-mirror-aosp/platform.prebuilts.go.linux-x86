@@ -16,10 +16,11 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	exec "internal/execabs"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -86,10 +87,7 @@ var contexts = []*build.Context{
 func contextName(c *build.Context) string {
 	s := c.GOOS + "-" + c.GOARCH
 	if c.CgoEnabled {
-		s += "-cgo"
-	}
-	if c.Dir != "" {
-		s += fmt.Sprintf(" [%s]", c.Dir)
+		return s + "-cgo"
 	}
 	return s
 }
@@ -215,7 +213,8 @@ func main() {
 	}
 	optional := fileFeatures(*nextFile)
 	exception := fileFeatures(*exceptFile)
-	fail = !compareAPI(bw, features, required, optional, exception, *allowNew)
+	fail = !compareAPI(bw, features, required, optional, exception,
+		*allowNew && strings.Contains(runtime.Version(), "devel"))
 }
 
 // export emits the exported package features.
@@ -324,29 +323,15 @@ func compareAPI(w io.Writer, features, required, optional, exception []string, a
 	return
 }
 
-// aliasReplacer applies type aliases to earlier API files,
-// to avoid misleading negative results.
-// This makes all the references to os.FileInfo in go1.txt
-// be read as if they said fs.FileInfo, since os.FileInfo is now an alias.
-// If there are many of these, we could do a more general solution,
-// but for now the replacer is fine.
-var aliasReplacer = strings.NewReplacer(
-	"os.FileInfo", "fs.FileInfo",
-	"os.FileMode", "fs.FileMode",
-	"os.PathError", "fs.PathError",
-)
-
 func fileFeatures(filename string) []string {
 	if filename == "" {
 		return nil
 	}
-	bs, err := os.ReadFile(filename)
+	bs, err := ioutil.ReadFile(filename)
 	if err != nil {
 		log.Fatalf("Error reading file %s: %v", filename, err)
 	}
-	s := string(bs)
-	s = aliasReplacer.Replace(s)
-	lines := strings.Split(s, "\n")
+	lines := strings.Split(string(bs), "\n")
 	var nonblank []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -460,7 +445,7 @@ type listImports struct {
 var listCache sync.Map // map[string]listImports, keyed by contextName
 
 // listSem is a semaphore restricting concurrent invocations of 'go list'.
-var listSem = make(chan semToken, ((runtime.GOMAXPROCS(0)-1)/2)+1)
+var listSem = make(chan semToken, runtime.GOMAXPROCS(0))
 
 type semToken struct{}
 
@@ -493,9 +478,6 @@ func (w *Walker) loadImports() {
 
 		cmd := exec.Command(goCmd(), "list", "-e", "-deps", "-json", "std")
 		cmd.Env = listEnv(w.context)
-		if w.context.Dir != "" {
-			cmd.Dir = w.context.Dir
-		}
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			log.Fatalf("loading imports: %v\n%s", err, out)
@@ -509,7 +491,6 @@ func (w *Walker) loadImports() {
 			var pkg struct {
 				ImportPath, Dir string
 				ImportMap       map[string]string
-				Standard        bool
 			}
 			err := dec.Decode(&pkg)
 			if err == io.EOF {
@@ -522,13 +503,11 @@ func (w *Walker) loadImports() {
 			// - Package "unsafe" contains special signatures requiring
 			//   extra care when printing them - ignore since it is not
 			//   going to change w/o a language change.
-			// - Internal and vendored packages do not contribute to our
-			//   API surface. (If we are running within the "std" module,
-			//   vendored dependencies appear as themselves instead of
-			//   their "vendor/" standard-library copies.)
+			// - internal and vendored packages do not contribute to our
+			//   API surface.
 			// - 'go list std' does not include commands, which cannot be
 			//   imported anyway.
-			if ip := pkg.ImportPath; pkg.Standard && ip != "unsafe" && !strings.HasPrefix(ip, "vendor/") && !internalPkg.MatchString(ip) {
+			if ip := pkg.ImportPath; ip != "unsafe" && !strings.HasPrefix(ip, "vendor/") && !internalPkg.MatchString(ip) {
 				stdPackages = append(stdPackages, ip)
 			}
 			importDir[pkg.ImportPath] = pkg.Dir
@@ -653,15 +632,10 @@ func (w *Walker) ImportFrom(fromPath, fromDir string, mode types.ImportMode) (*t
 	}
 
 	// Type-check package files.
-	var sizes types.Sizes
-	if w.context != nil {
-		sizes = types.SizesFor(w.context.Compiler, w.context.GOARCH)
-	}
 	conf := types.Config{
 		IgnoreFuncBodies: true,
 		FakeImportC:      true,
 		Importer:         w,
-		Sizes:            sizes,
 	}
 	pkg, err = conf.Check(name, fset, files, nil)
 	if err != nil {
@@ -701,36 +675,6 @@ func sortedMethodNames(typ *types.Interface) []string {
 	list := make([]string, n)
 	for i := range list {
 		list[i] = typ.Method(i).Name()
-	}
-	sort.Strings(list)
-	return list
-}
-
-// sortedEmbeddeds returns constraint types embedded in an
-// interface. It does not include embedded interface types or methods.
-func (w *Walker) sortedEmbeddeds(typ *types.Interface) []string {
-	n := typ.NumEmbeddeds()
-	list := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		emb := typ.EmbeddedType(i)
-		switch emb := emb.(type) {
-		case *types.Interface:
-			list = append(list, w.sortedEmbeddeds(emb)...)
-		case *types.Union:
-			var buf bytes.Buffer
-			nu := emb.Len()
-			for i := 0; i < nu; i++ {
-				if i > 0 {
-					buf.WriteString(" | ")
-				}
-				term := emb.Term(i)
-				if term.Tilde() {
-					buf.WriteByte('~')
-				}
-				w.writeType(&buf, term.Type())
-			}
-			list = append(list, buf.String())
-		}
 	}
 	sort.Strings(list)
 	return list
@@ -793,16 +737,9 @@ func (w *Walker) writeType(buf *bytes.Buffer, typ types.Type) {
 
 	case *types.Interface:
 		buf.WriteString("interface{")
-		if typ.NumMethods() > 0 || typ.NumEmbeddeds() > 0 {
-			buf.WriteByte(' ')
-		}
 		if typ.NumMethods() > 0 {
+			buf.WriteByte(' ')
 			buf.WriteString(strings.Join(sortedMethodNames(typ), ", "))
-		}
-		if typ.NumEmbeddeds() > 0 {
-			buf.WriteString(strings.Join(w.sortedEmbeddeds(typ), ", "))
-		}
-		if typ.NumMethods() > 0 || typ.NumEmbeddeds() > 0 {
 			buf.WriteByte(' ')
 		}
 		buf.WriteString("}")
@@ -837,19 +774,12 @@ func (w *Walker) writeType(buf *bytes.Buffer, typ types.Type) {
 		}
 		buf.WriteString(typ.Obj().Name())
 
-	case *types.TypeParam:
-		// Type parameter names may change, so use a placeholder instead.
-		fmt.Fprintf(buf, "$%d", typ.Index())
-
 	default:
 		panic(fmt.Sprintf("unknown type %T", typ))
 	}
 }
 
 func (w *Walker) writeSignature(buf *bytes.Buffer, sig *types.Signature) {
-	if tparams := sig.TypeParams(); tparams != nil {
-		w.writeTypeParams(buf, tparams, true)
-	}
 	w.writeParams(buf, sig.Params(), sig.Variadic())
 	switch res := sig.Results(); res.Len() {
 	case 0:
@@ -861,23 +791,6 @@ func (w *Walker) writeSignature(buf *bytes.Buffer, sig *types.Signature) {
 		buf.WriteByte(' ')
 		w.writeParams(buf, res, false)
 	}
-}
-
-func (w *Walker) writeTypeParams(buf *bytes.Buffer, tparams *types.TypeParamList, withConstraints bool) {
-	buf.WriteByte('[')
-	c := tparams.Len()
-	for i := 0; i < c; i++ {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		tp := tparams.At(i)
-		w.writeType(buf, tp)
-		if withConstraints {
-			buf.WriteByte(' ')
-			w.writeType(buf, tp.Constraint())
-		}
-	}
-	buf.WriteByte(']')
 }
 
 func (w *Walker) writeParams(buf *bytes.Buffer, t *types.Tuple, variadic bool) {
@@ -933,17 +846,7 @@ func (w *Walker) emitObj(obj types.Object) {
 
 func (w *Walker) emitType(obj *types.TypeName) {
 	name := obj.Name()
-	if tparams := obj.Type().(*types.Named).TypeParams(); tparams != nil {
-		var buf bytes.Buffer
-		buf.WriteString(name)
-		w.writeTypeParams(&buf, tparams, true)
-		name = buf.String()
-	}
 	typ := obj.Type()
-	if obj.IsAlias() {
-		w.emitf("type %s = %s", name, w.typeString(typ))
-		return
-	}
 	switch typ := typ.Underlying().(type) {
 	case *types.Struct:
 		w.emitStructType(name, typ)
@@ -1062,16 +965,10 @@ func (w *Walker) emitMethod(m *types.Selection) {
 			log.Fatalf("exported method with unexported receiver base type: %s", m)
 		}
 	}
-	tps := ""
-	if rtp := sig.RecvTypeParams(); rtp != nil {
-		var buf bytes.Buffer
-		w.writeTypeParams(&buf, rtp, false)
-		tps = buf.String()
-	}
-	w.emitf("method (%s%s) %s%s", w.typeString(recv), tps, m.Obj().Name(), w.signatureString(sig))
+	w.emitf("method (%s) %s%s", w.typeString(recv), m.Obj().Name(), w.signatureString(sig))
 }
 
-func (w *Walker) emitf(format string, args ...any) {
+func (w *Walker) emitf(format string, args ...interface{}) {
 	f := strings.Join(w.scope, ", ") + ", " + fmt.Sprintf(format, args...)
 	if strings.Contains(f, "\n") {
 		panic("feature contains newlines: " + f)

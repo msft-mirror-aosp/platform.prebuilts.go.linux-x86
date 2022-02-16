@@ -11,11 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/cgi"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -153,6 +155,7 @@ type child struct {
 	conn    *conn
 	handler http.Handler
 
+	mu       sync.Mutex          // protects requests:
 	requests map[uint16]*request // keyed by request ID
 }
 
@@ -180,7 +183,7 @@ func (c *child) serve() {
 
 var errCloseConn = errors.New("fcgi: connection should be closed")
 
-var emptyBody = io.NopCloser(strings.NewReader(""))
+var emptyBody = ioutil.NopCloser(strings.NewReader(""))
 
 // ErrRequestAborted is returned by Read when a handler attempts to read the
 // body of a request that has been aborted by the web server.
@@ -191,7 +194,9 @@ var ErrRequestAborted = errors.New("fcgi: request aborted by web server")
 var ErrConnClosed = errors.New("fcgi: connection to web server closed")
 
 func (c *child) handleRecord(rec *record) error {
+	c.mu.Lock()
 	req, ok := c.requests[rec.h.Id]
+	c.mu.Unlock()
 	if !ok && rec.h.Type != typeBeginRequest && rec.h.Type != typeGetValues {
 		// The spec says to ignore unknown request IDs.
 		return nil
@@ -214,7 +219,9 @@ func (c *child) handleRecord(rec *record) error {
 			return nil
 		}
 		req = newRequest(rec.h.Id, br.flags)
+		c.mu.Lock()
 		c.requests[rec.h.Id] = req
+		c.mu.Unlock()
 		return nil
 	case typeParams:
 		// NOTE(eds): Technically a key-value pair can straddle the boundary
@@ -242,11 +249,8 @@ func (c *child) handleRecord(rec *record) error {
 			// TODO(eds): This blocks until the handler reads from the pipe.
 			// If the handler takes a long time, it might be a problem.
 			req.pw.Write(content)
-		} else {
-			delete(c.requests, req.reqId)
-			if req.pw != nil {
-				req.pw.Close()
-			}
+		} else if req.pw != nil {
+			req.pw.Close()
 		}
 		return nil
 	case typeGetValues:
@@ -257,7 +261,9 @@ func (c *child) handleRecord(rec *record) error {
 		// If the filter role is implemented, read the data stream here.
 		return nil
 	case typeAbortRequest:
+		c.mu.Lock()
 		delete(c.requests, rec.h.Id)
+		c.mu.Unlock()
 		c.conn.writeEndRequest(rec.h.Id, 0, statusRequestComplete)
 		if req.pw != nil {
 			req.pw.CloseWithError(ErrRequestAborted)
@@ -304,6 +310,9 @@ func (c *child) serveRequest(req *request, body io.ReadCloser) {
 	// Make sure we serve something even if nothing was written to r
 	r.Write(nil)
 	r.Close()
+	c.mu.Lock()
+	delete(c.requests, req.reqId)
+	c.mu.Unlock()
 	c.conn.writeEndRequest(req.reqId, 0, statusRequestComplete)
 
 	// Consume the entire body, so the host isn't still writing to
@@ -313,7 +322,7 @@ func (c *child) serveRequest(req *request, body io.ReadCloser) {
 	// some sort of abort request to the host, so the host
 	// can properly cut off the client sending all the data.
 	// For now just bound it a little and
-	io.CopyN(io.Discard, body, 100<<20)
+	io.CopyN(ioutil.Discard, body, 100<<20)
 	body.Close()
 
 	if !req.keepConn {
@@ -322,6 +331,8 @@ func (c *child) serveRequest(req *request, body io.ReadCloser) {
 }
 
 func (c *child) cleanUp() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, req := range c.requests {
 		if req.pw != nil {
 			// race with call to Close in c.serveRequest doesn't matter because

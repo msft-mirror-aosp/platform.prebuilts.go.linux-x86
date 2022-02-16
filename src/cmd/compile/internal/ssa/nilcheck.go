@@ -5,9 +5,8 @@
 package ssa
 
 import (
-	"cmd/compile/internal/ir"
+	"cmd/internal/objabi"
 	"cmd/internal/src"
-	"internal/buildcfg"
 )
 
 // nilcheckelim eliminates unnecessary nil checks.
@@ -192,7 +191,7 @@ func nilcheckelim(f *Func) {
 const minZeroPage = 4096
 
 // faultOnLoad is true if a load to an address below minZeroPage will trigger a SIGSEGV.
-var faultOnLoad = buildcfg.GOOS != "aix"
+var faultOnLoad = objabi.GOOS != "aix"
 
 // nilcheckelim2 eliminates unnecessary nil checks.
 // Runs after lowering and scheduling.
@@ -236,7 +235,7 @@ func nilcheckelim2(f *Func) {
 				continue
 			}
 			if v.Type.IsMemory() || v.Type.IsTuple() && v.Type.FieldType(1).IsMemory() {
-				if v.Op == OpVarKill || v.Op == OpVarLive || (v.Op == OpVarDef && !v.Aux.(*ir.Name).Type().HasPointers()) {
+				if v.Op == OpVarKill || v.Op == OpVarLive || (v.Op == OpVarDef && !v.Aux.(GCNode).Typ().HasPointers()) {
 					// These ops don't really change memory.
 					continue
 					// Note: OpVarDef requires that the defined variable not have pointers.

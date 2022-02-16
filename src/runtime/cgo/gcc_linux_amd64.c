@@ -14,7 +14,7 @@ static void* threadentry(void*);
 static void (*setg_gcc)(void*);
 
 // This will be set in gcc_android.c for android-specific customization.
-void (*x_cgo_inittls)(void **tlsg, void **tlsbase) __attribute__((common));
+void (*x_cgo_inittls)(void **tlsg, void **tlsbase);
 
 void
 x_cgo_init(G *g, void (*setg)(void*), void **tlsg, void **tlsbase)
@@ -89,6 +89,11 @@ threadentry(void *v)
 	free(v);
 	_cgo_tsan_release();
 
-	crosscall_amd64(ts.fn, setg_gcc, (void*)ts.g);
+	/*
+	 * Set specific keys.
+	 */
+	setg_gcc((void*)ts.g);
+
+	crosscall_amd64(ts.fn);
 	return nil;
 }
