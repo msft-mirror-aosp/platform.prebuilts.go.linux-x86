@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/rpc"
 	"reflect"
@@ -28,9 +29,9 @@ type Reply struct {
 type Arith int
 
 type ArithAddResp struct {
-	Id     any   `json:"id"`
-	Result Reply `json:"result"`
-	Error  any   `json:"error"`
+	Id     interface{} `json:"id"`
+	Result Reply       `json:"result"`
+	Error  interface{} `json:"error"`
 }
 
 func (t *Arith) Add(args *Args, reply *Reply) error {
@@ -248,7 +249,7 @@ func TestMalformedInput(t *testing.T) {
 func TestMalformedOutput(t *testing.T) {
 	cli, srv := net.Pipe()
 	go srv.Write([]byte(`{"id":0,"result":null,"error":null}`))
-	go io.ReadAll(srv)
+	go ioutil.ReadAll(srv)
 
 	client := NewClient(cli)
 	defer client.Close()
@@ -270,7 +271,7 @@ func TestServerErrorHasNullResult(t *testing.T) {
 	}{
 		Reader: strings.NewReader(`{"method": "Arith.Add", "id": "123", "params": []}`),
 		Writer: &out,
-		Closer: io.NopCloser(nil),
+		Closer: ioutil.NopCloser(nil),
 	})
 	r := new(rpc.Request)
 	if err := sc.ReadRequestHeader(r); err != nil {

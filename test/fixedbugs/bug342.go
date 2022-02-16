@@ -9,7 +9,7 @@
 package p
 
 type a interface {
-	foo(x int) (x int) // ERROR "duplicate argument|redefinition|redeclared"
+	foo(x int) (x int) // ERROR "duplicate argument|redefinition"
 }
 
 /*

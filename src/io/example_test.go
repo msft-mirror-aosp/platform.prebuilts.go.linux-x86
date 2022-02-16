@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"strings"
@@ -103,9 +104,7 @@ func ExampleReadFull() {
 }
 
 func ExampleWriteString() {
-	if _, err := io.WriteString(os.Stdout, "Hello World"); err != nil {
-		log.Fatal(err)
-	}
+	io.WriteString(os.Stdout, "Hello World")
 
 	// Output: Hello World
 }
@@ -142,9 +141,7 @@ func ExampleTeeReader() {
 	r = io.TeeReader(r, os.Stdout)
 
 	// Everything read from r will be copied to stdout.
-	if _, err := io.ReadAll(r); err != nil {
-		log.Fatal(err)
-	}
+	ioutil.ReadAll(r)
 
 	// Output:
 	// some io.Reader stream to be read
@@ -160,21 +157,6 @@ func ExampleSectionReader() {
 
 	// Output:
 	// io.Reader stream
-}
-
-func ExampleSectionReader_Read() {
-	r := strings.NewReader("some io.Reader stream to be read\n")
-	s := io.NewSectionReader(r, 5, 17)
-
-	buf := make([]byte, 9)
-	if _, err := s.Read(buf); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("%s\n", buf)
-
-	// Output:
-	// io.Reader
 }
 
 func ExampleSectionReader_ReadAt() {
@@ -206,16 +188,6 @@ func ExampleSectionReader_Seek() {
 
 	// Output:
 	// stream
-}
-
-func ExampleSectionReader_Size() {
-	r := strings.NewReader("some io.Reader stream to be read\n")
-	s := io.NewSectionReader(r, 5, 17)
-
-	fmt.Println(s.Size())
-
-	// Output:
-	// 17
 }
 
 func ExampleSeeker_Seek() {
@@ -268,18 +240,4 @@ func ExamplePipe() {
 
 	// Output:
 	// some io.Reader stream to be read
-}
-
-func ExampleReadAll() {
-	r := strings.NewReader("Go is a general-purpose language designed with systems programming in mind.")
-
-	b, err := io.ReadAll(r)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("%s", b)
-
-	// Output:
-	// Go is a general-purpose language designed with systems programming in mind.
 }

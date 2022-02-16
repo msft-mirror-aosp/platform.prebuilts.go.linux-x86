@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"regexp"
@@ -175,7 +176,7 @@ func runCmd(args ...string) ([]byte, error) {
 		}
 		return b
 	}
-	f, err := os.CreateTemp("", "netcmd")
+	f, err := ioutil.TempFile("", "netcmd")
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +189,7 @@ func runCmd(args ...string) ([]byte, error) {
 			return nil, fmt.Errorf("%s failed: %v: %q", args[0], err, string(removeUTF8BOM(out)))
 		}
 		var err2 error
-		out, err2 = os.ReadFile(f.Name())
+		out, err2 = ioutil.ReadFile(f.Name())
 		if err2 != nil {
 			return nil, err2
 		}
@@ -197,24 +198,19 @@ func runCmd(args ...string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("%s failed: %v", args[0], err)
 	}
-	out, err = os.ReadFile(f.Name())
+	out, err = ioutil.ReadFile(f.Name())
 	if err != nil {
 		return nil, err
 	}
 	return removeUTF8BOM(out), nil
 }
 
-func checkNetsh(t *testing.T) {
+func netshSpeaksEnglish(t *testing.T) bool {
 	out, err := runCmd("netsh", "help")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(out, []byte("The following helper DLL cannot be loaded")) {
-		t.Skipf("powershell failure:\n%s", err)
-	}
-	if !bytes.Contains(out, []byte("The following commands are available:")) {
-		t.Skipf("powershell does not speak English:\n%s", out)
-	}
+	return bytes.Contains(out, []byte("The following commands are available:"))
 }
 
 func netshInterfaceIPShowInterface(ipver string, ifaces map[string]bool) error {
@@ -261,7 +257,9 @@ func netshInterfaceIPShowInterface(ipver string, ifaces map[string]bool) error {
 }
 
 func TestInterfacesWithNetsh(t *testing.T) {
-	checkNetsh(t)
+	if !netshSpeaksEnglish(t) {
+		t.Skip("English version of netsh required for this test")
+	}
 
 	toString := func(name string, isup bool) string {
 		if isup {
@@ -430,7 +428,9 @@ func netshInterfaceIPv6ShowAddress(name string, netshOutput []byte) []string {
 }
 
 func TestInterfaceAddrsWithNetsh(t *testing.T) {
-	checkNetsh(t)
+	if !netshSpeaksEnglish(t) {
+		t.Skip("English version of netsh required for this test")
+	}
 
 	outIPV4, err := runCmd("netsh", "interface", "ipv4", "show", "address")
 	if err != nil {

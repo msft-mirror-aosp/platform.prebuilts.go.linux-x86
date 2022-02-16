@@ -45,20 +45,17 @@ func Init() (*sys.Arch, ld.Arch) {
 		Minalign:   minAlign,
 		Dwarfregsp: dwarfRegSP,
 		Dwarfreglr: dwarfRegLR,
-		TrampLimit: 0x1c00000, // 24-bit signed offset * 4, leave room for PLT etc.
 
-		Plan9Magic: 0x647,
-
-		Adddynrel:        adddynrel,
+		Adddynrel2:       adddynrel2,
 		Archinit:         archinit,
 		Archreloc:        archreloc,
 		Archrelocvariant: archrelocvariant,
-		Extreloc:         extreloc,
 		Trampoline:       trampoline,
+		Asmb:             asmb,
+		Asmb2:            asmb2,
 		Elfreloc1:        elfreloc1,
-		ElfrelocSize:     8,
 		Elfsetupplt:      elfsetupplt,
-		Gentext:          gentext,
+		Gentext2:         gentext2,
 		Machoreloc1:      machoreloc1,
 		PEreloc1:         pereloc1,
 

@@ -8,7 +8,7 @@
 package runtime
 
 import (
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -151,7 +151,7 @@ func cgoCheckTypedBlock(typ *_type, src unsafe.Pointer, off, size uintptr) {
 	// src must be in the regular heap.
 
 	hbits := heapBitsForAddr(uintptr(src))
-	for i := uintptr(0); i < off+size; i += goarch.PtrSize {
+	for i := uintptr(0); i < off+size; i += sys.PtrSize {
 		bits := hbits.bits()
 		if i >= off && bits&bitPointer != 0 {
 			v := *(*unsafe.Pointer)(add(src, i))
@@ -169,22 +169,22 @@ func cgoCheckTypedBlock(typ *_type, src unsafe.Pointer, off, size uintptr) {
 //go:nosplit
 //go:nowritebarrier
 func cgoCheckBits(src unsafe.Pointer, gcbits *byte, off, size uintptr) {
-	skipMask := off / goarch.PtrSize / 8
-	skipBytes := skipMask * goarch.PtrSize * 8
+	skipMask := off / sys.PtrSize / 8
+	skipBytes := skipMask * sys.PtrSize * 8
 	ptrmask := addb(gcbits, skipMask)
 	src = add(src, skipBytes)
 	off -= skipBytes
 	size += off
 	var bits uint32
-	for i := uintptr(0); i < size; i += goarch.PtrSize {
-		if i&(goarch.PtrSize*8-1) == 0 {
+	for i := uintptr(0); i < size; i += sys.PtrSize {
+		if i&(sys.PtrSize*8-1) == 0 {
 			bits = uint32(*ptrmask)
 			ptrmask = addb(ptrmask, 1)
 		} else {
 			bits >>= 1
 		}
 		if off > 0 {
-			off -= goarch.PtrSize
+			off -= sys.PtrSize
 		} else {
 			if bits&1 != 0 {
 				v := *(*unsafe.Pointer)(add(src, i))

@@ -5,11 +5,12 @@
 package reflectlite
 
 import (
-	"internal/goarch"
 	"internal/unsafeheader"
 	"runtime"
 	"unsafe"
 )
+
+const ptrSize = 4 << (^uintptr(0) >> 63) // unsafe.Sizeof(uintptr(0)) but an ideal const
 
 // Value is the reflection interface to a Go value.
 //
@@ -87,9 +88,9 @@ func (f flag) ro() flag {
 }
 
 // pointer returns the underlying pointer represented by v.
-// v.Kind() must be Pointer, Map, Chan, Func, or UnsafePointer
+// v.Kind() must be Ptr, Map, Chan, Func, or UnsafePointer
 func (v Value) pointer() unsafe.Pointer {
-	if v.typ.size != goarch.PtrSize || !v.typ.pointers() {
+	if v.typ.size != ptrSize || !v.typ.pointers() {
 		panic("can't call pointer on a non-pointer Value")
 	}
 	if v.flag&flagIndir != 0 {
@@ -99,9 +100,9 @@ func (v Value) pointer() unsafe.Pointer {
 }
 
 // packEface converts v to the empty interface.
-func packEface(v Value) any {
+func packEface(v Value) interface{} {
 	t := v.typ
-	var i any
+	var i interface{}
 	e := (*emptyInterface)(unsafe.Pointer(&i))
 	// First, fill in the data portion of the interface.
 	switch {
@@ -136,7 +137,7 @@ func packEface(v Value) any {
 }
 
 // unpackEface converts the empty interface i to a Value.
-func unpackEface(i any) Value {
+func unpackEface(i interface{}) Value {
 	e := (*emptyInterface)(unsafe.Pointer(&i))
 	// NOTE: don't read e.word until we know whether it is really a pointer or not.
 	t := e.typ
@@ -159,10 +160,7 @@ type ValueError struct {
 }
 
 func (e *ValueError) Error() string {
-	if e.Kind == 0 {
-		return "reflect: call of " + e.Method + " on zero Value"
-	}
-	return "reflect: call of " + e.Method + " on " + e.Kind.String() + " Value"
+	return "reflect: call of " + e.Method + " on zero Value"
 }
 
 // methodName returns the name of the calling method,
@@ -220,17 +218,17 @@ func (v Value) CanSet() bool {
 
 // Elem returns the value that the interface v contains
 // or that the pointer v points to.
-// It panics if v's Kind is not Interface or Pointer.
+// It panics if v's Kind is not Interface or Ptr.
 // It returns the zero Value if v is nil.
 func (v Value) Elem() Value {
 	k := v.kind()
 	switch k {
 	case Interface:
-		var eface any
+		var eface interface{}
 		if v.typ.NumMethod() == 0 {
-			eface = *(*any)(v.ptr)
+			eface = *(*interface{})(v.ptr)
 		} else {
-			eface = (any)(*(*interface {
+			eface = (interface{})(*(*interface {
 				M()
 			})(v.ptr))
 		}
@@ -239,7 +237,7 @@ func (v Value) Elem() Value {
 			x.flag |= v.flag.ro()
 		}
 		return x
-	case Pointer:
+	case Ptr:
 		ptr := v.ptr
 		if v.flag&flagIndir != 0 {
 			ptr = *(*unsafe.Pointer)(ptr)
@@ -257,7 +255,7 @@ func (v Value) Elem() Value {
 	panic(&ValueError{"reflectlite.Value.Elem", v.kind()})
 }
 
-func valueInterface(v Value) any {
+func valueInterface(v Value) interface{} {
 	if v.flag == 0 {
 		panic(&ValueError{"reflectlite.Value.Interface", 0})
 	}
@@ -267,7 +265,7 @@ func valueInterface(v Value) any {
 		// Empty interface has one layout, all interfaces with
 		// methods have a second layout.
 		if v.numMethod() == 0 {
-			return *(*any)(v.ptr)
+			return *(*interface{})(v.ptr)
 		}
 		return *(*interface {
 			M()
@@ -288,7 +286,7 @@ func valueInterface(v Value) any {
 func (v Value) IsNil() bool {
 	k := v.kind()
 	switch k {
-	case Chan, Func, Map, Pointer, UnsafePointer:
+	case Chan, Func, Map, Ptr, UnsafePointer:
 		// if v.flag&flagMethod != 0 {
 		// 	return false
 		// }
@@ -391,7 +389,7 @@ func unsafe_New(*rtype) unsafe.Pointer
 
 // ValueOf returns a new Value initialized to the concrete value
 // stored in the interface i. ValueOf(nil) returns the zero Value.
-func ValueOf(i any) Value {
+func ValueOf(i interface{}) Value {
 	if i == nil {
 		return Value{}
 	}
@@ -433,7 +431,7 @@ func (v Value) assignTo(context string, dst *rtype, target unsafe.Pointer) Value
 		}
 		x := valueInterface(v)
 		if dst.NumMethod() == 0 {
-			*(*any)(target) = x
+			*(*interface{})(target) = x
 		} else {
 			ifaceE2I(dst, x, target)
 		}
@@ -455,7 +453,7 @@ func arrayAt(p unsafe.Pointer, i int, eltSize uintptr, whySafe string) unsafe.Po
 	return add(p, uintptr(i)*eltSize, "i < len")
 }
 
-func ifaceE2I(t *rtype, src any, dst unsafe.Pointer)
+func ifaceE2I(t *rtype, src interface{}, dst unsafe.Pointer)
 
 // typedmemmove copies a value of type t to dst from src.
 //go:noescape
@@ -464,7 +462,7 @@ func typedmemmove(t *rtype, dst, src unsafe.Pointer)
 // Dummy annotation marking that the value x escapes,
 // for use in cases where the reflect code is so clever that
 // the compiler cannot follow.
-func escapes(x any) {
+func escapes(x interface{}) {
 	if dummy.b {
 		dummy.x = x
 	}
@@ -472,5 +470,5 @@ func escapes(x any) {
 
 var dummy struct {
 	b bool
-	x any
+	x interface{}
 }

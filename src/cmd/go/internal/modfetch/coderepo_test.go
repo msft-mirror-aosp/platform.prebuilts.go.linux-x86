@@ -11,6 +11,7 @@ import (
 	"hash"
 	"internal/testenv"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"reflect"
@@ -37,7 +38,7 @@ func testMain(m *testing.M) int {
 	// code, bypass the sum database.
 	cfg.GOSUMDB = "off"
 
-	dir, err := os.MkdirTemp("", "gitrepo-test-")
+	dir, err := ioutil.TempDir("", "gitrepo-test-")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -59,6 +60,7 @@ var altVgotests = map[string]string{
 type codeRepoTest struct {
 	vcs         string
 	path        string
+	lookErr     string
 	mpath       string
 	rev         string
 	err         string
@@ -330,9 +332,9 @@ var codeRepoTests = []codeRepoTest{
 		// package in subdirectory - custom domain
 		// In general we can't reject these definitively in Lookup,
 		// but gopkg.in is special.
-		vcs:  "git",
-		path: "gopkg.in/yaml.v2/abc",
-		err:  "invalid module path \"gopkg.in/yaml.v2/abc\"",
+		vcs:     "git",
+		path:    "gopkg.in/yaml.v2/abc",
+		lookErr: "invalid module path \"gopkg.in/yaml.v2/abc\"",
 	},
 	{
 		// package in subdirectory - github
@@ -423,7 +425,7 @@ var codeRepoTests = []codeRepoTest{
 func TestCodeRepo(t *testing.T) {
 	testenv.MustHaveExternalNetwork(t)
 
-	tmpdir, err := os.MkdirTemp("", "modfetch-test-")
+	tmpdir, err := ioutil.TempDir("", "modfetch-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +440,16 @@ func TestCodeRepo(t *testing.T) {
 						testenv.MustHaveExecPath(t, tt.vcs)
 					}
 
-					repo := Lookup("direct", tt.path)
+					repo, err := Lookup("direct", tt.path)
+					if tt.lookErr != "" {
+						if err != nil && err.Error() == tt.lookErr {
+							return
+						}
+						t.Errorf("Lookup(%q): %v, want error %q", tt.path, err, tt.lookErr)
+					}
+					if err != nil {
+						t.Fatalf("Lookup(%q): %v", tt.path, err)
+					}
 
 					if tt.mpath == "" {
 						tt.mpath = tt.path
@@ -490,9 +501,9 @@ func TestCodeRepo(t *testing.T) {
 
 					needHash := !testing.Short() && (tt.zipFileHash != "" || tt.zipSum != "")
 					if tt.zip != nil || tt.zipErr != "" || needHash {
-						f, err := os.CreateTemp(tmpdir, tt.version+".zip.")
+						f, err := ioutil.TempFile(tmpdir, tt.version+".zip.")
 						if err != nil {
-							t.Fatalf("os.CreateTemp: %v", err)
+							t.Fatalf("ioutil.TempFile: %v", err)
 						}
 						zipfile := f.Name()
 						defer func() {
@@ -654,7 +665,7 @@ var codeRepoVersionsTests = []struct {
 func TestCodeRepoVersions(t *testing.T) {
 	testenv.MustHaveExternalNetwork(t)
 
-	tmpdir, err := os.MkdirTemp("", "vgo-modfetch-test-")
+	tmpdir, err := ioutil.TempDir("", "vgo-modfetch-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +680,10 @@ func TestCodeRepoVersions(t *testing.T) {
 					testenv.MustHaveExecPath(t, tt.vcs)
 				}
 
-				repo := Lookup("direct", tt.path)
+				repo, err := Lookup("direct", tt.path)
+				if err != nil {
+					t.Fatalf("Lookup(%q): %v", tt.path, err)
+				}
 				list, err := repo.Versions(tt.prefix)
 				if err != nil {
 					t.Fatalf("Versions(%q): %v", tt.prefix, err)
@@ -728,7 +742,7 @@ var latestTests = []struct {
 func TestLatest(t *testing.T) {
 	testenv.MustHaveExternalNetwork(t)
 
-	tmpdir, err := os.MkdirTemp("", "vgo-modfetch-test-")
+	tmpdir, err := ioutil.TempDir("", "vgo-modfetch-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +758,10 @@ func TestLatest(t *testing.T) {
 					testenv.MustHaveExecPath(t, tt.vcs)
 				}
 
-				repo := Lookup("direct", tt.path)
+				repo, err := Lookup("direct", tt.path)
+				if err != nil {
+					t.Fatalf("Lookup(%q): %v", tt.path, err)
+				}
 				info, err := repo.Latest()
 				if err != nil {
 					if tt.err != "" {
