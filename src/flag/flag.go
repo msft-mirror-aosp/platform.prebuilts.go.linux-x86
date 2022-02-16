@@ -122,7 +122,7 @@ func (b *boolValue) Set(s string) error {
 	return err
 }
 
-func (b *boolValue) Get() any { return bool(*b) }
+func (b *boolValue) Get() interface{} { return bool(*b) }
 
 func (b *boolValue) String() string { return strconv.FormatBool(bool(*b)) }
 
@@ -152,7 +152,7 @@ func (i *intValue) Set(s string) error {
 	return err
 }
 
-func (i *intValue) Get() any { return int(*i) }
+func (i *intValue) Get() interface{} { return int(*i) }
 
 func (i *intValue) String() string { return strconv.Itoa(int(*i)) }
 
@@ -173,7 +173,7 @@ func (i *int64Value) Set(s string) error {
 	return err
 }
 
-func (i *int64Value) Get() any { return int64(*i) }
+func (i *int64Value) Get() interface{} { return int64(*i) }
 
 func (i *int64Value) String() string { return strconv.FormatInt(int64(*i), 10) }
 
@@ -194,7 +194,7 @@ func (i *uintValue) Set(s string) error {
 	return err
 }
 
-func (i *uintValue) Get() any { return uint(*i) }
+func (i *uintValue) Get() interface{} { return uint(*i) }
 
 func (i *uintValue) String() string { return strconv.FormatUint(uint64(*i), 10) }
 
@@ -215,7 +215,7 @@ func (i *uint64Value) Set(s string) error {
 	return err
 }
 
-func (i *uint64Value) Get() any { return uint64(*i) }
+func (i *uint64Value) Get() interface{} { return uint64(*i) }
 
 func (i *uint64Value) String() string { return strconv.FormatUint(uint64(*i), 10) }
 
@@ -232,7 +232,7 @@ func (s *stringValue) Set(val string) error {
 	return nil
 }
 
-func (s *stringValue) Get() any { return string(*s) }
+func (s *stringValue) Get() interface{} { return string(*s) }
 
 func (s *stringValue) String() string { return string(*s) }
 
@@ -253,7 +253,7 @@ func (f *float64Value) Set(s string) error {
 	return err
 }
 
-func (f *float64Value) Get() any { return float64(*f) }
+func (f *float64Value) Get() interface{} { return float64(*f) }
 
 func (f *float64Value) String() string { return strconv.FormatFloat(float64(*f), 'g', -1, 64) }
 
@@ -274,15 +274,9 @@ func (d *durationValue) Set(s string) error {
 	return err
 }
 
-func (d *durationValue) Get() any { return time.Duration(*d) }
+func (d *durationValue) Get() interface{} { return time.Duration(*d) }
 
 func (d *durationValue) String() string { return (*time.Duration)(d).String() }
-
-type funcValue func(string) error
-
-func (f funcValue) Set(s string) error { return f(s) }
-
-func (f funcValue) String() string { return "" }
 
 // Value is the interface to the dynamic value stored in a flag.
 // (The default value is represented as a string.)
@@ -302,10 +296,10 @@ type Value interface {
 // Getter is an interface that allows the contents of a Value to be retrieved.
 // It wraps the Value interface, rather than being part of it, because it
 // appeared after Go 1 and its compatibility rules. All Value types provided
-// by this package satisfy the Getter interface, except the type used by Func.
+// by this package satisfy the Getter interface.
 type Getter interface {
 	Value
-	Get() any
+	Get() interface{}
 }
 
 // ErrorHandling defines how FlagSet.Parse behaves if the parse fails.
@@ -456,7 +450,7 @@ func isZeroValue(flag *Flag, value string) bool {
 	// This works unless the Value type is itself an interface type.
 	typ := reflect.TypeOf(flag.Value)
 	var z reflect.Value
-	if typ.Kind() == reflect.Pointer {
+	if typ.Kind() == reflect.Ptr {
 		z = reflect.New(typ.Elem())
 	} else {
 		z = reflect.Zero(typ)
@@ -508,33 +502,31 @@ func UnquoteUsage(flag *Flag) (name string, usage string) {
 // documentation for the global function PrintDefaults for more information.
 func (f *FlagSet) PrintDefaults() {
 	f.VisitAll(func(flag *Flag) {
-		var b strings.Builder
-		fmt.Fprintf(&b, "  -%s", flag.Name) // Two spaces before -; see next two comments.
+		s := fmt.Sprintf("  -%s", flag.Name) // Two spaces before -; see next two comments.
 		name, usage := UnquoteUsage(flag)
 		if len(name) > 0 {
-			b.WriteString(" ")
-			b.WriteString(name)
+			s += " " + name
 		}
 		// Boolean flags of one ASCII letter are so common we
 		// treat them specially, putting their usage on the same line.
-		if b.Len() <= 4 { // space, space, '-', 'x'.
-			b.WriteString("\t")
+		if len(s) <= 4 { // space, space, '-', 'x'.
+			s += "\t"
 		} else {
 			// Four spaces before the tab triggers good alignment
 			// for both 4- and 8-space tab stops.
-			b.WriteString("\n    \t")
+			s += "\n    \t"
 		}
-		b.WriteString(strings.ReplaceAll(usage, "\n", "\n    \t"))
+		s += strings.ReplaceAll(usage, "\n", "\n    \t")
 
 		if !isZeroValue(flag, flag.DefValue) {
 			if _, ok := flag.Value.(*stringValue); ok {
 				// put quotes on the value
-				fmt.Fprintf(&b, " (default %q)", flag.DefValue)
+				s += fmt.Sprintf(" (default %q)", flag.DefValue)
 			} else {
-				fmt.Fprintf(&b, " (default %v)", flag.DefValue)
+				s += fmt.Sprintf(" (default %v)", flag.DefValue)
 			}
 		}
-		fmt.Fprint(f.Output(), b.String(), "\n")
+		fmt.Fprint(f.Output(), s, "\n")
 	})
 }
 
@@ -838,20 +830,6 @@ func Duration(name string, value time.Duration, usage string) *time.Duration {
 	return CommandLine.Duration(name, value, usage)
 }
 
-// Func defines a flag with the specified name and usage string.
-// Each time the flag is seen, fn is called with the value of the flag.
-// If fn returns a non-nil error, it will be treated as a flag value parsing error.
-func (f *FlagSet) Func(name, usage string, fn func(string) error) {
-	f.Var(funcValue(fn), name, usage)
-}
-
-// Func defines a flag with the specified name and usage string.
-// Each time the flag is seen, fn is called with the value of the flag.
-// If fn returns a non-nil error, it will be treated as a flag value parsing error.
-func Func(name, usage string, fn func(string) error) {
-	CommandLine.Func(name, usage, fn)
-}
-
 // Var defines a flag with the specified name and usage string. The type and
 // value of the flag are represented by the first argument, of type Value, which
 // typically holds a user-defined implementation of Value. For instance, the
@@ -859,23 +837,17 @@ func Func(name, usage string, fn func(string) error) {
 // of strings by giving the slice the methods of Value; in particular, Set would
 // decompose the comma-separated string into the slice.
 func (f *FlagSet) Var(value Value, name string, usage string) {
-	// Flag must not begin "-" or contain "=".
-	if strings.HasPrefix(name, "-") {
-		panic(f.sprintf("flag %q begins with -", name))
-	} else if strings.Contains(name, "=") {
-		panic(f.sprintf("flag %q contains =", name))
-	}
-
 	// Remember the default value as a string; it won't change.
 	flag := &Flag{name, usage, value, value.String()}
 	_, alreadythere := f.formal[name]
 	if alreadythere {
 		var msg string
 		if f.name == "" {
-			msg = f.sprintf("flag redefined: %s", name)
+			msg = fmt.Sprintf("flag redefined: %s", name)
 		} else {
-			msg = f.sprintf("%s flag redefined: %s", f.name, name)
+			msg = fmt.Sprintf("%s flag redefined: %s", f.name, name)
 		}
+		fmt.Fprintln(f.Output(), msg)
 		panic(msg) // Happens only if flags are declared with identical names
 	}
 	if f.formal == nil {
@@ -894,19 +866,13 @@ func Var(value Value, name string, usage string) {
 	CommandLine.Var(value, name, usage)
 }
 
-// sprintf formats the message, prints it to output, and returns it.
-func (f *FlagSet) sprintf(format string, a ...any) string {
-	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintln(f.Output(), msg)
-	return msg
-}
-
 // failf prints to standard error a formatted error and usage message and
 // returns the error.
-func (f *FlagSet) failf(format string, a ...any) error {
-	msg := f.sprintf(format, a...)
+func (f *FlagSet) failf(format string, a ...interface{}) error {
+	err := fmt.Errorf(format, a...)
+	fmt.Fprintln(f.Output(), err)
 	f.usage()
-	return errors.New(msg)
+	return err
 }
 
 // usage calls the Usage method for the flag set if one is specified,

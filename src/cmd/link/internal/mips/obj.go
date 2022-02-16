@@ -34,12 +34,11 @@ import (
 	"cmd/internal/objabi"
 	"cmd/internal/sys"
 	"cmd/link/internal/ld"
-	"internal/buildcfg"
 )
 
 func Init() (*sys.Arch, ld.Arch) {
 	arch := sys.ArchMIPS
-	if buildcfg.GOARCH == "mipsle" {
+	if objabi.GOARCH == "mipsle" {
 		arch = sys.ArchMIPSLE
 	}
 
@@ -50,14 +49,15 @@ func Init() (*sys.Arch, ld.Arch) {
 		Dwarfregsp: DWARFREGSP,
 		Dwarfreglr: DWARFREGLR,
 
+		Adddynrel:        adddynrel,
 		Archinit:         archinit,
 		Archreloc:        archreloc,
 		Archrelocvariant: archrelocvariant,
-		Extreloc:         extreloc,
+		Asmb:             asmb,
+		Asmb2:            asmb2,
 		Elfreloc1:        elfreloc1,
-		ElfrelocSize:     8,
 		Elfsetupplt:      elfsetupplt,
-		Gentext:          gentext,
+		Gentext2:         gentext2,
 		Machoreloc1:      machoreloc1,
 
 		Linuxdynld: "/lib/ld.so.1",

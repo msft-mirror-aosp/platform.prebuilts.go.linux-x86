@@ -5,7 +5,6 @@
 package ioutil_test
 
 import (
-	"io/fs"
 	. "io/ioutil"
 	"os"
 	"path/filepath"
@@ -50,9 +49,6 @@ func TestTempFile_pattern(t *testing.T) {
 	}
 }
 
-// This string is from os.errPatternHasSeparator.
-const patternHasSeparator = "pattern contains path separator"
-
 func TestTempFile_BadPattern(t *testing.T) {
 	tmpDir, err := TempDir("", t.Name())
 	if err != nil {
@@ -84,8 +80,9 @@ func TestTempFile_BadPattern(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Expected an error for pattern %q", tt.pattern)
-				} else if !strings.Contains(err.Error(), patternHasSeparator) {
-					t.Errorf("Error mismatch: got %#v, want %q for pattern %q", err, patternHasSeparator, tt.pattern)
+				}
+				if g, w := err, ErrPatternHasSeparator; g != w {
+					t.Errorf("Error mismatch: got %#v, want %#v for pattern %q", g, w, tt.pattern)
 				}
 			} else if err != nil {
 				t.Errorf("Unexpected error %v for pattern %q", err, tt.pattern)
@@ -154,7 +151,7 @@ func TestTempDir_BadDir(t *testing.T) {
 
 	badDir := filepath.Join(dir, "not-exist")
 	_, err = TempDir(badDir, "foo")
-	if pe, ok := err.(*fs.PathError); !ok || !os.IsNotExist(err) || pe.Path != badDir {
+	if pe, ok := err.(*os.PathError); !ok || !os.IsNotExist(err) || pe.Path != badDir {
 		t.Errorf("TempDir error = %#v; want PathError for path %q satisifying os.IsNotExist", err, badDir)
 	}
 }
@@ -185,8 +182,9 @@ func TestTempDir_BadPattern(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Expected an error for pattern %q", tt.pattern)
-				} else if !strings.Contains(err.Error(), patternHasSeparator) {
-					t.Errorf("Error mismatch: got %#v, want %q for pattern %q", err, patternHasSeparator, tt.pattern)
+				}
+				if g, w := err, ErrPatternHasSeparator; g != w {
+					t.Errorf("Error mismatch: got %#v, want %#v for pattern %q", g, w, tt.pattern)
 				}
 			} else if err != nil {
 				t.Errorf("Unexpected error %v for pattern %q", err, tt.pattern)

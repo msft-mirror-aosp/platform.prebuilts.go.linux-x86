@@ -38,7 +38,6 @@ package ssa
 
 import (
 	"cmd/compile/internal/types"
-	"cmd/internal/obj"
 	"cmd/internal/src"
 	"fmt"
 	"reflect"
@@ -141,12 +140,6 @@ var emptyPass pass = pass{
 	name: "empty pass",
 }
 
-// AuxCallLSym returns an AuxCall initialized with an LSym that should pass "check"
-// as the Aux of a static call.
-func AuxCallLSym(name string) *AuxCall {
-	return &AuxCall{Fn: &obj.LSym{}}
-}
-
 // Fun takes the name of an entry bloc and a series of Bloc calls, and
 // returns a fun containing the composed Func. entry must be a name
 // supplied to one of the Bloc functions. Each of the bloc names and
@@ -232,7 +225,7 @@ func Bloc(name string, entries ...interface{}) bloc {
 }
 
 // Valu defines a value in a block.
-func Valu(name string, op Op, t *types.Type, auxint int64, aux Aux, args ...string) valu {
+func Valu(name string, op Op, t *types.Type, auxint int64, aux interface{}, args ...string) valu {
 	return valu{name, op, t, auxint, aux, args}
 }
 
@@ -277,7 +270,7 @@ type valu struct {
 	op     Op
 	t      *types.Type
 	auxint int64
-	aux    Aux
+	aux    interface{}
 	args   []string
 }
 
@@ -402,12 +395,12 @@ func TestEquiv(t *testing.T) {
 			cfg.Fun("entry",
 				Bloc("entry",
 					Valu("mem", OpInitMem, types.TypeMem, 0, nil),
-					Valu("a", OpConstString, cfg.config.Types.String, 0, StringToAux("foo")),
+					Valu("a", OpConst64, cfg.config.Types.Int64, 0, 14),
 					Exit("mem"))),
 			cfg.Fun("entry",
 				Bloc("entry",
 					Valu("mem", OpInitMem, types.TypeMem, 0, nil),
-					Valu("a", OpConstString, cfg.config.Types.String, 0, StringToAux("bar")),
+					Valu("a", OpConst64, cfg.config.Types.Int64, 0, 26),
 					Exit("mem"))),
 		},
 		// value args different

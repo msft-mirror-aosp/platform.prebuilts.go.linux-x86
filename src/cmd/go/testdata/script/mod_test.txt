@@ -1,5 +1,4 @@
 env GO111MODULE=on
-env GOFLAGS=-mod=mod
 [short] skip
 
 # TODO(bcmills): Convert the 'go test' calls below to 'go list -test' once 'go
@@ -59,8 +58,6 @@ go list -test
 
 -- a/go.mod.empty --
 module example.com/user/a
-
-go 1.11
 
 -- a/a.go --
 package a

@@ -1,4 +1,3 @@
-// +build gc
 // run
 
 // Copyright 2015 The Go Authors. All rights reserved.
@@ -18,10 +17,16 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
 func main() {
+	// cannot use temp file on nacl via child process
+	if runtime.GOOS == "nacl" {
+		return
+	}
+
 	// create source
 	f, err := ioutil.TempFile("", "issue13268-")
 	if err != nil {

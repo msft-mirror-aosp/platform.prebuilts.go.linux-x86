@@ -89,7 +89,7 @@ GLOBL _rt0_386_lib_argc<>(SB),NOPTR, $4
 DATA _rt0_386_lib_argv<>(SB)/4, $0
 GLOBL _rt0_386_lib_argv<>(SB),NOPTR, $4
 
-TEXT runtime·rt0_go(SB),NOSPLIT|NOFRAME|TOPFRAME,$0
+TEXT runtime·rt0_go(SB),NOSPLIT|NOFRAME,$0
 	// Copy arguments forward on an even stack.
 	// Users of this function jump to it, they don't call it.
 	MOVL	0(SP), AX
@@ -137,6 +137,9 @@ has_cpuid:
 	CMPL	AX, $0
 	JE	nocpuinfo
 
+	// Figure out how to serialize RDTSC.
+	// On Intel processors LFENCE is enough. AMD requires MFENCE.
+	// Don't know about the rest, so let's do MFENCE.
 	CMPL	BX, $0x756E6547  // "Genu"
 	JNE	notintel
 	CMPL	DX, $0x49656E69  // "ineI"
@@ -144,6 +147,7 @@ has_cpuid:
 	CMPL	CX, $0x6C65746E  // "ntel"
 	JNE	notintel
 	MOVB	$1, runtime·isIntel(SB)
+	MOVB	$1, runtime·lfenceBeforeRdtsc(SB)
 notintel:
 
 	// Load EAX=1 cpuid flags
@@ -191,10 +195,6 @@ nocpuinfo:
 	JMP ok
 #endif
 needtls:
-#ifdef GOOS_openbsd
-	// skip runtime·ldt0setup(SB) and tls test on OpenBSD in all cases
-	JMP	ok
-#endif
 #ifdef GOOS_plan9
 	// skip runtime·ldt0setup(SB) and tls test on Plan 9 in all cases
 	JMP	ok
@@ -240,7 +240,9 @@ ok:
 
 	// create a new goroutine to start program
 	PUSHL	$runtime·mainPC(SB)	// entry
+	PUSHL	$0	// arg size
 	CALL	runtime·newproc(SB)
+	POPL	AX
 	POPL	AX
 
 	// start this M
@@ -267,23 +269,35 @@ TEXT runtime·asminit(SB),NOSPLIT,$0-0
 	FLDCW	runtime·controlWord64(SB)
 	RET
 
-TEXT runtime·mstart(SB),NOSPLIT|TOPFRAME,$0
-	CALL	runtime·mstart0(SB)
-	RET // not reached
-
 /*
  *  go-routine
  */
 
+// void gosave(Gobuf*)
+// save state in Gobuf; setjmp
+TEXT runtime·gosave(SB), NOSPLIT, $0-4
+	MOVL	buf+0(FP), AX		// gobuf
+	LEAL	buf+0(FP), BX		// caller's SP
+	MOVL	BX, gobuf_sp(AX)
+	MOVL	0(SP), BX		// caller's PC
+	MOVL	BX, gobuf_pc(AX)
+	MOVL	$0, gobuf_ret(AX)
+	// Assert ctxt is zero. See func save.
+	MOVL	gobuf_ctxt(AX), BX
+	TESTL	BX, BX
+	JZ	2(PC)
+	CALL	runtime·badctxt(SB)
+	get_tls(CX)
+	MOVL	g(CX), BX
+	MOVL	BX, gobuf_g(AX)
+	RET
+
 // void gogo(Gobuf*)
 // restore state from Gobuf; longjmp
-TEXT runtime·gogo(SB), NOSPLIT, $0-4
+TEXT runtime·gogo(SB), NOSPLIT, $8-4
 	MOVL	buf+0(FP), BX		// gobuf
 	MOVL	gobuf_g(BX), DX
 	MOVL	0(DX), CX		// make sure g != nil
-	JMP	gogo<>(SB)
-
-TEXT gogo<>(SB), NOSPLIT, $0
 	get_tls(CX)
 	MOVL	DX, g(CX)
 	MOVL	gobuf_sp(BX), SP	// restore SP
@@ -308,6 +322,7 @@ TEXT runtime·mcall(SB), NOSPLIT, $0-4
 	MOVL	BX, (g_sched+gobuf_pc)(AX)
 	LEAL	fn+0(FP), BX	// caller's SP
 	MOVL	BX, (g_sched+gobuf_sp)(AX)
+	MOVL	AX, (g_sched+gobuf_g)(AX)
 
 	// switch to m->g0 & its stack, call fn
 	MOVL	g(DX), BX
@@ -356,12 +371,18 @@ TEXT runtime·systemstack(SB), NOSPLIT, $0-4
 	// switch stacks
 	// save our state in g->sched. Pretend to
 	// be systemstack_switch if the G stack is scanned.
-	CALL	gosave_systemstack_switch<>(SB)
+	MOVL	$runtime·systemstack_switch(SB), (g_sched+gobuf_pc)(AX)
+	MOVL	SP, (g_sched+gobuf_sp)(AX)
+	MOVL	AX, (g_sched+gobuf_g)(AX)
 
 	// switch to g0
 	get_tls(CX)
 	MOVL	DX, g(CX)
 	MOVL	(g_sched+gobuf_sp)(DX), BX
+	// make it look like mstart called systemstack on g0, to stop traceback
+	SUBL	$4, BX
+	MOVL	$runtime·mstart(SB), DX
+	MOVL	DX, 0(BX)
 	MOVL	BX, SP
 
 	// call target function
@@ -436,6 +457,7 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	// Set g->sched to context in f.
 	MOVL	0(SP), AX	// f's PC
 	MOVL	AX, (g_sched+gobuf_pc)(SI)
+	MOVL	SI, (g_sched+gobuf_g)(SI)
 	LEAL	4(SP), AX	// f's SP
 	MOVL	AX, (g_sched+gobuf_sp)(SI)
 	MOVL	DX, (g_sched+gobuf_ctxt)(SI)
@@ -455,7 +477,7 @@ TEXT runtime·morestack_noctxt(SB),NOSPLIT,$0-0
 	JMP runtime·morestack(SB)
 
 // reflectcall: call a function with the given argument list
-// func call(stackArgsType *_type, f *FuncVal, stackArgs *byte, stackArgsSize, stackRetOffset, frameSize uint32, regArgs *abi.RegArgs).
+// func call(argtype *_type, f *FuncVal, arg *byte, argsize, retoffset uint32).
 // we don't have variable-sized frames, so we use a small number
 // of constant-sized-frame functions to encode a few bits of size in the pc.
 // Caution: ugly multiline assembly macros in your future!
@@ -467,8 +489,8 @@ TEXT runtime·morestack_noctxt(SB),NOSPLIT,$0-0
 	JMP	AX
 // Note: can't just "JMP NAME(SB)" - bad inlining results.
 
-TEXT ·reflectcall(SB), NOSPLIT, $0-28
-	MOVL	frameSize+20(FP), CX
+TEXT ·reflectcall(SB), NOSPLIT, $0-20
+	MOVL	argsize+12(FP), CX
 	DISPATCH(runtime·call16, 16)
 	DISPATCH(runtime·call32, 32)
 	DISPATCH(runtime·call64, 64)
@@ -500,11 +522,11 @@ TEXT ·reflectcall(SB), NOSPLIT, $0-28
 	JMP	AX
 
 #define CALLFN(NAME,MAXSIZE)			\
-TEXT NAME(SB), WRAPPER, $MAXSIZE-28;		\
+TEXT NAME(SB), WRAPPER, $MAXSIZE-20;		\
 	NO_LOCAL_POINTERS;			\
 	/* copy arguments to stack */		\
-	MOVL	stackArgs+8(FP), SI;		\
-	MOVL	stackArgsSize+12(FP), CX;		\
+	MOVL	argptr+8(FP), SI;		\
+	MOVL	argsize+12(FP), CX;		\
 	MOVL	SP, DI;				\
 	REP;MOVSB;				\
 	/* call function */			\
@@ -513,10 +535,10 @@ TEXT NAME(SB), WRAPPER, $MAXSIZE-28;		\
 	PCDATA  $PCDATA_StackMapIndex, $0;	\
 	CALL	AX;				\
 	/* copy return values back */		\
-	MOVL	stackArgsType+0(FP), DX;		\
-	MOVL	stackArgs+8(FP), DI;		\
-	MOVL	stackArgsSize+12(FP), CX;		\
-	MOVL	stackRetOffset+16(FP), BX;		\
+	MOVL	argtype+0(FP), DX;		\
+	MOVL	argptr+8(FP), DI;		\
+	MOVL	argsize+12(FP), CX;		\
+	MOVL	retoffset+16(FP), BX;		\
 	MOVL	SP, SI;				\
 	ADDL	BX, DI;				\
 	ADDL	BX, SI;				\
@@ -528,12 +550,11 @@ TEXT NAME(SB), WRAPPER, $MAXSIZE-28;		\
 // separate function so it can allocate stack space for the arguments
 // to reflectcallmove. It does not follow the Go ABI; it expects its
 // arguments in registers.
-TEXT callRet<>(SB), NOSPLIT, $20-0
+TEXT callRet<>(SB), NOSPLIT, $16-0
 	MOVL	DX, 0(SP)
 	MOVL	DI, 4(SP)
 	MOVL	SI, 8(SP)
 	MOVL	CX, 12(SP)
-	MOVL	$0, 16(SP)
 	CALL	runtime·reflectcallmove(SB)
 	RET
 
@@ -578,43 +599,44 @@ TEXT ·publicationBarrier(SB),NOSPLIT,$0-0
 	// compile barrier.
 	RET
 
-// Save state of caller into g->sched,
-// but using fake PC from systemstack_switch.
-// Must only be called from functions with no locals ($0)
-// or else unwinding from systemstack_switch is incorrect.
-TEXT gosave_systemstack_switch<>(SB),NOSPLIT,$0
+// void jmpdefer(fn, sp);
+// called from deferreturn.
+// 1. pop the caller
+// 2. sub 5 bytes (the length of CALL & a 32 bit displacement) from the callers
+//    return (when building for shared libraries, subtract 16 bytes -- 5 bytes
+//    for CALL & displacement to call __x86.get_pc_thunk.cx, 6 bytes for the
+//    LEAL to load the offset into BX, and finally 5 for the call & displacement)
+// 3. jmp to the argument
+TEXT runtime·jmpdefer(SB), NOSPLIT, $0-8
+	MOVL	fv+0(FP), DX	// fn
+	MOVL	argp+4(FP), BX	// caller sp
+	LEAL	-4(BX), SP	// caller sp after CALL
+#ifdef GOBUILDMODE_shared
+	SUBL	$16, (SP)	// return to CALL again
+#else
+	SUBL	$5, (SP)	// return to CALL again
+#endif
+	MOVL	0(DX), BX
+	JMP	BX	// but first run the deferred function
+
+// Save state of caller into g->sched.
+TEXT gosave<>(SB),NOSPLIT,$0
 	PUSHL	AX
 	PUSHL	BX
 	get_tls(BX)
 	MOVL	g(BX), BX
 	LEAL	arg+0(FP), AX
 	MOVL	AX, (g_sched+gobuf_sp)(BX)
-	MOVL	$runtime·systemstack_switch(SB), AX
+	MOVL	-4(AX), AX
 	MOVL	AX, (g_sched+gobuf_pc)(BX)
 	MOVL	$0, (g_sched+gobuf_ret)(BX)
 	// Assert ctxt is zero. See func save.
 	MOVL	(g_sched+gobuf_ctxt)(BX), AX
 	TESTL	AX, AX
 	JZ	2(PC)
-	CALL	runtime·abort(SB)
+	CALL	runtime·badctxt(SB)
 	POPL	BX
 	POPL	AX
-	RET
-
-// func asmcgocall_no_g(fn, arg unsafe.Pointer)
-// Call fn(arg) aligned appropriately for the gcc ABI.
-// Called on a system stack, and there may be no g yet (during needm).
-TEXT ·asmcgocall_no_g(SB),NOSPLIT,$0-8
-	MOVL	fn+0(FP), AX
-	MOVL	arg+4(FP), BX
-	MOVL	SP, DX
-	SUBL	$32, SP
-	ANDL	$~15, SP	// alignment, perhaps unnecessary
-	MOVL	DX, 8(SP)	// save old SP
-	MOVL	BX, 0(SP)	// first argument in x86-32 ABI
-	CALL	AX
-	MOVL	8(SP), DX
-	MOVL	DX, SP
 	RET
 
 // func asmcgocall(fn, arg unsafe.Pointer) int32
@@ -629,19 +651,19 @@ TEXT ·asmcgocall(SB),NOSPLIT,$0-12
 
 	// Figure out if we need to switch to m->g0 stack.
 	// We get called to create new OS threads too, and those
-	// come in on the m->g0 stack already. Or we might already
-	// be on the m->gsignal stack.
+	// come in on the m->g0 stack already.
 	get_tls(CX)
-	MOVL	g(CX), DI
-	CMPL	DI, $0
+	MOVL	g(CX), BP
+	CMPL	BP, $0
 	JEQ	nosave	// Don't even have a G yet.
-	MOVL	g_m(DI), BP
+	MOVL	g_m(BP), BP
+	MOVL	m_g0(BP), SI
+	MOVL	g(CX), DI
+	CMPL	SI, DI
+	JEQ	noswitch
 	CMPL	DI, m_gsignal(BP)
 	JEQ	noswitch
-	MOVL	m_g0(BP), SI
-	CMPL	DI, SI
-	JEQ	noswitch
-	CALL	gosave_systemstack_switch<>(SB)
+	CALL	gosave<>(SB)
 	get_tls(CX)
 	MOVL	SI, g(CX)
 	MOVL	(g_sched+gobuf_sp)(SI), SP
@@ -680,9 +702,25 @@ nosave:
 	MOVL	AX, ret+8(FP)
 	RET
 
-// cgocallback(fn, frame unsafe.Pointer, ctxt uintptr)
+// cgocallback(void (*fn)(void*), void *frame, uintptr framesize, uintptr ctxt)
+// Turn the fn into a Go func (by taking its address) and call
+// cgocallback_gofunc.
+TEXT runtime·cgocallback(SB),NOSPLIT,$16-16
+	LEAL	fn+0(FP), AX
+	MOVL	AX, 0(SP)
+	MOVL	frame+4(FP), AX
+	MOVL	AX, 4(SP)
+	MOVL	framesize+8(FP), AX
+	MOVL	AX, 8(SP)
+	MOVL	ctxt+12(FP), AX
+	MOVL	AX, 12(SP)
+	MOVL	$runtime·cgocallback_gofunc(SB), AX
+	CALL	AX
+	RET
+
+// cgocallback_gofunc(FuncVal*, void *frame, uintptr framesize, uintptr ctxt)
 // See cgocall.go for more details.
-TEXT ·cgocallback(SB),NOSPLIT,$12-12  // Frame size must match commented places below
+TEXT ·cgocallback_gofunc(SB),NOSPLIT,$12-16
 	NO_LOCAL_POINTERS
 
 	// If g is nil, Go did not create the current thread.
@@ -700,12 +738,13 @@ TEXT ·cgocallback(SB),NOSPLIT,$12-12  // Frame size must match commented places
 	CMPL	BP, $0
 	JEQ	needm
 	MOVL	g_m(BP), BP
-	MOVL	BP, savedm-4(SP) // saved copy of oldm
+	MOVL	BP, DX // saved copy of oldm
 	JMP	havem
 needm:
+	MOVL	$0, 0(SP)
 	MOVL	$runtime·needm(SB), AX
 	CALL	AX
-	MOVL	$0, savedm-4(SP) // dropm on return
+	MOVL	0(SP), DX
 	get_tls(CX)
 	MOVL	g(CX), BP
 	MOVL	g_m(BP), BP
@@ -741,32 +780,34 @@ havem:
 	// save that information (m->curg->sched) so we can restore it.
 	// We can restore m->curg->sched.sp easily, because calling
 	// runtime.cgocallbackg leaves SP unchanged upon return.
-	// To save m->curg->sched.pc, we push it onto the curg stack and
-	// open a frame the same size as cgocallback's g0 frame.
-	// Once we switch to the curg stack, the pushed PC will appear
-	// to be the return PC of cgocallback, so that the traceback
-	// will seamlessly trace back into the earlier calls.
+	// To save m->curg->sched.pc, we push it onto the stack.
+	// This has the added benefit that it looks to the traceback
+	// routine like cgocallbackg is going to return to that
+	// PC (because the frame we allocate below has the same
+	// size as cgocallback_gofunc's frame declared above)
+	// so that the traceback will seamlessly trace back into
+	// the earlier calls.
+	//
+	// In the new goroutine, 4(SP) holds the saved oldm (DX) register.
+	// 8(SP) is unused.
 	MOVL	m_curg(BP), SI
 	MOVL	SI, g(CX)
 	MOVL	(g_sched+gobuf_sp)(SI), DI // prepare stack as DI
 	MOVL	(g_sched+gobuf_pc)(SI), BP
-	MOVL	BP, -4(DI)  // "push" return PC on the g stack
-	// Gather our arguments into registers.
-	MOVL	fn+0(FP), AX
-	MOVL	frame+4(FP), BX
-	MOVL	ctxt+8(FP), CX
-	LEAL	-(4+12)(DI), SP  // Must match declared frame size
-	MOVL	AX, 0(SP)
-	MOVL	BX, 4(SP)
-	MOVL	CX, 8(SP)
+	MOVL	BP, -4(DI)
+	MOVL	ctxt+12(FP), CX
+	LEAL	-(4+12)(DI), SP
+	MOVL	DX, 4(SP)
+	MOVL	CX, 0(SP)
 	CALL	runtime·cgocallbackg(SB)
+	MOVL	4(SP), DX
 
 	// Restore g->sched (== m->curg->sched) from saved values.
 	get_tls(CX)
 	MOVL	g(CX), SI
-	MOVL	12(SP), BP  // Must match declared frame size
+	MOVL	12(SP), BP
 	MOVL	BP, (g_sched+gobuf_pc)(SI)
-	LEAL	(12+4)(SP), DI  // Must match declared frame size
+	LEAL	(12+4)(SP), DI
 	MOVL	DI, (g_sched+gobuf_sp)(SI)
 
 	// Switch back to m->g0's stack and restore m->g0->sched.sp.
@@ -782,7 +823,6 @@ havem:
 
 	// If the m on entry was nil, we called needm above to borrow an m
 	// for the duration of the call. Since the call is over, return it with dropm.
-	MOVL	savedm-4(SP), DX
 	CMPL	DX, $0
 	JNE 3(PC)
 	MOVL	$runtime·dropm(SB), AX
@@ -834,37 +874,19 @@ TEXT runtime·stackcheck(SB), NOSPLIT, $0-0
 
 // func cputicks() int64
 TEXT runtime·cputicks(SB),NOSPLIT,$0-8
-	// LFENCE/MFENCE instruction support is dependent on SSE2.
-	// When no SSE2 support is present do not enforce any serialization
-	// since using CPUID to serialize the instruction stream is
-	// very costly.
-#ifdef GO386_softfloat
-	JMP	rdtsc  // no fence instructions available
-#endif
-	CMPB	internal∕cpu·X86+const_offsetX86HasRDTSCP(SB), $1
-	JNE	fences
-	// Instruction stream serializing RDTSCP is supported.
-	// RDTSCP is supported by Intel Nehalem (2008) and
-	// AMD K8 Rev. F (2006) and newer.
-	RDTSCP
+	CMPB	internal∕cpu·X86+const_offsetX86HasSSE2(SB), $1
+	JNE	done
+	CMPB	runtime·lfenceBeforeRdtsc(SB), $1
+	JNE	mfence
+	LFENCE
+	JMP	done
+mfence:
+	MFENCE
 done:
+	RDTSC
 	MOVL	AX, ret_lo+0(FP)
 	MOVL	DX, ret_hi+4(FP)
 	RET
-fences:
-	// MFENCE is instruction stream serializing and flushes the
-	// store buffers on AMD. The serialization semantics of LFENCE on AMD
-	// are dependent on MSR C001_1029 and CPU generation.
-	// LFENCE on Intel does wait for all previous instructions to have executed.
-	// Intel recommends MFENCE;LFENCE in its manuals before RDTSC to have all
-	// previous instructions executed and all previous loads and stores to globally visible.
-	// Using MFENCE;LFENCE here aligns the serializing properties without
-	// runtime detection of CPU manufacturer.
-	MFENCE
-	LFENCE
-rdtsc:
-	RDTSC
-	JMP done
 
 TEXT ldt0setup<>(SB),NOSPLIT,$16-0
 	// set up ldt 7 to point at m0.tls
@@ -1307,7 +1329,7 @@ TEXT _cgo_topofstack(SB),NOSPLIT,$0
 
 // The top-most function running on a goroutine
 // returns to goexit+PCQuantum.
-TEXT runtime·goexit(SB),NOSPLIT|TOPFRAME,$0-0
+TEXT runtime·goexit(SB),NOSPLIT,$0-0
 	BYTE	$0x90	// NOP
 	CALL	runtime·goexit1(SB)	// does not return
 	// traceback from goexit1 must hit code range of goexit
@@ -1469,10 +1491,6 @@ TEXT runtime·panicSlice3CU(SB),NOSPLIT,$0-8
 	MOVL	AX, x+0(FP)
 	MOVL	CX, y+4(FP)
 	JMP	runtime·goPanicSlice3CU(SB)
-TEXT runtime·panicSliceConvert(SB),NOSPLIT,$0-8
-	MOVL	DX, x+0(FP)
-	MOVL	BX, y+4(FP)
-	JMP	runtime·goPanicSliceConvert(SB)
 
 // Extended versions for 64-bit indexes.
 TEXT runtime·panicExtendIndex(SB),NOSPLIT,$0-12

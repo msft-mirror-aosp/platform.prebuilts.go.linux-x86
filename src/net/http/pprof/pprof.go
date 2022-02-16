@@ -44,7 +44,7 @@
 // The package also exports a handler that serves execution trace data
 // for the "go tool trace" command. To collect a 5-second execution trace:
 //
-//	curl -o trace.out http://localhost:6060/debug/pprof/trace?seconds=5
+//	wget -O trace.out http://localhost:6060/debug/pprof/trace?seconds=5
 //	go tool trace trace.out
 //
 // To view all available profiles, open http://localhost:6060/debug/pprof/
@@ -61,12 +61,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"html"
+	"html/template"
 	"internal/profile"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -91,13 +90,17 @@ func init() {
 func Cmdline(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprint(w, strings.Join(os.Args, "\x00"))
+	fmt.Fprintf(w, strings.Join(os.Args, "\x00"))
 }
 
-func sleep(r *http.Request, d time.Duration) {
+func sleep(w http.ResponseWriter, d time.Duration) {
+	var clientGone <-chan bool
+	if cn, ok := w.(http.CloseNotifier); ok {
+		clientGone = cn.CloseNotify()
+	}
 	select {
 	case <-time.After(d):
-	case <-r.Context().Done():
+	case <-clientGone:
 	}
 }
 
@@ -139,7 +142,7 @@ func Profile(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Could not enable CPU profiling: %s", err))
 		return
 	}
-	sleep(r, time.Duration(sec)*time.Second)
+	sleep(w, time.Duration(sec)*time.Second)
 	pprof.StopCPUProfile()
 }
 
@@ -168,7 +171,7 @@ func Trace(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Could not enable tracing: %s", err))
 		return
 	}
-	sleep(r, time.Duration(sec*float64(time.Second)))
+	sleep(w, time.Duration(sec*float64(time.Second)))
 	trace.Stop()
 }
 
@@ -287,7 +290,7 @@ func (name handler) serveDeltaProfile(w http.ResponseWriter, r *http.Request, p 
 		err := r.Context().Err()
 		if err == context.DeadlineExceeded {
 			serveError(w, http.StatusRequestTimeout, err.Error())
-		} else { // TODO: what's a good status code for canceled requests? 400?
+		} else { // TODO: what's a good status code for cancelled requests? 400?
 			serveError(w, http.StatusInternalServerError, err.Error())
 		}
 		return
@@ -353,13 +356,6 @@ var profileDescriptions = map[string]string{
 	"trace":        "A trace of execution of the current program. You can specify the duration in the seconds GET parameter. After you get the trace file, use the go tool trace command to investigate the trace.",
 }
 
-type profileEntry struct {
-	Name  string
-	Href  string
-	Desc  string
-	Count int
-}
-
 // Index responds with the pprof-formatted profile named by the request.
 // For example, "/debug/pprof/heap" serves the "heap" profile.
 // Index responds to a request for "/debug/pprof/" with an HTML page
@@ -376,11 +372,17 @@ func Index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	var profiles []profileEntry
+	type profile struct {
+		Name  string
+		Href  string
+		Desc  string
+		Count int
+	}
+	var profiles []profile
 	for _, p := range pprof.Profiles() {
-		profiles = append(profiles, profileEntry{
+		profiles = append(profiles, profile{
 			Name:  p.Name(),
-			Href:  p.Name(),
+			Href:  p.Name() + "?debug=1",
 			Desc:  profileDescriptions[p.Name()],
 			Count: p.Count(),
 		})
@@ -388,7 +390,7 @@ func Index(w http.ResponseWriter, r *http.Request) {
 
 	// Adding other profiles exposed from within this package
 	for _, p := range []string{"cmdline", "profile", "trace"} {
-		profiles = append(profiles, profileEntry{
+		profiles = append(profiles, profile{
 			Name: p,
 			Href: p,
 			Desc: profileDescriptions[p],
@@ -399,14 +401,12 @@ func Index(w http.ResponseWriter, r *http.Request) {
 		return profiles[i].Name < profiles[j].Name
 	})
 
-	if err := indexTmplExecute(w, profiles); err != nil {
+	if err := indexTmpl.Execute(w, profiles); err != nil {
 		log.Print(err)
 	}
 }
 
-func indexTmplExecute(w io.Writer, profiles []profileEntry) error {
-	var b bytes.Buffer
-	b.WriteString(`<html>
+var indexTmpl = template.Must(template.New("index").Parse(`<html>
 <head>
 <title>/debug/pprof/</title>
 <style>
@@ -422,28 +422,22 @@ func indexTmplExecute(w io.Writer, profiles []profileEntry) error {
 Types of profiles available:
 <table>
 <thead><td>Count</td><td>Profile</td></thead>
-`)
-
-	for _, profile := range profiles {
-		link := &url.URL{Path: profile.Href, RawQuery: "debug=1"}
-		fmt.Fprintf(&b, "<tr><td>%d</td><td><a href='%s'>%s</a></td></tr>\n", profile.Count, link, html.EscapeString(profile.Name))
-	}
-
-	b.WriteString(`</table>
+{{range .}}
+	<tr>
+	<td>{{.Count}}</td><td><a href={{.Href}}>{{.Name}}</a></td>
+	</tr>
+{{end}}
+</table>
 <a href="goroutine?debug=2">full goroutine stack dump</a>
-<br>
+<br/>
 <p>
 Profile Descriptions:
 <ul>
-`)
-	for _, profile := range profiles {
-		fmt.Fprintf(&b, "<li><div class=profile-name>%s: </div> %s</li>\n", html.EscapeString(profile.Name), html.EscapeString(profile.Desc))
-	}
-	b.WriteString(`</ul>
+{{range .}}
+<li><div class=profile-name>{{.Name}}:</div> {{.Desc}}</li>
+{{end}}
+</ul>
 </p>
 </body>
-</html>`)
-
-	_, err := w.Write(b.Bytes())
-	return err
-}
+</html>
+`))

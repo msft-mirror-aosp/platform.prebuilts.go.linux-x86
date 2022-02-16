@@ -110,13 +110,6 @@ func do(writer io.Writer, flagSet *flag.FlagSet, args []string) (err error) {
 		if buildPackage == nil {
 			return fmt.Errorf("no such package: %s", userPath)
 		}
-
-		// The builtin package needs special treatment: its symbols are lower
-		// case but we want to see them, always.
-		if buildPackage.ImportPath == "builtin" {
-			unexported = true
-		}
-
 		symbol, method = parseSymbol(sym)
 		pkg := parsePackage(writer, buildPackage, userPath)
 		paths = append(paths, pkg.prettyPath())
@@ -134,6 +127,12 @@ func do(writer io.Writer, flagSet *flag.FlagSet, args []string) (err error) {
 			}
 			panic(e)
 		}()
+
+		// The builtin package needs special treatment: its symbols are lower
+		// case but we want to see them, always.
+		if pkg.build.ImportPath == "builtin" {
+			unexported = true
+		}
 
 		// We have a package.
 		if showAll && symbol == "" {

@@ -7,6 +7,7 @@ package gccgoimporter
 import (
 	"go/types"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,9 +95,8 @@ var importerTests = [...]importerTest{
 	{pkgpath: "nointerface", name: "I", want: "type I int"},
 	{pkgpath: "issue29198", name: "FooServer", gccgoVersion: 7, want: "type FooServer struct{FooServer *FooServer; user string; ctx context.Context}"},
 	{pkgpath: "issue30628", name: "Apple", want: "type Apple struct{hey sync.RWMutex; x int; RQ [517]struct{Count uintptr; NumBytes uintptr; Last uintptr}}"},
-	{pkgpath: "issue31540", name: "S", gccgoVersion: 7, want: "type S struct{b int; map[Y]Z}"}, // should want "type S struct{b int; A2}" (issue  #44410)
+	{pkgpath: "issue31540", name: "S", gccgoVersion: 7, want: "type S struct{b int; map[Y]Z}"},
 	{pkgpath: "issue34182", name: "T1", want: "type T1 struct{f *T2}"},
-	{pkgpath: "notinheap", name: "S", want: "type S struct{}"},
 }
 
 func TestGoxImporter(t *testing.T) {
@@ -149,11 +149,21 @@ func TestObjImporter(t *testing.T) {
 	}
 	t.Logf("gccgo version %d.%d", major, minor)
 
-	tmpdir := t.TempDir()
+	tmpdir, err := ioutil.TempDir("", "TestObjImporter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
+
 	initmap := make(map[*types.Package]InitData)
 	imp := GetImporter([]string{tmpdir}, initmap)
 
-	artmpdir := t.TempDir()
+	artmpdir, err := ioutil.TempDir("", "TestObjImporter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(artmpdir)
+
 	arinitmap := make(map[*types.Package]InitData)
 	arimp := GetImporter([]string{artmpdir}, arinitmap)
 
