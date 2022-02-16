@@ -16,12 +16,7 @@ package math
 // Special cases are:
 //	Asin(±0) = ±0
 //	Asin(x) = NaN if x < -1 or x > 1
-func Asin(x float64) float64 {
-	if haveArchAsin {
-		return archAsin(x)
-	}
-	return asin(x)
-}
+func Asin(x float64) float64
 
 func asin(x float64) float64 {
 	if x == 0 {
@@ -53,12 +48,7 @@ func asin(x float64) float64 {
 //
 // Special case is:
 //	Acos(x) = NaN if x < -1 or x > 1
-func Acos(x float64) float64 {
-	if haveArchAcos {
-		return archAcos(x)
-	}
-	return acos(x)
-}
+func Acos(x float64) float64
 
 func acos(x float64) float64 {
 	return Pi/2 - Asin(x)

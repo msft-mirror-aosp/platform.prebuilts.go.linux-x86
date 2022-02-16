@@ -5,12 +5,12 @@
 package arm64
 
 import (
+	"cmd/compile/internal/gc"
 	"cmd/compile/internal/ssa"
-	"cmd/compile/internal/ssagen"
 	"cmd/internal/obj/arm64"
 )
 
-func Init(arch *ssagen.ArchInfo) {
+func Init(arch *gc.Arch) {
 	arch.LinkArch = &arm64.Linkarm64
 	arch.REGSP = arm64.REGSP
 	arch.MAXWIDTH = 1 << 50
@@ -18,10 +18,9 @@ func Init(arch *ssagen.ArchInfo) {
 	arch.PadFrame = padframe
 	arch.ZeroRange = zerorange
 	arch.Ginsnop = ginsnop
+	arch.Ginsnopdefer = ginsnop
 
-	arch.SSAMarkMoves = func(s *ssagen.State, b *ssa.Block) {}
+	arch.SSAMarkMoves = func(s *gc.SSAGenState, b *ssa.Block) {}
 	arch.SSAGenValue = ssaGenValue
 	arch.SSAGenBlock = ssaGenBlock
-	arch.LoadRegResult = loadRegResult
-	arch.SpillArgReg = spillArgReg
 }

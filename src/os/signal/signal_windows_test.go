@@ -7,6 +7,7 @@ package signal
 import (
 	"bytes"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +57,11 @@ func main() {
 	}
 }
 `
-	tmp := t.TempDir()
+	tmp, err := ioutil.TempDir("", "TestCtrlBreak")
+	if err != nil {
+		t.Fatal("TempDir failed: ", err)
+	}
+	defer os.RemoveAll(tmp)
 
 	// write ctrlbreak.go
 	name := filepath.Join(tmp, "ctlbreak")

@@ -10,9 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http/httptrace"
 	"net/http/internal"
-	"net/http/internal/ascii"
 	"net/textproto"
 	"reflect"
 	"sort"
@@ -73,7 +73,7 @@ type transferWriter struct {
 	ByteReadCh   chan readResult // non-nil if probeRequestBody called
 }
 
-func newTransferWriter(r any) (t *transferWriter, err error) {
+func newTransferWriter(r interface{}) (t *transferWriter, err error) {
 	t = &transferWriter{}
 
 	// Extract relevant fields
@@ -156,7 +156,7 @@ func newTransferWriter(r any) (t *transferWriter, err error) {
 // servers. See Issue 18257, as one example.
 //
 // The only reason we'd send such a request is if the user set the Body to a
-// non-nil value (say, io.NopCloser(bytes.NewReader(nil))) and didn't
+// non-nil value (say, ioutil.NopCloser(bytes.NewReader(nil))) and didn't
 // set ContentLength, or NewRequest set it to -1 (unknown), so then we assume
 // there's bytes to send.
 //
@@ -212,7 +212,6 @@ func (t *transferWriter) probeRequestBody() {
 			rres.b = buf[0]
 		}
 		t.ByteReadCh <- rres
-		close(t.ByteReadCh)
 	}(t.Body)
 	timer := time.NewTimer(200 * time.Millisecond)
 	select {
@@ -259,7 +258,7 @@ func (t *transferWriter) shouldSendContentLength() bool {
 		return false
 	}
 	// Many servers expect a Content-Length for these methods
-	if t.Method == "POST" || t.Method == "PUT" || t.Method == "PATCH" {
+	if t.Method == "POST" || t.Method == "PUT" {
 		return true
 	}
 	if t.ContentLength == 0 && isIdentity(t.TransferEncoding) {
@@ -331,18 +330,9 @@ func (t *transferWriter) writeHeader(w io.Writer, trace *httptrace.ClientTrace) 
 	return nil
 }
 
-// always closes t.BodyCloser
-func (t *transferWriter) writeBody(w io.Writer) (err error) {
+func (t *transferWriter) writeBody(w io.Writer) error {
+	var err error
 	var ncopy int64
-	closed := false
-	defer func() {
-		if closed || t.BodyCloser == nil {
-			return
-		}
-		if closeErr := t.BodyCloser.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
-	}()
 
 	// Write body. We "unwrap" the body first if it was wrapped in a
 	// nopCloser or readTrackingBody. This is to ensure that we can take advantage of
@@ -371,7 +361,7 @@ func (t *transferWriter) writeBody(w io.Writer) (err error) {
 				return err
 			}
 			var nextra int64
-			nextra, err = t.doBodyCopy(io.Discard, body)
+			nextra, err = t.doBodyCopy(ioutil.Discard, body)
 			ncopy += nextra
 		}
 		if err != nil {
@@ -379,7 +369,6 @@ func (t *transferWriter) writeBody(w io.Writer) (err error) {
 		}
 	}
 	if t.BodyCloser != nil {
-		closed = true
 		if err := t.BodyCloser.Close(); err != nil {
 			return err
 		}
@@ -481,7 +470,7 @@ func suppressedHeaders(status int) []string {
 }
 
 // msg is *Request or *Response.
-func readTransfer(msg any, r *bufio.Reader) (err error) {
+func readTransfer(msg interface{}, r *bufio.Reader) (err error) {
 	t := &transferReader{RequestMethod: "GET"}
 
 	// Unify input
@@ -640,7 +629,7 @@ func (t *transferReader) parseTransferEncoding() error {
 	if len(raw) != 1 {
 		return &unsupportedTEError{fmt.Sprintf("too many transfer encodings: %q", raw)}
 	}
-	if !ascii.EqualFold(textproto.TrimString(raw[0]), "chunked") {
+	if strings.ToLower(textproto.TrimString(raw[0])) != "chunked" {
 		return &unsupportedTEError{fmt.Sprintf("unsupported transfer encoding: %q", raw[0])}
 	}
 
@@ -809,7 +798,7 @@ func fixTrailer(header Header, chunked bool) (Header, error) {
 // and then reads the trailer if necessary.
 type body struct {
 	src          io.Reader
-	hdr          any           // non-nil (Response or Request) value means read trailer
+	hdr          interface{}   // non-nil (Response or Request) value means read trailer
 	r            *bufio.Reader // underlying wire-format reader for the trailer
 	closing      bool          // is the connection to be closed after reading body?
 	doEarlyClose bool          // whether Close should stop early
@@ -993,7 +982,7 @@ func (b *body) Close() error {
 			var n int64
 			// Consume the body, or, which will also lead to us reading
 			// the trailer headers after the body, if present.
-			n, err = io.CopyN(io.Discard, bodyLocked{b}, maxPostHandlerReadBytes)
+			n, err = io.CopyN(ioutil.Discard, bodyLocked{b}, maxPostHandlerReadBytes)
 			if err == io.EOF {
 				err = nil
 			}
@@ -1004,7 +993,7 @@ func (b *body) Close() error {
 	default:
 		// Fully consume the body, which will also lead to us reading
 		// the trailer headers after the body, if present.
-		_, err = io.Copy(io.Discard, bodyLocked{b})
+		_, err = io.Copy(ioutil.Discard, bodyLocked{b})
 	}
 	b.closed = true
 	return err
@@ -1030,7 +1019,7 @@ func (b *body) registerOnHitEOF(fn func()) {
 	b.onHitEOF = fn
 }
 
-// bodyLocked is an io.Reader reading from a *body when its mutex is
+// bodyLocked is a io.Reader reading from a *body when its mutex is
 // already held.
 type bodyLocked struct {
 	b *body
@@ -1073,13 +1062,10 @@ func (fr finishAsyncByteRead) Read(p []byte) (n int, err error) {
 	if n == 1 {
 		p[0] = rres.b
 	}
-	if err == nil {
-		err = io.EOF
-	}
 	return
 }
 
-var nopCloserType = reflect.TypeOf(io.NopCloser(nil))
+var nopCloserType = reflect.TypeOf(ioutil.NopCloser(nil))
 
 // isKnownInMemoryReader reports whether r is a type known to not
 // block on Read. Its caller uses this as an optional optimization to

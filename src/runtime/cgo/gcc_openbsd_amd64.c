@@ -60,6 +60,11 @@ threadentry(void *v)
 	ts = *(ThreadStart*)v;
 	free(v);
 
-	crosscall_amd64(ts.fn, setg_gcc, (void*)ts.g);
+	/*
+	 * Set specific keys.
+	 */
+	setg_gcc((void*)ts.g);
+
+	crosscall_amd64(ts.fn);
 	return nil;
 }

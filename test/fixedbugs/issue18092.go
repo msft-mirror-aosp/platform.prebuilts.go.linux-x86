@@ -10,6 +10,6 @@ func _() {
 	var ch chan bool
 	select {
 	default:
-	case <-ch { // GCCGO_ERROR "expected colon"
-	}           // GC_ERROR "expecting :"
+	case <-ch { // don't crash here
+	}           // ERROR "expecting :"
 }

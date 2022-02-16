@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
+// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package net
 
 import (
 	"internal/bytealg"
-	"internal/godebug"
 	"os"
 	"runtime"
 	"sync"
@@ -70,7 +69,7 @@ func initConfVal() {
 	// Darwin pops up annoying dialog boxes if programs try to do
 	// their own DNS requests. So always use cgo instead, which
 	// avoids that.
-	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+	if runtime.GOOS == "darwin" {
 		confVal.forceCgoLookupHost = true
 		return
 	}
@@ -203,6 +202,11 @@ func (c *conf) hostLookupOrder(r *Resolver, hostname string) (ret hostLookupOrde
 			// illumos defaults to "nis [NOTFOUND=return] files"
 			return fallbackOrder
 		}
+		if c.goos == "linux" {
+			// glibc says the default is "dns [!UNAVAIL=return] files"
+			// https://www.gnu.org/software/libc/manual/html_node/Notes-on-NSS-Configuration-File.html.
+			return hostLookupDNSFiles
+		}
 		return hostLookupFilesDNS
 	}
 	if nss.err != nil {
@@ -287,7 +291,7 @@ func (c *conf) hostLookupOrder(r *Resolver, hostname string) (ret hostLookupOrde
 //    cgo+2   // same, but debug level 2
 // etc.
 func goDebugNetDNS() (dnsMode string, debugLevel int) {
-	goDebug := godebug.Get("netdns")
+	goDebug := goDebugString("netdns")
 	parsePart := func(s string) {
 		if s == "" {
 			return

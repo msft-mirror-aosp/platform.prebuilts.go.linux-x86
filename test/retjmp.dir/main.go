@@ -6,9 +6,8 @@ package main
 
 func f()
 func leaf()
-func leaf2()
 
-var f1called, f2called, f3called, f4called bool
+var f1called, f2called, f3called bool
 
 func main() {
 	f()
@@ -22,16 +21,11 @@ func main() {
 	if !f3called {
 		panic("f3 not called")
 	}
-	leaf2()
-	if !f4called {
-		panic("f4 not called")
-	}
 }
 
 func f1() { f1called = true }
 func f2() { f2called = true }
 func f3() { f3called = true }
-func f4() { f4called = true }
 
 func unreachable() {
 	panic("unreachable function called")

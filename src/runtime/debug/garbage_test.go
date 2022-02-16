@@ -6,7 +6,6 @@ package debug_test
 
 import (
 	"internal/testenv"
-	"os"
 	"runtime"
 	. "runtime/debug"
 	"testing"
@@ -88,71 +87,27 @@ func TestReadGCStats(t *testing.T) {
 	}
 }
 
-var big []byte
+var big = make([]byte, 1<<20)
 
 func TestFreeOSMemory(t *testing.T) {
-	// Tests FreeOSMemory by making big susceptible to collection
-	// and checking that at least that much memory is returned to
-	// the OS after.
+	var ms1, ms2 runtime.MemStats
 
-	const bigBytes = 32 << 20
-	big = make([]byte, bigBytes)
-
-	// Make sure any in-progress GCs are complete.
-	runtime.GC()
-
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
-
-	// Clear the last reference to the big allocation, making it
-	// susceptible to collection.
+	if big == nil {
+		t.Skip("test is not reliable when run multiple times")
+	}
 	big = nil
-
-	// FreeOSMemory runs a GC cycle before releasing memory,
-	// so it's fine to skip a GC here.
-	//
-	// It's possible the background scavenger runs concurrently
-	// with this function and does most of the work for it.
-	// If that happens, it's OK. What we want is a test that fails
-	// often if FreeOSMemory does not work correctly, and a test
-	// that passes every time if it does.
+	runtime.GC()
+	runtime.ReadMemStats(&ms1)
 	FreeOSMemory()
-
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
-
-	// Check to make sure that the big allocation (now freed)
-	// had its memory shift into HeapReleased as a result of that
-	// FreeOSMemory.
-	if after.HeapReleased <= before.HeapReleased {
-		t.Fatalf("no memory released: %d -> %d", before.HeapReleased, after.HeapReleased)
-	}
-
-	// Check to make sure bigBytes was released, plus some slack. Pages may get
-	// allocated in between the two measurements above for a variety for reasons,
-	// most commonly for GC work bufs. Since this can get fairly high, depending
-	// on scheduling and what GOMAXPROCS is, give a lot of slack up-front.
-	//
-	// Add a little more slack too if the page size is bigger than the runtime page size.
-	// "big" could end up unaligned on its ends, forcing the scavenger to skip at worst
-	// 2x pages.
-	slack := uint64(bigBytes / 2)
-	pageSize := uint64(os.Getpagesize())
-	if pageSize > 8<<10 {
-		slack += pageSize * 2
-	}
-	if slack > bigBytes {
-		// We basically already checked this.
-		return
-	}
-	if after.HeapReleased-before.HeapReleased < bigBytes-slack {
-		t.Fatalf("less than %d released: %d -> %d", bigBytes, before.HeapReleased, after.HeapReleased)
+	runtime.ReadMemStats(&ms2)
+	if ms1.HeapReleased >= ms2.HeapReleased {
+		t.Errorf("released before=%d; released after=%d; did not go up", ms1.HeapReleased, ms2.HeapReleased)
 	}
 }
 
 var (
-	setGCPercentBallast any
-	setGCPercentSink    any
+	setGCPercentBallast interface{}
+	setGCPercentSink    interface{}
 )
 
 func TestSetGCPercent(t *testing.T) {

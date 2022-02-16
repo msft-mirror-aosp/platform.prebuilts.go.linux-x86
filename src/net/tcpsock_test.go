@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !js
+// +build !js
 
 package net
 
@@ -387,10 +387,13 @@ func TestIPv6LinkLocalUnicastTCP(t *testing.T) {
 			t.Log(err)
 			continue
 		}
-		ls := (&streamListener{Listener: ln}).newLocalServer()
+		ls, err := (&streamListener{Listener: ln}).newLocalServer()
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer ls.teardown()
 		ch := make(chan error, 1)
-		handler := func(ls *localServer, ln Listener) { ls.transponder(ln, ch) }
+		handler := func(ls *localServer, ln Listener) { transponder(ln, ch) }
 		if err := ls.buildup(handler); err != nil {
 			t.Fatal(err)
 		}
@@ -623,7 +626,10 @@ func TestTCPSelfConnect(t *testing.T) {
 		t.Skip("known-broken test on windows")
 	}
 
-	ln := newLocalListener(t, "tcp")
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var d Dialer
 	c, err := d.Dial(ln.Addr().Network(), ln.Addr().String())
 	if err != nil {
@@ -641,7 +647,7 @@ func TestTCPSelfConnect(t *testing.T) {
 		n = 1000
 	}
 	switch runtime.GOOS {
-	case "darwin", "ios", "dragonfly", "freebsd", "netbsd", "openbsd", "plan9", "illumos", "solaris", "windows":
+	case "darwin", "dragonfly", "freebsd", "netbsd", "openbsd", "plan9", "illumos", "solaris", "windows":
 		// Non-Linux systems take a long time to figure
 		// out that there is nothing listening on localhost.
 		n = 100
@@ -670,7 +676,10 @@ func TestTCPBig(t *testing.T) {
 
 	for _, writev := range []bool{false, true} {
 		t.Run(fmt.Sprintf("writev=%v", writev), func(t *testing.T) {
-			ln := newLocalListener(t, "tcp")
+			ln, err := newLocalListener("tcp")
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer ln.Close()
 
 			x := int(1 << 30)
@@ -714,7 +723,10 @@ func TestTCPBig(t *testing.T) {
 }
 
 func TestCopyPipeIntoTCP(t *testing.T) {
-	ln := newLocalListener(t, "tcp")
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer ln.Close()
 
 	errc := make(chan error, 1)
@@ -782,7 +794,10 @@ func TestCopyPipeIntoTCP(t *testing.T) {
 }
 
 func BenchmarkSetReadDeadline(b *testing.B) {
-	ln := newLocalListener(b, "tcp")
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		b.Fatal(err)
+	}
 	defer ln.Close()
 	var serv Conn
 	done := make(chan error)

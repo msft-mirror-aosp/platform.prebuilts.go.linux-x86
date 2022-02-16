@@ -6,7 +6,7 @@ package go1
 
 import (
 	"bytes"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -34,7 +34,7 @@ func BenchmarkHTTPClientServer(b *testing.B) {
 		if err != nil {
 			b.Fatal("Get:", err)
 		}
-		all, err := io.ReadAll(res.Body)
+		all, err := ioutil.ReadAll(res.Body)
 		if err != nil {
 			b.Fatal("ReadAll:", err)
 		}

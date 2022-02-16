@@ -7,6 +7,7 @@
 package reboot_test
 
 import (
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,11 +16,7 @@ import (
 )
 
 func TestRepeatBootstrap(t *testing.T) {
-	if testing.Short() {
-		t.Skipf("skipping test that rebuilds the entire toolchain")
-	}
-
-	goroot, err := os.MkdirTemp("", "reboot-goroot")
+	goroot, err := ioutil.TempDir("", "reboot-goroot")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +27,7 @@ func TestRepeatBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(goroot, "VERSION"), []byte(runtime.Version()), 0666); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(goroot, "VERSION"), []byte(runtime.Version()), 0666); err != nil {
 		t.Fatal(err)
 	}
 

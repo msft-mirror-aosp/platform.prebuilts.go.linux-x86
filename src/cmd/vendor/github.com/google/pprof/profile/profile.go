@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"math"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -399,12 +398,10 @@ func (p *Profile) CheckValid() error {
 			}
 		}
 		for _, ln := range l.Line {
-			f := ln.Function
-			if f == nil {
-				return fmt.Errorf("location id: %d has a line with nil function", l.ID)
-			}
-			if f.ID == 0 || functions[f.ID] != f {
-				return fmt.Errorf("inconsistent function %p: %d", f, f.ID)
+			if f := ln.Function; f != nil {
+				if f.ID == 0 || functions[f.ID] != f {
+					return fmt.Errorf("inconsistent function %p: %d", f, f.ID)
+				}
 			}
 		}
 	}
@@ -713,8 +710,7 @@ func (s *Sample) DiffBaseSample() bool {
 	return s.HasLabel("pprof::base", "true")
 }
 
-// Scale multiplies all sample values in a profile by a constant and keeps
-// only samples that have at least one non-zero value.
+// Scale multiplies all sample values in a profile by a constant.
 func (p *Profile) Scale(ratio float64) {
 	if ratio == 1 {
 		return
@@ -726,8 +722,7 @@ func (p *Profile) Scale(ratio float64) {
 	p.ScaleN(ratios)
 }
 
-// ScaleN multiplies each sample values in a sample by a different amount
-// and keeps only samples that have at least one non-zero value.
+// ScaleN multiplies each sample values in a sample by a different amount.
 func (p *Profile) ScaleN(ratios []float64) error {
 	if len(p.SampleType) != len(ratios) {
 		return fmt.Errorf("mismatched scale ratios, got %d, want %d", len(ratios), len(p.SampleType))
@@ -742,22 +737,13 @@ func (p *Profile) ScaleN(ratios []float64) error {
 	if allOnes {
 		return nil
 	}
-	fillIdx := 0
 	for _, s := range p.Sample {
-		keepSample := false
 		for i, v := range s.Value {
 			if ratios[i] != 1 {
-				val := int64(math.Round(float64(v) * ratios[i]))
-				s.Value[i] = val
-				keepSample = keepSample || val != 0
+				s.Value[i] = int64(float64(v) * ratios[i])
 			}
 		}
-		if keepSample {
-			p.Sample[fillIdx] = s
-			fillIdx++
-		}
 	}
-	p.Sample = p.Sample[:fillIdx]
 	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	gz "compress/gzip"
 	"io"
+	"io/ioutil"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func init() {
 }
 
 func gzip() {
-	c := gz.NewWriter(io.Discard)
+	c := gz.NewWriter(ioutil.Discard)
 	if _, err := c.Write(jsongunz); err != nil {
 		panic(err)
 	}
@@ -41,7 +42,7 @@ func gunzip() {
 	if err != nil {
 		panic(err)
 	}
-	if _, err := io.Copy(io.Discard, r); err != nil {
+	if _, err := io.Copy(ioutil.Discard, r); err != nil {
 		panic(err)
 	}
 	r.Close()
