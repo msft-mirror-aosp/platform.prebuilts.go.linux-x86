@@ -9,7 +9,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -72,7 +71,7 @@ func (v visitor) Visit(n ast.Node) ast.Visitor {
 func loadTypes(path, pkgName string, v visitor) {
 	fset := token.NewFileSet()
 
-	filter := func(fi fs.FileInfo) bool {
+	filter := func(fi os.FileInfo) bool {
 		return strings.HasSuffix(fi.Name(), ".go")
 	}
 	pkgs, err := parser.ParseDir(fset, path, filter, 0)

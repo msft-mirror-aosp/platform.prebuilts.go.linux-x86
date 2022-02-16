@@ -13,8 +13,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/fs"
+	"io/ioutil"
 	"net/url"
+	"os"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -55,7 +56,7 @@ func (e *HTTPError) Error() string {
 	}
 
 	if err := e.Err; err != nil {
-		if pErr, ok := e.Err.(*fs.PathError); ok && strings.HasSuffix(e.URL, pErr.Path) {
+		if pErr, ok := e.Err.(*os.PathError); ok && strings.HasSuffix(e.URL, pErr.Path) {
 			// Remove the redundant copy of the path.
 			err = pErr.Err
 		}
@@ -66,7 +67,7 @@ func (e *HTTPError) Error() string {
 }
 
 func (e *HTTPError) Is(target error) bool {
-	return target == fs.ErrNotExist && (e.StatusCode == 404 || e.StatusCode == 410)
+	return target == os.ErrNotExist && (e.StatusCode == 404 || e.StatusCode == 410)
 }
 
 func (e *HTTPError) Unwrap() error {
@@ -86,7 +87,7 @@ func GetBytes(u *url.URL) ([]byte, error) {
 	if err := resp.Err(); err != nil {
 		return nil, err
 	}
-	b, err := io.ReadAll(resp.Body)
+	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %v", u.Redacted(), err)
 	}
@@ -129,7 +130,7 @@ func (r *Response) formatErrorDetail() string {
 	}
 
 	// Ensure that r.errorDetail has been populated.
-	_, _ = io.Copy(io.Discard, r.Body)
+	_, _ = io.Copy(ioutil.Discard, r.Body)
 
 	s := r.errorDetail.buf.String()
 	if !utf8.ValidString(s) {

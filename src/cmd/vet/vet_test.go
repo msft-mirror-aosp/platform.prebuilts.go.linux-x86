@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"internal/testenv"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -31,7 +32,7 @@ func TestMain(m *testing.M) {
 }
 
 func testMain(m *testing.M) int {
-	dir, err := os.MkdirTemp("", "vet_test")
+	dir, err := ioutil.TempDir("", "vet_test")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -241,8 +242,8 @@ func errorCheck(outStr string, wantAuto bool, fullshort ...string) (err error) {
 			// Assume errmsg says "file:line: foo".
 			// Cut leading "file:line: " to avoid accidental matching of file name instead of message.
 			text := errmsg
-			if _, suffix, ok := strings.Cut(text, " "); ok {
-				text = suffix
+			if i := strings.Index(text, " "); i >= 0 {
+				text = text[i+1:]
 			}
 			if we.re.MatchString(text) {
 				matched = true
@@ -334,8 +335,8 @@ type wantedError struct {
 }
 
 var (
-	errRx       = regexp.MustCompile(`// (?:GC_)?ERROR(NEXT)? (.*)`)
-	errAutoRx   = regexp.MustCompile(`// (?:GC_)?ERRORAUTO(NEXT)? (.*)`)
+	errRx       = regexp.MustCompile(`// (?:GC_)?ERROR (.*)`)
+	errAutoRx   = regexp.MustCompile(`// (?:GC_)?ERRORAUTO (.*)`)
 	errQuotesRx = regexp.MustCompile(`"([^"]*)"`)
 	lineRx      = regexp.MustCompile(`LINE(([+-])([0-9]+))?`)
 )
@@ -344,7 +345,7 @@ var (
 func wantedErrors(file, short string) (errs []wantedError) {
 	cache := make(map[string]*regexp.Regexp)
 
-	src, err := os.ReadFile(file)
+	src, err := ioutil.ReadFile(file)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -364,10 +365,7 @@ func wantedErrors(file, short string) (errs []wantedError) {
 		if m == nil {
 			continue
 		}
-		if m[1] == "NEXT" {
-			lineNum++
-		}
-		all := m[2]
+		all := m[1]
 		mm := errQuotesRx.FindAllStringSubmatch(all, -1)
 		if mm == nil {
 			log.Fatalf("%s:%d: invalid errchk line: %s", file, lineNum, line)

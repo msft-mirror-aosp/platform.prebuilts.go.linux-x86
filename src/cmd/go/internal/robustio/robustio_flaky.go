@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build windows || darwin
+// +build windows darwin
 
 package robustio
 
 import (
 	"errors"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"syscall"
@@ -69,11 +70,11 @@ func rename(oldpath, newpath string) (err error) {
 	})
 }
 
-// readFile is like os.ReadFile, but retries ephemeral errors.
+// readFile is like ioutil.ReadFile, but retries ephemeral errors.
 func readFile(filename string) ([]byte, error) {
 	var b []byte
 	err := retry(func() (err error, mayRetry bool) {
-		b, err = os.ReadFile(filename)
+		b, err = ioutil.ReadFile(filename)
 
 		// Unlike in rename, we do not retry errFileNotFound here: it can occur
 		// as a spurious error, but the file may also genuinely not exist, so the

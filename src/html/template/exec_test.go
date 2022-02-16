@@ -11,10 +11,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"text/template"
 )
@@ -49,7 +48,7 @@ type T struct {
 	MSI      map[string]int
 	MSIone   map[string]int // one element, for deterministic output
 	MSIEmpty map[string]int
-	MXI      map[any]int
+	MXI      map[interface{}]int
 	MII      map[int]int
 	MI32S    map[int32]string
 	MI64S    map[int64]string
@@ -59,11 +58,11 @@ type T struct {
 	MUI8S    map[uint8]string
 	SMSI     []map[string]int
 	// Empty interfaces; used to see if we can dig inside one.
-	Empty0 any // nil
-	Empty1 any
-	Empty2 any
-	Empty3 any
-	Empty4 any
+	Empty0 interface{} // nil
+	Empty1 interface{}
+	Empty2 interface{}
+	Empty3 interface{}
+	Empty4 interface{}
 	// Non-empty interfaces.
 	NonEmptyInterface         I
 	NonEmptyInterfacePtS      *I
@@ -141,7 +140,7 @@ var tVal = &T{
 	SB:     []bool{true, false},
 	MSI:    map[string]int{"one": 1, "two": 2, "three": 3},
 	MSIone: map[string]int{"one": 1},
-	MXI:    map[any]int{"one": 1},
+	MXI:    map[interface{}]int{"one": 1},
 	MII:    map[int]int{1: 1},
 	MI32S:  map[int32]string{1: "one", 2: "two"},
 	MI64S:  map[int64]string{2: "i642", 3: "i643"},
@@ -212,7 +211,7 @@ func (t *T) Method2(a uint16, b string) string {
 	return fmt.Sprintf("Method2: %d %s", a, b)
 }
 
-func (t *T) Method3(v any) string {
+func (t *T) Method3(v interface{}) string {
 	return fmt.Sprintf("Method3: %v", v)
 }
 
@@ -252,7 +251,7 @@ func (u *U) TrueFalse(b bool) string {
 	return ""
 }
 
-func typeOf(arg any) string {
+func typeOf(arg interface{}) string {
 	return fmt.Sprintf("%T", arg)
 }
 
@@ -260,7 +259,7 @@ type execTest struct {
 	name   string
 	input  string
 	output string
-	data   any
+	data   interface{}
 	ok     bool
 }
 
@@ -393,7 +392,7 @@ var execTests = []execTest{
 	{".VariadicFuncInt", "{{call .VariadicFuncInt 33 `he` `llo`}}", "33=&lt;he&#43;llo&gt;", tVal, true},
 	{"if .BinaryFunc call", "{{ if .BinaryFunc}}{{call .BinaryFunc `1` `2`}}{{end}}", "[1=2]", tVal, true},
 	{"if not .BinaryFunc call", "{{ if not .BinaryFunc}}{{call .BinaryFunc `1` `2`}}{{else}}No{{end}}", "No", tVal, true},
-	{"Interface Call", `{{stringer .S}}`, "foozle", map[string]any{"S": bytes.NewBufferString("foozle")}, true},
+	{"Interface Call", `{{stringer .S}}`, "foozle", map[string]interface{}{"S": bytes.NewBufferString("foozle")}, true},
 	{".ErrFunc", "{{call .ErrFunc}}", "bla", tVal, true},
 	{"call nil", "{{call nil}}", "", tVal, false},
 
@@ -567,8 +566,6 @@ var execTests = []execTest{
 	{"range empty no else", "{{range .SIEmpty}}-{{.}}-{{end}}", "", tVal, true},
 	{"range []int else", "{{range .SI}}-{{.}}-{{else}}EMPTY{{end}}", "-3--4--5-", tVal, true},
 	{"range empty else", "{{range .SIEmpty}}-{{.}}-{{else}}EMPTY{{end}}", "EMPTY", tVal, true},
-	{"range []int break else", "{{range .SI}}-{{.}}-{{break}}NOTREACHED{{else}}EMPTY{{end}}", "-3-", tVal, true},
-	{"range []int continue else", "{{range .SI}}-{{.}}-{{continue}}NOTREACHED{{else}}EMPTY{{end}}", "-3--4--5-", tVal, true},
 	{"range []bool", "{{range .SB}}-{{.}}-{{end}}", "-true--false-", tVal, true},
 	{"range []int method", "{{range .SI | .MAdd .I}}-{{.}}-{{end}}", "-20--21--22-", tVal, true},
 	{"range map", "{{range .MSI}}-{{.}}-{{end}}", "-1--3--2-", tVal, true},
@@ -740,7 +737,7 @@ func add(args ...int) int {
 	return sum
 }
 
-func echo(arg any) any {
+func echo(arg interface{}) interface{} {
 	return arg
 }
 
@@ -759,7 +756,7 @@ func stringer(s fmt.Stringer) string {
 	return s.String()
 }
 
-func mapOfThree() any {
+func mapOfThree() interface{} {
 	return map[string]int{"three": 3}
 }
 
@@ -1305,7 +1302,7 @@ func TestUnterminatedStringError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	str := err.Error()
-	if !strings.Contains(str, "X:3: unterminated raw quoted string") {
+	if !strings.Contains(str, "X:3: unexpected unterminated raw quoted string") {
 		t.Fatalf("unexpected error: %s", str)
 	}
 }
@@ -1338,7 +1335,7 @@ func TestExecuteGivesExecError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = tmpl.Execute(io.Discard, 0)
+	err = tmpl.Execute(ioutil.Discard, 0)
 	if err == nil {
 		t.Fatal("expected error; got none")
 	}
@@ -1438,7 +1435,7 @@ func TestBlock(t *testing.T) {
 func TestEvalFieldErrors(t *testing.T) {
 	tests := []struct {
 		name, src string
-		value     any
+		value     interface{}
 		want      string
 	}{
 		{
@@ -1484,7 +1481,7 @@ func TestEvalFieldErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpl := Must(New("tmpl").Parse(tc.src))
-			err := tmpl.Execute(io.Discard, tc.value)
+			err := tmpl.Execute(ioutil.Discard, tc.value)
 			got := "<nil>"
 			if err != nil {
 				got = err.Error()
@@ -1501,7 +1498,7 @@ func TestMaxExecDepth(t *testing.T) {
 		t.Skip("skipping in -short mode")
 	}
 	tmpl := Must(New("tmpl").Parse(`{{template "tmpl" .}}`))
-	err := tmpl.Execute(io.Discard, nil)
+	err := tmpl.Execute(ioutil.Discard, nil)
 	got := "<nil>"
 	if err != nil {
 		got = err.Error()
@@ -1581,7 +1578,7 @@ func TestInterfaceValues(t *testing.T) {
 	for _, tt := range tests {
 		tmpl := Must(New("tmpl").Parse(tt.text))
 		var buf bytes.Buffer
-		err := tmpl.Execute(&buf, map[string]any{
+		err := tmpl.Execute(&buf, map[string]interface{}{
 			"PlusOne": func(n int) int {
 				return n + 1
 			},
@@ -1610,7 +1607,7 @@ func TestInterfaceValues(t *testing.T) {
 
 // Check that panics during calls are recovered and returned as errors.
 func TestExecutePanicDuringCall(t *testing.T) {
-	funcs := map[string]any{
+	funcs := map[string]interface{}{
 		"doPanic": func() string {
 			panic("custom panic string")
 		},
@@ -1618,7 +1615,7 @@ func TestExecutePanicDuringCall(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		data    any
+		data    interface{}
 		wantErr string
 	}{
 		{
@@ -1707,127 +1704,5 @@ func TestIssue31810(t *testing.T) {
 	}
 	if b.String() != "result" {
 		t.Errorf("%s got %q, expected %q", textCall, b.String(), "result")
-	}
-}
-
-// Issue 39807. There was a race applying escapeTemplate.
-
-const raceText = `
-{{- define "jstempl" -}}
-var v = "v";
-{{- end -}}
-<script type="application/javascript">
-{{ template "jstempl" $ }}
-</script>
-`
-
-func TestEscapeRace(t *testing.T) {
-	tmpl := New("")
-	_, err := tmpl.New("templ.html").Parse(raceText)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const count = 20
-	for i := 0; i < count; i++ {
-		_, err := tmpl.New(fmt.Sprintf("x%d.html", i)).Parse(`{{ template "templ.html" .}}`)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < count; j++ {
-				sub := tmpl.Lookup(fmt.Sprintf("x%d.html", j))
-				if err := sub.Execute(io.Discard, nil); err != nil {
-					t.Error(err)
-				}
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-func TestRecursiveExecute(t *testing.T) {
-	tmpl := New("")
-
-	recur := func() (HTML, error) {
-		var sb strings.Builder
-		if err := tmpl.ExecuteTemplate(&sb, "subroutine", nil); err != nil {
-			t.Fatal(err)
-		}
-		return HTML(sb.String()), nil
-	}
-
-	m := FuncMap{
-		"recur": recur,
-	}
-
-	top, err := tmpl.New("x.html").Funcs(m).Parse(`{{recur}}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = tmpl.New("subroutine").Parse(`<a href="/x?p={{"'a<b'"}}">`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := top.Execute(io.Discard, nil); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// recursiveInvoker is for TestRecursiveExecuteViaMethod.
-type recursiveInvoker struct {
-	t    *testing.T
-	tmpl *Template
-}
-
-func (r *recursiveInvoker) Recur() (string, error) {
-	var sb strings.Builder
-	if err := r.tmpl.ExecuteTemplate(&sb, "subroutine", nil); err != nil {
-		r.t.Fatal(err)
-	}
-	return sb.String(), nil
-}
-
-func TestRecursiveExecuteViaMethod(t *testing.T) {
-	tmpl := New("")
-	top, err := tmpl.New("x.html").Parse(`{{.Recur}}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = tmpl.New("subroutine").Parse(`<a href="/x?p={{"'a<b'"}}">`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &recursiveInvoker{
-		t:    t,
-		tmpl: tmpl,
-	}
-	if err := top.Execute(io.Discard, r); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// Issue 43295.
-func TestTemplateFuncsAfterClone(t *testing.T) {
-	s := `{{ f . }}`
-	want := "test"
-	orig := New("orig").Funcs(map[string]any{
-		"f": func(in string) string {
-			return in
-		},
-	}).New("child")
-
-	overviewTmpl := Must(Must(orig.Clone()).Parse(s))
-	var out strings.Builder
-	if err := overviewTmpl.Execute(&out, want); err != nil {
-		t.Fatal(err)
-	}
-	if got := out.String(); got != want {
-		t.Fatalf("got %q; want %q", got, want)
 	}
 }

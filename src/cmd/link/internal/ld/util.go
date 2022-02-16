@@ -6,6 +6,7 @@ package ld
 
 import (
 	"cmd/link/internal/loader"
+	"cmd/link/internal/sym"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -56,10 +57,10 @@ func afterErrorAction() {
 //
 // Logging an error means that on exit cmd/link will delete any
 // output file and return a non-zero error code.
-//
-// TODO: remove. Use ctxt.Errorf instead.
-// All remaining calls use nil as first arg.
-func Errorf(dummy *int, format string, args ...interface{}) {
+func Errorf(s *sym.Symbol, format string, args ...interface{}) {
+	if s != nil {
+		format = s.Name + ": " + format
+	}
 	format += "\n"
 	fmt.Fprintf(os.Stderr, format, args...)
 	afterErrorAction()
@@ -112,3 +113,10 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+// implements sort.Interface, for sorting symbols by name.
+type byName []*sym.Symbol
+
+func (s byName) Len() int           { return len(s) }
+func (s byName) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s byName) Less(i, j int) bool { return s[i].Name < s[j].Name }

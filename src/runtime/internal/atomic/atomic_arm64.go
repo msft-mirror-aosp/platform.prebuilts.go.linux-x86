@@ -2,18 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build arm64
+// +build arm64
 
 package atomic
 
-import (
-	"internal/cpu"
-	"unsafe"
-)
-
-const (
-	offsetARM64HasATOMICS = unsafe.Offsetof(cpu.ARM64.HasATOMICS)
-)
+import "unsafe"
 
 //go:noescape
 func Xadd(ptr *uint32, delta int32) uint32
@@ -49,22 +42,10 @@ func Loadp(ptr unsafe.Pointer) unsafe.Pointer
 func LoadAcq(addr *uint32) uint32
 
 //go:noescape
-func LoadAcq64(ptr *uint64) uint64
-
-//go:noescape
-func LoadAcquintptr(ptr *uintptr) uintptr
-
-//go:noescape
 func Or8(ptr *uint8, val uint8)
 
 //go:noescape
 func And8(ptr *uint8, val uint8)
-
-//go:noescape
-func And(ptr *uint32, val uint32)
-
-//go:noescape
-func Or(ptr *uint32, val uint32)
 
 //go:noescape
 func Cas64(ptr *uint64, old, new uint64) bool
@@ -86,9 +67,3 @@ func StorepNoWB(ptr unsafe.Pointer, val unsafe.Pointer)
 
 //go:noescape
 func StoreRel(ptr *uint32, val uint32)
-
-//go:noescape
-func StoreRel64(ptr *uint64, val uint64)
-
-//go:noescape
-func StoreReluintptr(ptr *uintptr, val uintptr)

@@ -39,28 +39,28 @@ import (
 func Init() (*sys.Arch, ld.Arch) {
 	arch := sys.ArchAMD64
 
+	fa := funcAlign
+	if objabi.GOAMD64 == "alignedjumps" {
+		fa = 32
+	}
+
 	theArch := ld.Arch{
-		Funcalign:  funcAlign,
+		Funcalign:  fa,
 		Maxalign:   maxAlign,
 		Minalign:   minAlign,
 		Dwarfregsp: dwarfRegSP,
 		Dwarfreglr: dwarfRegLR,
-		// 0xCC is INT $3 - breakpoint instruction
-		CodePad: []byte{0xCC},
 
-		Plan9Magic:  uint32(4*26*26 + 7),
-		Plan9_64Bit: true,
-
-		Adddynrel:        adddynrel,
+		Adddynrel2:       adddynrel2,
 		Archinit:         archinit,
 		Archreloc:        archreloc,
 		Archrelocvariant: archrelocvariant,
-		Elfreloc1:        elfreloc1,
-		ElfrelocSize:     24,
+		Asmb:             asmb,
+		Asmb2:            asmb2,
+		Elfreloc2:        elfreloc2,
 		Elfsetupplt:      elfsetupplt,
-		Gentext:          gentext,
+		Gentext2:         gentext2,
 		Machoreloc1:      machoreloc1,
-		MachorelocSize:   8,
 		PEreloc1:         pereloc1,
 		TLSIEtoLE:        tlsIEtoLE,
 

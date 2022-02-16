@@ -12,7 +12,7 @@ import (
 	"go/importer"
 	"go/parser"
 	"go/token"
-	"os"
+	"io/ioutil"
 	"testing"
 
 	. "go/types"
@@ -27,7 +27,7 @@ func TestHilbert(t *testing.T) {
 	// generate source
 	src := program(*H, *out)
 	if *out != "" {
-		os.WriteFile(*out, src, 0666)
+		ioutil.WriteFile(*out, src, 0666)
 		return
 	}
 
@@ -84,7 +84,7 @@ type gen struct {
 	bytes.Buffer
 }
 
-func (g *gen) p(format string, args ...any) {
+func (g *gen) p(format string, args ...interface{}) {
 	fmt.Fprintf(&g.Buffer, format, args...)
 }
 

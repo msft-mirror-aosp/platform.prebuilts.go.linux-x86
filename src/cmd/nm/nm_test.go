@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"internal/obscuretestdata"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +31,7 @@ func testMain(m *testing.M) int {
 		return 0
 	}
 
-	tmpDir, err := os.MkdirTemp("", "TestNM")
+	tmpDir, err := ioutil.TempDir("", "TestNM")
 	if err != nil {
 		fmt.Println("TempDir failed:", err)
 		return 2
@@ -87,7 +88,7 @@ func TestNonGoExecs(t *testing.T) {
 
 func testGoExec(t *testing.T, iscgo, isexternallinker bool) {
 	t.Parallel()
-	tmpdir, err := os.MkdirTemp("", "TestGoExec")
+	tmpdir, err := ioutil.TempDir("", "TestGoExec")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,9 +173,6 @@ func testGoExec(t *testing.T, iscgo, isexternallinker bool) {
 		if runtime.GOOS == "windows" {
 			return true
 		}
-		if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-			return true // On darwin/arm64 everything is PIE
-		}
 		return false
 	}
 
@@ -221,7 +219,7 @@ func TestGoExec(t *testing.T) {
 
 func testGoLib(t *testing.T, iscgo bool) {
 	t.Parallel()
-	tmpdir, err := os.MkdirTemp("", "TestGoLib")
+	tmpdir, err := ioutil.TempDir("", "TestGoLib")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +242,7 @@ func testGoLib(t *testing.T, iscgo bool) {
 		err = e
 	}
 	if err == nil {
-		err = os.WriteFile(filepath.Join(libpath, "go.mod"), []byte("module mylib\n"), 0666)
+		err = ioutil.WriteFile(filepath.Join(libpath, "go.mod"), []byte("module mylib\n"), 0666)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +283,7 @@ func testGoLib(t *testing.T, iscgo bool) {
 	if iscgo {
 		syms = append(syms, symType{"B", "mylib.TestCgodata", false, false})
 		syms = append(syms, symType{"T", "mylib.TestCgofunc", false, false})
-		if runtime.GOOS == "darwin" || runtime.GOOS == "ios" || (runtime.GOOS == "windows" && runtime.GOARCH == "386") {
+		if runtime.GOOS == "darwin" || (runtime.GOOS == "windows" && runtime.GOARCH == "386") {
 			syms = append(syms, symType{"D", "_cgodata", true, false})
 			syms = append(syms, symType{"T", "_cgofunc", true, false})
 		} else if runtime.GOOS == "aix" {

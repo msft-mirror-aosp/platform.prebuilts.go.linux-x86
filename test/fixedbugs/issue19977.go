@@ -9,7 +9,7 @@
 package foo
 
 func Foo() {
-	switch x := a.(type) { // ERROR "undefined: a|reference to undefined name .*a"
+	switch x := a.(type) { // ERROR "undefined: a"
 	default:
 		_ = x
 	}
