@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !js
+// +build !js
 
 package net
 
@@ -64,7 +64,10 @@ func TestRawConnReadWrite(t *testing.T) {
 				return
 			}
 		}
-		ls := newLocalServer(t, "tcp")
+		ls, err := newLocalServer("tcp")
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer ls.teardown()
 		if err := ls.buildup(handler); err != nil {
 			t.Fatal(err)
@@ -99,7 +102,10 @@ func TestRawConnReadWrite(t *testing.T) {
 			t.Skipf("not supported on %s", runtime.GOOS)
 		}
 
-		ln := newLocalListener(t, "tcp")
+		ln, err := newLocalListener("tcp")
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer ln.Close()
 
 		c, err := Dial(ln.Addr().Network(), ln.Addr().String())
@@ -174,7 +180,10 @@ func TestRawConnControl(t *testing.T) {
 	}
 
 	t.Run("TCP", func(t *testing.T) {
-		ln := newLocalListener(t, "tcp")
+		ln, err := newLocalListener("tcp")
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer ln.Close()
 
 		cc1, err := ln.(*TCPListener).SyscallConn()

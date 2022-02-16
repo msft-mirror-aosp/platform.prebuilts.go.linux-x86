@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build (!cgo || netgo) && (darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris)
+// +build !cgo netgo
+// +build darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package net
 
@@ -22,7 +23,7 @@ func TestGoLookupIP(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if _, err := DefaultResolver.goLookupIP(ctx, "ip", host); err != nil {
+	if _, err := DefaultResolver.goLookupIP(ctx, host); err != nil {
 		t.Error(err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"go/token"
 	"io"
+	"io/ioutil"
 	"net/http/internal"
 	"net/url"
 	"reflect"
@@ -619,7 +620,7 @@ func TestWriteResponse(t *testing.T) {
 			t.Errorf("#%d: %v", i, err)
 			continue
 		}
-		err = resp.Write(io.Discard)
+		err = resp.Write(ioutil.Discard)
 		if err != nil {
 			t.Errorf("#%d: %v", i, err)
 			continue
@@ -646,8 +647,8 @@ type readerAndCloser struct {
 func TestReadResponseCloseInMiddle(t *testing.T) {
 	t.Parallel()
 	for _, test := range readResponseCloseInMiddleTests {
-		fatalf := func(format string, args ...any) {
-			args = append([]any{test.chunked, test.compressed}, args...)
+		fatalf := func(format string, args ...interface{}) {
+			args = append([]interface{}{test.chunked, test.compressed}, args...)
 			t.Fatalf("on test chunked=%v, compressed=%v: "+format, args...)
 		}
 		checkErr := func(err error, msg string) {
@@ -721,7 +722,7 @@ func TestReadResponseCloseInMiddle(t *testing.T) {
 		}
 		resp.Body.Close()
 
-		rest, err := io.ReadAll(bufr)
+		rest, err := ioutil.ReadAll(bufr)
 		checkErr(err, "ReadAll on remainder")
 		if e, g := "Next Request Here", string(rest); e != g {
 			g = regexp.MustCompile(`(xx+)`).ReplaceAllStringFunc(g, func(match string) string {
@@ -732,7 +733,7 @@ func TestReadResponseCloseInMiddle(t *testing.T) {
 	}
 }
 
-func diff(t *testing.T, prefix string, have, want any) {
+func diff(t *testing.T, prefix string, have, want interface{}) {
 	t.Helper()
 	hv := reflect.ValueOf(have).Elem()
 	wv := reflect.ValueOf(want).Elem()
@@ -849,10 +850,10 @@ func TestReadResponseErrors(t *testing.T) {
 	type testCase struct {
 		name    string // optional, defaults to in
 		in      string
-		wantErr any // nil, err value, or string substring
+		wantErr interface{} // nil, err value, or string substring
 	}
 
-	status := func(s string, wantErr any) testCase {
+	status := func(s string, wantErr interface{}) testCase {
 		if wantErr == true {
 			wantErr = "malformed HTTP status code"
 		}
@@ -863,7 +864,7 @@ func TestReadResponseErrors(t *testing.T) {
 		}
 	}
 
-	version := func(s string, wantErr any) testCase {
+	version := func(s string, wantErr interface{}) testCase {
 		if wantErr == true {
 			wantErr = "malformed HTTP version"
 		}
@@ -874,7 +875,7 @@ func TestReadResponseErrors(t *testing.T) {
 		}
 	}
 
-	contentLength := func(status, body string, wantErr any) testCase {
+	contentLength := func(status, body string, wantErr interface{}) testCase {
 		return testCase{
 			name:    fmt.Sprintf("status %q %q", status, body),
 			in:      fmt.Sprintf("HTTP/1.1 %s\r\n%s", status, body),
@@ -947,7 +948,7 @@ func TestReadResponseErrors(t *testing.T) {
 
 // wantErr can be nil, an error value to match exactly, or type string to
 // match a substring.
-func matchErr(err error, wantErr any) error {
+func matchErr(err error, wantErr interface{}) error {
 	if err == nil {
 		if wantErr == nil {
 			return nil

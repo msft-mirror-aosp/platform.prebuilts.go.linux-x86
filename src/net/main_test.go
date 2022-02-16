@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !js
+// +build !js
 
 package net
 
@@ -133,7 +133,7 @@ func setupTestData() {
 			{"udp6", "[" + addr + "%" + ifi.Name + "]:0", false},
 		}...)
 		switch runtime.GOOS {
-		case "darwin", "ios", "dragonfly", "freebsd", "openbsd", "netbsd":
+		case "darwin", "dragonfly", "freebsd", "openbsd", "netbsd":
 			ipv6LinkLocalUnicastTCPTests = append(ipv6LinkLocalUnicastTCPTests, []ipv6LinkLocalUnicastTest{
 				{"tcp", "[localhost%" + ifi.Name + "]:0", true},
 				{"tcp6", "[localhost%" + ifi.Name + "]:0", true},
@@ -173,8 +173,11 @@ func runningGoroutines() []string {
 	b := make([]byte, 2<<20)
 	b = b[:runtime.Stack(b, true)]
 	for _, s := range strings.Split(string(b), "\n\n") {
-		_, stack, _ := strings.Cut(s, "\n")
-		stack = strings.TrimSpace(stack)
+		ss := strings.SplitN(s, "\n", 2)
+		if len(ss) != 2 {
+			continue
+		}
+		stack := strings.TrimSpace(ss[1])
 		if !strings.Contains(stack, "created by net") {
 			continue
 		}

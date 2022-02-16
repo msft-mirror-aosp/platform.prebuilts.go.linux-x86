@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build linux && riscv64
+// +build linux,riscv64
 
 package runtime
 
 import (
-	"internal/abi"
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -63,7 +62,7 @@ func (c *sigctxt) preparePanic(sig uint32, gp *g) {
 	// functions are correctly handled. This smashes
 	// the stack frame but we're not going back there
 	// anyway.
-	sp := c.sp() - goarch.PtrSize
+	sp := c.sp() - sys.PtrSize
 	c.set_sp(sp)
 	*(*uint64)(unsafe.Pointer(uintptr(sp))) = c.ra()
 
@@ -76,7 +75,7 @@ func (c *sigctxt) preparePanic(sig uint32, gp *g) {
 
 	// In case we are panicking from external C code
 	c.set_gp(uint64(uintptr(unsafe.Pointer(gp))))
-	c.set_pc(uint64(abi.FuncPCABIInternal(sigpanic)))
+	c.set_pc(uint64(funcPC(sigpanic)))
 }
 
 func (c *sigctxt) pushCall(targetPC, resumePC uintptr) {
@@ -84,7 +83,7 @@ func (c *sigctxt) pushCall(targetPC, resumePC uintptr) {
 	// push the call. The function being pushed is responsible
 	// for restoring the LR and setting the SP back.
 	// This extra slot is known to gentraceback.
-	sp := c.sp() - goarch.PtrSize
+	sp := c.sp() - sys.PtrSize
 	c.set_sp(sp)
 	*(*uint64)(unsafe.Pointer(uintptr(sp))) = c.ra()
 	// Set up PC and LR to pretend the function being signaled

@@ -23,7 +23,7 @@ import (
 	"unicode/utf8"
 )
 
-// Position is a value that represents a source position.
+// A source position is represented by a Position value.
 // A position is valid if Line > 0.
 type Position struct {
 	Filename string // filename, if any
@@ -340,7 +340,7 @@ func (s *Scanner) error(msg string) {
 	fmt.Fprintf(os.Stderr, "%s: %s\n", pos, msg)
 }
 
-func (s *Scanner) errorf(format string, args ...any) {
+func (s *Scanner) errorf(format string, args ...interface{}) {
 	s.error(fmt.Sprintf(format, args...))
 }
 

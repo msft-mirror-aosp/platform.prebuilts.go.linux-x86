@@ -4,10 +4,7 @@
 
 package main
 
-import (
-	"os"
-	"time"
-)
+import "time"
 
 // for golang.org/issue/27250
 
@@ -16,7 +13,5 @@ func init() {
 }
 
 func After1() {
-	os.Stdout.WriteString("ready\n")
-	os.Stdout.Close()
 	<-time.After(1 * time.Second)
 }

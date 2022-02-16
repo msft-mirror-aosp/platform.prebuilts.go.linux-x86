@@ -75,8 +75,7 @@ type huffmanBitWriter struct {
 	writer io.Writer
 
 	// Data waiting to be written is bytes[0:nbytes]
-	// and then the low nbits of bits.  Data is always written
-	// sequentially into the bytes array.
+	// and then the low nbits of bits.
 	bits            uint64
 	nbits           uint
 	bytes           [bufferSize]byte
@@ -106,6 +105,7 @@ func newHuffmanBitWriter(w io.Writer) *huffmanBitWriter {
 func (w *huffmanBitWriter) reset(writer io.Writer) {
 	w.writer = writer
 	w.bits, w.nbits, w.nbytes, w.err = 0, 0, 0, nil
+	w.bytes = [bufferSize]byte{}
 }
 
 func (w *huffmanBitWriter) flush() {

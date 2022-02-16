@@ -21,7 +21,7 @@ func main() {
 	var prec float64
 	switch runtime.Compiler {
 	case "gc":
-		prec = math.Inf(1) // exact precision using rational arithmetic
+		prec = 512
 	case "gccgo":
 		prec = 256
 	default:

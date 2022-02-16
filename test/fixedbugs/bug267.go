@@ -10,7 +10,7 @@ type T []int
 
 var a []bool
 
-func f1() {
+func _() {
 	if a[T{42}[0]] {
 	}
 	// if (a[T{42}[0]]) {}  // this compiles

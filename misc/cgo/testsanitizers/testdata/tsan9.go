@@ -44,7 +44,7 @@ void spin() {
 import "C"
 
 import (
-	"io"
+	"io/ioutil"
 	"runtime/pprof"
 	"time"
 )
@@ -60,7 +60,7 @@ func goSpin() {
 }
 
 func main() {
-	pprof.StartCPUProfile(io.Discard)
+	pprof.StartCPUProfile(ioutil.Discard)
 	go C.spin()
 	goSpin()
 	pprof.StopCPUProfile()

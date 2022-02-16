@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"issue30862.dir/b"
+	"./b"
 )
 
 // Test case for issue 30862.

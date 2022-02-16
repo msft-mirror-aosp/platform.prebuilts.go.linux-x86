@@ -33,27 +33,30 @@ func printStack() {
 	for {
 		n := runtime.Stack(buf, true)
 		if n < len(buf) {
-			all := string(buf[:n])
-			var saved string
+			tb := string(buf[:n])
 
 			// Delete any ignored goroutines, if present.
-			for all != "" {
-				var g string
-				g, all, _ = strings.Cut(all, "\n\n")
+			pos := 0
+			for pos < len(tb) {
+				next := pos + strings.Index(tb[pos:], "\n\n")
+				if next < pos {
+					next = len(tb)
+				} else {
+					next += len("\n\n")
+				}
 
-				if strings.HasPrefix(g, "goroutine ") {
-					id, _, _ := strings.Cut(strings.TrimPrefix(g, "goroutine "), " ")
+				if strings.HasPrefix(tb[pos:], "goroutine ") {
+					id := tb[pos+len("goroutine "):]
+					id = id[:strings.IndexByte(id, ' ')]
 					if ignoreGoroutines[id] {
-						continue
+						tb = tb[:pos] + tb[next:]
+						next = pos
 					}
 				}
-				if saved != "" {
-					saved += "\n\n"
-				}
-				saved += g
+				pos = next
 			}
 
-			fmt.Print(saved)
+			fmt.Print(tb)
 			return
 		}
 		buf = make([]byte, 2*len(buf))
@@ -86,10 +89,11 @@ func recurseThenCallGo(w chan struct{}, frames int, goroutines int, main bool) {
 func goroutineID() string {
 	buf := make([]byte, 128)
 	runtime.Stack(buf, false)
-	prefix := []byte("goroutine ")
-	if !bytes.HasPrefix(buf, prefix) {
+	const prefix = "goroutine "
+	if !bytes.HasPrefix(buf, []byte(prefix)) {
 		panic(fmt.Sprintf("expected %q at beginning of traceback:\n%s", prefix, buf))
 	}
-	id, _, _ := bytes.Cut(bytes.TrimPrefix(buf, prefix), []byte(" "))
-	return string(id)
+	buf = buf[len(prefix):]
+	n := bytes.IndexByte(buf, ' ')
+	return string(buf[:n])
 }

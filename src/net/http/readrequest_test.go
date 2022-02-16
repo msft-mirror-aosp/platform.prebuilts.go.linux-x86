@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/url"
 	"reflect"
 	"strings"
@@ -467,7 +468,7 @@ func TestReadRequest_Bad(t *testing.T) {
 	for _, tt := range badRequestTests {
 		got, err := ReadRequest(bufio.NewReader(bytes.NewReader(tt.req)))
 		if err == nil {
-			all, err := io.ReadAll(got.Body)
+			all, err := ioutil.ReadAll(got.Body)
 			t.Errorf("%s: got unexpected request = %#v\n  Body = %q, %v", tt.name, got, all, err)
 		}
 	}

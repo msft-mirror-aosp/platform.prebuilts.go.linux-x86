@@ -3,7 +3,7 @@
 // license that can be found in the LICENSE file.
 
 // +build mips mipsle
-// +build gc
+// +build !gccgo
 
 #include "textflag.h"
 

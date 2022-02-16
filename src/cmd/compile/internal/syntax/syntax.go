@@ -16,7 +16,6 @@ type Mode uint
 // Modes supported by the parser.
 const (
 	CheckBranches Mode = 1 << iota // check correct use of labels, break, continue, and goto statements
-	AllowGenerics
 )
 
 // Error describes a syntax error. Error implements the error interface.

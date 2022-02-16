@@ -5,8 +5,7 @@
 package runtime
 
 import (
-	"internal/abi"
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -36,11 +35,6 @@ func thr_kill(tid thread, sig int)
 func sys_umtx_op(addr *uint32, mode int32, val uint32, uaddr1 uintptr, ut *umtx_time) int32
 
 func osyield()
-
-//go:nosplit
-func osyield_no_g() {
-	osyield()
-}
 
 func kqueue() int32
 
@@ -117,8 +111,8 @@ func getncpu() int32 {
 	}
 
 	maskSize := int(maxcpus+7) / 8
-	if maskSize < goarch.PtrSize {
-		maskSize = goarch.PtrSize
+	if maskSize < sys.PtrSize {
+		maskSize = sys.PtrSize
 	}
 	if maskSize > len(mask) {
 		maskSize = len(mask)
@@ -172,7 +166,7 @@ func futexsleep1(addr *uint32, val uint32, ns int64) {
 		utp = &ut
 	}
 	ret := sys_umtx_op(addr, _UMTX_OP_WAIT_UINT_PRIVATE, val, unsafe.Sizeof(*utp), utp)
-	if ret >= 0 || ret == -_EINTR || ret == -_ETIMEDOUT {
+	if ret >= 0 || ret == -_EINTR {
 		return
 	}
 	print("umtx_wait addr=", addr, " val=", val, " ret=", ret, "\n")
@@ -198,11 +192,11 @@ func thr_start()
 func newosproc(mp *m) {
 	stk := unsafe.Pointer(mp.g0.stack.hi)
 	if false {
-		print("newosproc stk=", stk, " m=", mp, " g=", mp.g0, " thr_start=", abi.FuncPCABI0(thr_start), " id=", mp.id, " ostk=", &mp, "\n")
+		print("newosproc stk=", stk, " m=", mp, " g=", mp.g0, " thr_start=", funcPC(thr_start), " id=", mp.id, " ostk=", &mp, "\n")
 	}
 
 	param := thrparam{
-		start_func: abi.FuncPCABI0(thr_start),
+		start_func: funcPC(thr_start),
 		arg:        unsafe.Pointer(mp),
 		stack_base: mp.g0.stack.lo,
 		stack_size: uintptr(stk) - mp.g0.stack.lo,
@@ -214,6 +208,7 @@ func newosproc(mp *m) {
 
 	var oset sigset
 	sigprocmask(_SIG_SETMASK, &sigset_all, &oset)
+	// TODO: Check for error.
 	ret := thr_new(&param, int32(unsafe.Sizeof(param)))
 	sigprocmask(_SIG_SETMASK, &oset, nil)
 	if ret < 0 {
@@ -237,7 +232,7 @@ func newosproc0(stacksize uintptr, fn unsafe.Pointer) {
 	// However, newosproc0 is currently unreachable because builds
 	// utilizing c-shared/c-archive force external linking.
 	param := thrparam{
-		start_func: uintptr(fn),
+		start_func: funcPC(fn),
 		arg:        nil,
 		stack_base: uintptr(stack), //+stacksize?
 		stack_size: stacksize,
@@ -325,11 +320,6 @@ func unminit() {
 	unminitSignals()
 }
 
-// Called from exitm, but not from drop, to undo the effect of thread-owned
-// resources in minit, semacreate, or elsewhere. Do not take locks after calling this.
-func mdestroy(mp *m) {
-}
-
 func sigtramp()
 
 type sigactiont struct {
@@ -380,19 +370,6 @@ func sigdelset(mask *sigset, i int) {
 func (c *sigctxt) fixsigcode(sig uint32) {
 }
 
-func setProcessCPUProfiler(hz int32) {
-	setProcessCPUProfilerTimer(hz)
-}
-
-func setThreadCPUProfiler(hz int32) {
-	setThreadCPUProfilerHz(hz)
-}
-
-//go:nosplit
-func validSIGPROF(mp *m, c *sigctxt) bool {
-	return true
-}
-
 func sysargs(argc int32, argv **byte) {
 	n := argc + 1
 
@@ -405,7 +382,7 @@ func sysargs(argc int32, argv **byte) {
 	n++
 
 	// now argv+n is auxv
-	auxv := (*[1 << 28]uintptr)(add(unsafe.Pointer(argv), uintptr(n)*goarch.PtrSize))
+	auxv := (*[1 << 28]uintptr)(add(unsafe.Pointer(argv), uintptr(n)*sys.PtrSize))
 	sysauxv(auxv[:])
 }
 

@@ -6,6 +6,8 @@
 
 package codegen
 
+import "math"
+
 // This file contains codegen tests related to arithmetic
 // simplifications and optimizations on float types.
 // For codegen tests on integer types, see arithmetic.go.
@@ -16,6 +18,7 @@ package codegen
 
 func Mul2(f float64) float64 {
 	// 386/sse2:"ADDSD",-"MULSD"
+	// 386/387:"FADDDP",-"FMULDP"
 	// amd64:"ADDSD",-"MULSD"
 	// arm/7:"ADDD",-"MULD"
 	// arm64:"FADDD",-"FMULD"
@@ -26,6 +29,7 @@ func Mul2(f float64) float64 {
 
 func DivPow2(f1, f2, f3 float64) (float64, float64, float64) {
 	// 386/sse2:"MULSD",-"DIVSD"
+	// 386/387:"FMULDP",-"FDIVDP"
 	// amd64:"MULSD",-"DIVSD"
 	// arm/7:"MULD",-"DIVD"
 	// arm64:"FMULD",-"FDIVD"
@@ -34,6 +38,7 @@ func DivPow2(f1, f2, f3 float64) (float64, float64, float64) {
 	x := f1 / 16.0
 
 	// 386/sse2:"MULSD",-"DIVSD"
+	// 386/387:"FMULDP",-"FDIVDP"
 	// amd64:"MULSD",-"DIVSD"
 	// arm/7:"MULD",-"DIVD"
 	// arm64:"FMULD",-"FDIVD"
@@ -42,6 +47,7 @@ func DivPow2(f1, f2, f3 float64) (float64, float64, float64) {
 	y := f2 / 0.125
 
 	// 386/sse2:"ADDSD",-"DIVSD",-"MULSD"
+	// 386/387:"FADDDP",-"FDIVDP",-"FMULDP"
 	// amd64:"ADDSD",-"DIVSD",-"MULSD"
 	// arm/7:"ADDD",-"MULD",-"DIVD"
 	// arm64:"FADDD",-"FMULD",-"FDIVD"
@@ -52,13 +58,18 @@ func DivPow2(f1, f2, f3 float64) (float64, float64, float64) {
 	return x, y, z
 }
 
+func getPi() float64 {
+	// 386/387:"FLDPI"
+	return math.Pi
+}
+
 func indexLoad(b0 []float32, b1 float32, idx int) float32 {
-	// arm64:`FMOVS\s\(R[0-9]+\)\(R[0-9]+<<2\),\sF[0-9]+`
+	// arm64:`FMOVS\s\(R[0-9]+\)\(R[0-9]+\),\sF[0-9]+`
 	return b0[idx] * b1
 }
 
 func indexStore(b0 []float64, b1 float64, idx int) {
-	// arm64:`FMOVD\sF[0-9]+,\s\(R[0-9]+\)\(R[0-9]+<<3\)`
+	// arm64:`FMOVD\sF[0-9]+,\s\(R[0-9]+\)\(R[0-9]+\)`
 	b0[idx] = b1
 }
 

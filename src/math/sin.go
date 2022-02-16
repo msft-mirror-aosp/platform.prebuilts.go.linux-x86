@@ -114,12 +114,7 @@ var _cos = [...]float64{
 // Special cases are:
 //	Cos(±Inf) = NaN
 //	Cos(NaN) = NaN
-func Cos(x float64) float64 {
-	if haveArchCos {
-		return archCos(x)
-	}
-	return cos(x)
-}
+func Cos(x float64) float64
 
 func cos(x float64) float64 {
 	const (
@@ -180,12 +175,7 @@ func cos(x float64) float64 {
 //	Sin(±0) = ±0
 //	Sin(±Inf) = NaN
 //	Sin(NaN) = NaN
-func Sin(x float64) float64 {
-	if haveArchSin {
-		return archSin(x)
-	}
-	return sin(x)
-}
+func Sin(x float64) float64
 
 func sin(x float64) float64 {
 	const (

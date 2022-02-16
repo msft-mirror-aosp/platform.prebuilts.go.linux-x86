@@ -387,7 +387,7 @@ func makeSingleStringReplacer(pattern string, value string) *singleStringReplace
 }
 
 func (r *singleStringReplacer) Replace(s string) string {
-	var buf Builder
+	var buf []byte
 	i, matched := 0, false
 	for {
 		match := r.finder.next(s[i:])
@@ -395,16 +395,15 @@ func (r *singleStringReplacer) Replace(s string) string {
 			break
 		}
 		matched = true
-		buf.Grow(match + len(r.value))
-		buf.WriteString(s[i : i+match])
-		buf.WriteString(r.value)
+		buf = append(buf, s[i:i+match]...)
+		buf = append(buf, r.value...)
 		i += match + len(r.finder.pattern)
 	}
 	if !matched {
 		return s
 	}
-	buf.WriteString(s[i:])
-	return buf.String()
+	buf = append(buf, s[i:]...)
+	return string(buf)
 }
 
 func (r *singleStringReplacer) WriteString(w io.Writer, s string) (n int, err error) {

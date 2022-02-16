@@ -10,6 +10,7 @@ import (
 	"debug/elf"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -52,7 +53,7 @@ func testMain(m *testing.M) int {
 	// We need a writable GOPATH in which to run the tests.
 	// Construct one in a temporary directory.
 	var err error
-	GOPATH, err = os.MkdirTemp("", "carchive_test")
+	GOPATH, err = ioutil.TempDir("", "carchive_test")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -73,7 +74,7 @@ func testMain(m *testing.M) int {
 		log.Panic(err)
 	}
 	os.Setenv("PWD", modRoot)
-	if err := os.WriteFile("go.mod", []byte("module testcarchive\n"), 0666); err != nil {
+	if err := ioutil.WriteFile("go.mod", []byte("module testcarchive\n"), 0666); err != nil {
 		log.Panic(err)
 	}
 
@@ -117,6 +118,11 @@ func testMain(m *testing.M) int {
 		cc = append(cc, s[start:])
 	}
 
+	if GOOS == "darwin" {
+		// For Darwin/ARM.
+		// TODO(crawshaw): can we do better?
+		cc = append(cc, []string{"-framework", "CoreFoundation", "-framework", "Foundation"}...)
+	}
 	if GOOS == "aix" {
 		// -Wl,-bnoobjreorder is mandatory to keep the same layout
 		// in .text section.
@@ -127,7 +133,7 @@ func testMain(m *testing.M) int {
 		libbase = "gccgo_" + libgodir + "_fPIC"
 	} else {
 		switch GOOS {
-		case "darwin", "ios":
+		case "darwin":
 			if GOARCH == "arm64" {
 				libbase += "_shared"
 			}
@@ -175,7 +181,7 @@ func genHeader(t *testing.T, header, dir string) {
 	// The 'cgo' command generates a number of additional artifacts,
 	// but we're only interested in the header.
 	// Shunt the rest of the outputs to a temporary directory.
-	objDir, err := os.MkdirTemp(GOPATH, "_obj")
+	objDir, err := ioutil.TempDir(GOPATH, "_obj")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +257,7 @@ var badLineRegexp = regexp.MustCompile(`(?m)^#line [0-9]+ "/.*$`)
 // the user and make the files change based on details of the location
 // of GOPATH.
 func checkLineComments(t *testing.T, hdrname string) {
-	hdr, err := os.ReadFile(hdrname)
+	hdr, err := ioutil.ReadFile(hdrname)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			t.Error(err)
@@ -297,7 +303,7 @@ func TestInstall(t *testing.T) {
 
 func TestEarlySignalHandler(t *testing.T) {
 	switch GOOS {
-	case "darwin", "ios":
+	case "darwin":
 		switch GOARCH {
 		case "arm64":
 			t.Skipf("skipping on %s/%s; see https://golang.org/issue/13701", GOOS, GOARCH)
@@ -378,7 +384,7 @@ func TestSignalForwarding(t *testing.T) {
 	expectSignal(t, err, syscall.SIGSEGV)
 
 	// SIGPIPE is never forwarded on darwin. See golang.org/issue/33384.
-	if runtime.GOOS != "darwin" && runtime.GOOS != "ios" {
+	if runtime.GOOS != "darwin" {
 		// Test SIGPIPE forwarding
 		cmd = exec.Command(bin[0], append(bin[1:], "3")...)
 
@@ -479,7 +485,7 @@ func TestSignalForwardingExternal(t *testing.T) {
 // doesn't work on this platform.
 func checkSignalForwardingTest(t *testing.T) {
 	switch GOOS {
-	case "darwin", "ios":
+	case "darwin":
 		switch GOARCH {
 		case "arm64":
 			t.Skipf("skipping on %s/%s; see https://golang.org/issue/13701", GOOS, GOARCH)
@@ -597,7 +603,7 @@ func TestExtar(t *testing.T) {
 	if runtime.Compiler == "gccgo" {
 		t.Skip("skipping -extar test when using gccgo")
 	}
-	if runtime.GOOS == "ios" {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 		t.Skip("shell scripts are not executable on iOS hosts")
 	}
 
@@ -617,7 +623,7 @@ func TestExtar(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := strings.Replace(testar, "PWD", dir, 1)
-	if err := os.WriteFile("testar", []byte(s), 0777); err != nil {
+	if err := ioutil.WriteFile("testar", []byte(s), 0777); err != nil {
 		t.Fatal(err)
 	}
 
@@ -639,7 +645,7 @@ func TestExtar(t *testing.T) {
 
 func TestPIE(t *testing.T) {
 	switch GOOS {
-	case "windows", "darwin", "ios", "plan9":
+	case "windows", "darwin", "plan9":
 		t.Skipf("skipping PIE test on %s", GOOS)
 	}
 
@@ -732,7 +738,7 @@ func TestSIGPROF(t *testing.T) {
 	switch GOOS {
 	case "windows", "plan9":
 		t.Skipf("skipping SIGPROF test on %s", GOOS)
-	case "darwin", "ios":
+	case "darwin":
 		t.Skipf("skipping SIGPROF test on %s; see https://golang.org/issue/19320", GOOS)
 	}
 
@@ -775,7 +781,7 @@ func TestSIGPROF(t *testing.T) {
 // tool with -buildmode=c-archive, it passes -shared to the compiler,
 // so we override that. The go tool doesn't work this way, but Bazel
 // will likely do it in the future. And it ought to work. This test
-// was added because at one time it did not work on PPC Linux.
+// was added because at one time it did not work on PPC GNU/Linux.
 func TestCompileWithoutShared(t *testing.T) {
 	// For simplicity, reuse the signal forwarding test.
 	checkSignalForwardingTest(t)
@@ -835,7 +841,7 @@ func TestCompileWithoutShared(t *testing.T) {
 	expectSignal(t, err, syscall.SIGSEGV)
 
 	// SIGPIPE is never forwarded on darwin. See golang.org/issue/33384.
-	if runtime.GOOS != "darwin" && runtime.GOOS != "ios" {
+	if runtime.GOOS != "darwin" {
 		binArgs := append(cmdToRun(exe), "3")
 		t.Log(binArgs)
 		out, err = exec.Command(binArgs[0], binArgs[1:]...).CombinedOutput()
@@ -910,58 +916,6 @@ func TestManyCalls(t *testing.T) {
 	}
 
 	argv := cmdToRun("./testp7")
-	cmd = exec.Command(argv[0], argv[1:]...)
-	var sb strings.Builder
-	cmd.Stdout = &sb
-	cmd.Stderr = &sb
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-
-	timer := time.AfterFunc(time.Minute,
-		func() {
-			t.Error("test program timed out")
-			cmd.Process.Kill()
-		},
-	)
-	defer timer.Stop()
-
-	if err := cmd.Wait(); err != nil {
-		t.Log(sb.String())
-		t.Error(err)
-	}
-}
-
-// Issue 49288.
-func TestPreemption(t *testing.T) {
-	if runtime.Compiler == "gccgo" {
-		t.Skip("skipping asynchronous preemption test with gccgo")
-	}
-
-	t.Parallel()
-
-	if !testWork {
-		defer func() {
-			os.Remove("testp8" + exeSuffix)
-			os.Remove("libgo8.a")
-			os.Remove("libgo8.h")
-		}()
-	}
-
-	cmd := exec.Command("go", "build", "-buildmode=c-archive", "-o", "libgo8.a", "./libgo8")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Logf("%s", out)
-		t.Fatal(err)
-	}
-	checkLineComments(t, "libgo8.h")
-
-	ccArgs := append(cc, "-o", "testp8"+exeSuffix, "main8.c", "libgo8.a")
-	if out, err := exec.Command(ccArgs[0], ccArgs[1:]...).CombinedOutput(); err != nil {
-		t.Logf("%s", out)
-		t.Fatal(err)
-	}
-
-	argv := cmdToRun("./testp8")
 	cmd = exec.Command(argv[0], argv[1:]...)
 	var sb strings.Builder
 	cmd.Stdout = &sb

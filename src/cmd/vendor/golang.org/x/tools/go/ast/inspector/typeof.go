@@ -1,7 +1,3 @@
-// Copyright 2018 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package inspector
 
 // This file defines func typeOf(ast.Node) uint64.
@@ -9,11 +5,7 @@ package inspector
 // The initial map-based implementation was too slow;
 // see https://go-review.googlesource.com/c/tools/+/135655/1/go/ast/inspector/inspector.go#196
 
-import (
-	"go/ast"
-
-	"golang.org/x/tools/internal/typeparams"
-)
+import "go/ast"
 
 const (
 	nArrayType = iota
@@ -51,7 +43,6 @@ const (
 	nImportSpec
 	nIncDecStmt
 	nIndexExpr
-	nIndexListExpr
 	nInterfaceType
 	nKeyValueExpr
 	nLabeledStmt
@@ -169,8 +160,6 @@ func typeOf(n ast.Node) uint64 {
 		return 1 << nIncDecStmt
 	case *ast.IndexExpr:
 		return 1 << nIndexExpr
-	case *typeparams.IndexListExpr:
-		return 1 << nIndexListExpr
 	case *ast.InterfaceType:
 		return 1 << nInterfaceType
 	case *ast.KeyValueExpr:

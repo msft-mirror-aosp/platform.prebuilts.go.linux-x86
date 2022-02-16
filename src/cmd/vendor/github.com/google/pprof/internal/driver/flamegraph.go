@@ -38,10 +38,7 @@ type treeNode struct {
 func (ui *webInterface) flamegraph(w http.ResponseWriter, req *http.Request) {
 	// Force the call tree so that the graph is a tree.
 	// Also do not trim the tree so that the flame graph contains all functions.
-	rpt, errList := ui.makeReport(w, req, []string{"svg"}, func(cfg *config) {
-		cfg.CallTree = true
-		cfg.Trim = false
-	})
+	rpt, errList := ui.makeReport(w, req, []string{"svg"}, "call_tree", "true", "trim", "false")
 	if rpt == nil {
 		return // error already reported
 	}
@@ -99,7 +96,7 @@ func (ui *webInterface) flamegraph(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	ui.render(w, req, "flamegraph", rpt, errList, config.Labels, webArgs{
+	ui.render(w, "flamegraph", rpt, errList, config.Labels, webArgs{
 		FlameGraph: template.JS(b),
 		Nodes:      nodeArr,
 	})

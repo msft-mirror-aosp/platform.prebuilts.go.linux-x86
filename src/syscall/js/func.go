@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+// +build js,wasm
 
 package js
 
@@ -10,9 +10,11 @@ import "sync"
 
 var (
 	funcsMu    sync.Mutex
-	funcs             = make(map[uint32]func(Value, []Value) any)
+	funcs             = make(map[uint32]func(Value, []Value) interface{})
 	nextFuncID uint32 = 1
 )
+
+var _ Wrapper = Func{} // Func must implement Wrapper
 
 // Func is a wrapped Go function to be called by JavaScript.
 type Func struct {
@@ -38,7 +40,7 @@ type Func struct {
 // new goroutine.
 //
 // Func.Release must be called to free up resources when the function will not be invoked any more.
-func FuncOf(fn func(this Value, args []Value) any) Func {
+func FuncOf(fn func(this Value, args []Value) interface{}) Func {
 	funcsMu.Lock()
 	id := nextFuncID
 	nextFuncID++

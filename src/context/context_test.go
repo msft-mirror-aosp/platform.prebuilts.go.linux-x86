@@ -16,21 +16,21 @@ import (
 
 type testingT interface {
 	Deadline() (time.Time, bool)
-	Error(args ...any)
-	Errorf(format string, args ...any)
+	Error(args ...interface{})
+	Errorf(format string, args ...interface{})
 	Fail()
 	FailNow()
 	Failed() bool
-	Fatal(args ...any)
-	Fatalf(format string, args ...any)
+	Fatal(args ...interface{})
+	Fatalf(format string, args ...interface{})
 	Helper()
-	Log(args ...any)
-	Logf(format string, args ...any)
+	Log(args ...interface{})
+	Logf(format string, args ...interface{})
 	Name() string
 	Parallel()
-	Skip(args ...any)
+	Skip(args ...interface{})
 	SkipNow()
-	Skipf(format string, args ...any)
+	Skipf(format string, args ...interface{})
 	Skipped() bool
 }
 
@@ -525,7 +525,7 @@ func XTestInterlockedCancels(t testingT) {
 	parent, cancelParent := WithCancel(Background())
 	child, cancelChild := WithCancel(parent)
 	go func() {
-		<-parent.Done()
+		parent.Done()
 		cancelChild()
 	}()
 	cancelParent()
@@ -553,7 +553,7 @@ func testLayers(t testingT, seed int64, testTimeout bool) {
 	t.Parallel()
 
 	r := rand.New(rand.NewSource(seed))
-	errorf := func(format string, a ...any) {
+	errorf := func(format string, a ...interface{}) {
 		t.Errorf(fmt.Sprintf("seed=%d: %s", seed, format), a...)
 	}
 	const (
@@ -661,7 +661,7 @@ func XTestWithCancelCanceledParent(t testingT) {
 		t.Errorf("child not done immediately upon construction")
 	}
 	if got, want := c.Err(), Canceled; got != want {
-		t.Errorf("child not canceled; got = %v, want = %v", got, want)
+		t.Errorf("child not cancelled; got = %v, want = %v", got, want)
 	}
 }
 
@@ -691,7 +691,7 @@ func XTestInvalidDerivedFail(t testingT) {
 	}
 }
 
-func recoveredValue(fn func()) (v any) {
+func recoveredValue(fn func()) (v interface{}) {
 	defer func() { v = recover() }()
 	fn()
 	return
@@ -779,7 +779,7 @@ func XTestCustomContextGoroutines(t testingT) {
 	defer cancel6()
 	checkNoGoroutine()
 
-	// Check applied to canceled context.
+	// Check applied to cancelled context.
 	cancel6()
 	cancel1()
 	_, cancel7 := WithCancel(ctx5)
