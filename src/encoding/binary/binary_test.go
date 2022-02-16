@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"reflect"
 	"strings"
@@ -113,7 +114,7 @@ var src = []byte{1, 2, 3, 4, 5, 6, 7, 8}
 var res = []int32{0x01020304, 0x05060708}
 var putbuf = []byte{0, 0, 0, 0, 0, 0, 0, 0}
 
-func checkResult(t *testing.T, dir string, order ByteOrder, err error, have, want any) {
+func checkResult(t *testing.T, dir string, order ByteOrder, err error, have, want interface{}) {
 	if err != nil {
 		t.Errorf("%v %v: %v", dir, order, err)
 		return
@@ -123,13 +124,13 @@ func checkResult(t *testing.T, dir string, order ByteOrder, err error, have, wan
 	}
 }
 
-func testRead(t *testing.T, order ByteOrder, b []byte, s1 any) {
+func testRead(t *testing.T, order ByteOrder, b []byte, s1 interface{}) {
 	var s2 Struct
 	err := Read(bytes.NewReader(b), order, &s2)
 	checkResult(t, "Read", order, err, s2, s1)
 }
 
-func testWrite(t *testing.T, order ByteOrder, b []byte, s1 any) {
+func testWrite(t *testing.T, order ByteOrder, b []byte, s1 interface{}) {
 	buf := new(bytes.Buffer)
 	err := Write(buf, order, s1)
 	checkResult(t, "Write", order, err, buf.Bytes(), b)
@@ -175,7 +176,7 @@ func TestReadBoolSlice(t *testing.T) {
 }
 
 // Addresses of arrays are easier to manipulate with reflection than are slices.
-var intArrays = []any{
+var intArrays = []interface{}{
 	&[100]int8{},
 	&[100]int16{},
 	&[100]int32{},
@@ -304,7 +305,7 @@ func TestSizeStructCache(t *testing.T) {
 
 	count := func() int {
 		var i int
-		structSize.Range(func(_, _ any) bool {
+		structSize.Range(func(_, _ interface{}) bool {
 			i++
 			return true
 		})
@@ -329,7 +330,7 @@ func TestSizeStructCache(t *testing.T) {
 	}
 
 	testcases := []struct {
-		val  any
+		val  interface{}
 		want int
 	}{
 		{new(foo), 1},
@@ -376,7 +377,7 @@ func TestUnexportedRead(t *testing.T) {
 
 func TestReadErrorMsg(t *testing.T) {
 	var buf bytes.Buffer
-	read := func(data any) {
+	read := func(data interface{}) {
 		err := Read(&buf, LittleEndian, data)
 		want := "binary.Read: invalid type " + reflect.TypeOf(data).String()
 		if err == nil {
@@ -457,7 +458,7 @@ func TestReadInvalidDestination(t *testing.T) {
 }
 
 func testReadInvalidDestination(t *testing.T, order ByteOrder) {
-	destinations := []any{
+	destinations := []interface{}{
 		int8(0),
 		int16(0),
 		int32(0),
@@ -523,7 +524,7 @@ func BenchmarkWriteStruct(b *testing.B) {
 	b.SetBytes(int64(Size(&s)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Write(io.Discard, BigEndian, &s)
+		Write(ioutil.Discard, BigEndian, &s)
 	}
 }
 
@@ -704,28 +705,4 @@ func BenchmarkWriteSlice1000Float32s(b *testing.B) {
 		Write(w, BigEndian, slice)
 	}
 	b.StopTimer()
-}
-
-func BenchmarkReadSlice1000Uint8s(b *testing.B) {
-	bsr := &byteSliceReader{}
-	slice := make([]uint8, 1000)
-	buf := make([]byte, len(slice))
-	b.SetBytes(int64(len(buf)))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		bsr.remain = buf
-		Read(bsr, BigEndian, slice)
-	}
-}
-
-func BenchmarkWriteSlice1000Uint8s(b *testing.B) {
-	slice := make([]uint8, 1000)
-	buf := new(bytes.Buffer)
-	var w io.Writer = buf
-	b.SetBytes(1000)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf.Reset()
-		Write(w, BigEndian, slice)
-	}
 }

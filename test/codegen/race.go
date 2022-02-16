@@ -10,8 +10,6 @@ package codegen
 // functions with no calls (but which might panic
 // in various ways). See issue 31219.
 // amd64:-"CALL.*racefuncenter.*"
-// arm64:-"CALL.*racefuncenter.*"
-// ppc64le:-"CALL.*racefuncenter.*"
 func RaceMightPanic(a []int, i, j, k, s int) {
 	var b [4]int
 	_ = b[i]     // panicIndex

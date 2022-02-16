@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build windows
+// +build windows
 
 package net
 
@@ -45,9 +45,9 @@ func TestUnixConnLocalWindows(t *testing.T) {
 	}
 
 	handler := func(ls *localServer, ln Listener) {}
-	for _, laddr := range []string{"", testUnixAddr(t)} {
+	for _, laddr := range []string{"", testUnixAddr()} {
 		laddr := laddr
-		taddr := testUnixAddr(t)
+		taddr := testUnixAddr()
 		ta, err := ResolveUnixAddr("unix", taddr)
 		if err != nil {
 			t.Fatal(err)
@@ -56,7 +56,10 @@ func TestUnixConnLocalWindows(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ls := (&streamListener{Listener: ln}).newLocalServer()
+		ls, err := (&streamListener{Listener: ln}).newLocalServer()
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer ls.teardown()
 		if err := ls.buildup(handler); err != nil {
 			t.Fatal(err)

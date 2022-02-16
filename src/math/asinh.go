@@ -36,12 +36,7 @@ package math
 //	Asinh(±0) = ±0
 //	Asinh(±Inf) = ±Inf
 //	Asinh(NaN) = NaN
-func Asinh(x float64) float64 {
-	if haveArchAsinh {
-		return archAsinh(x)
-	}
-	return asinh(x)
-}
+func Asinh(x float64) float64
 
 func asinh(x float64) float64 {
 	const (

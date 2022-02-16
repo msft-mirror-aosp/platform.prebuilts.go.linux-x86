@@ -8,7 +8,7 @@ package main
 
 type I1 interface { // GC_ERROR "invalid recursive type"
 	m() I2
-	I2
+	I2 // GCCGO_ERROR "loop|interface"
 }
 
 type I2 interface {

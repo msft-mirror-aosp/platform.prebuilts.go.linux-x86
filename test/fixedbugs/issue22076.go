@@ -13,12 +13,12 @@ import . "bytes"
 
 var _ Reader // use "bytes" import
 
-func f1() {
+func _() {
 	Buffer := 0
 	_ = Buffer
 }
 
-func f2() {
+func _() {
 	for Buffer := range []int{} {
 		_ = Buffer
 	}

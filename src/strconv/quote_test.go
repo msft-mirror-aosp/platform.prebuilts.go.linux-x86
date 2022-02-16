@@ -6,7 +6,6 @@ package strconv_test
 
 import (
 	. "strconv"
-	"strings"
 	"testing"
 	"unicode"
 )
@@ -131,7 +130,6 @@ var quoterunetests = []quoteRuneTest{
 	{'\\', `'\\'`, `'\\'`, `'\\'`},
 	{0xFF, `'ÿ'`, `'\u00ff'`, `'ÿ'`},
 	{0x263a, `'☺'`, `'\u263a'`, `'☺'`},
-	{0xdead, `'�'`, `'\ufffd'`, `'�'`},
 	{0xfffd, `'�'`, `'\ufffd'`, `'�'`},
 	{0x0010ffff, `'\U0010ffff'`, `'\U0010ffff'`, `'\U0010ffff'`},
 	{0x0010ffff + 1, `'�'`, `'\ufffd'`, `'�'`},
@@ -299,26 +297,32 @@ var misquoted = []string{
 	`"\z"`,
 	"`",
 	"`xxx",
-	"``x\r",
 	"`\"",
 	`"\'"`,
 	`'\"'`,
 	"\"\n\"",
 	"\"\\n\n\"",
 	"'\n'",
-	`"\udead"`,
-	`"\ud83d\ude4f"`,
 }
 
 func TestUnquote(t *testing.T) {
 	for _, tt := range unquotetests {
-		testUnquote(t, tt.in, tt.out, nil)
+		if out, err := Unquote(tt.in); err != nil || out != tt.out {
+			t.Errorf("Unquote(%#q) = %q, %v want %q, nil", tt.in, out, err, tt.out)
+		}
 	}
+
+	// run the quote tests too, backward
 	for _, tt := range quotetests {
-		testUnquote(t, tt.out, tt.in, nil)
+		if in, err := Unquote(tt.out); in != tt.in {
+			t.Errorf("Unquote(%#q) = %q, %v, want %q, nil", tt.out, in, err, tt.in)
+		}
 	}
+
 	for _, s := range misquoted {
-		testUnquote(t, s, "", ErrSyntax)
+		if out, err := Unquote(s); out != "" || err != ErrSyntax {
+			t.Errorf("Unquote(%#q) = %q, %v want %q, %v", s, out, err, "", ErrSyntax)
+		}
 	}
 }
 
@@ -329,44 +333,26 @@ func TestUnquoteInvalidUTF8(t *testing.T) {
 
 		// one of:
 		want    string
-		wantErr error
+		wantErr string
 	}{
 		{in: `"foo"`, want: "foo"},
-		{in: `"foo`, wantErr: ErrSyntax},
+		{in: `"foo`, wantErr: "invalid syntax"},
 		{in: `"` + "\xc0" + `"`, want: "\xef\xbf\xbd"},
 		{in: `"a` + "\xc0" + `"`, want: "a\xef\xbf\xbd"},
 		{in: `"\t` + "\xc0" + `"`, want: "\t\xef\xbf\xbd"},
 	}
-	for _, tt := range tests {
-		testUnquote(t, tt.in, tt.want, tt.wantErr)
-	}
-}
-
-func testUnquote(t *testing.T, in, want string, wantErr error) {
-	// Test Unquote.
-	got, gotErr := Unquote(in)
-	if got != want || gotErr != wantErr {
-		t.Errorf("Unquote(%q) = (%q, %v), want (%q, %v)", in, got, gotErr, want, wantErr)
-	}
-
-	// Test QuotedPrefix.
-	// Adding an arbitrary suffix should not change the result of QuotedPrefix
-	// assume that the suffix doesn't accidentally terminate a truncated input.
-	if gotErr == nil {
-		want = in
-	}
-	suffix := "\n\r\\\"`'" // special characters for quoted strings
-	if len(in) > 0 {
-		suffix = strings.ReplaceAll(suffix, in[:1], "")
-	}
-	in += suffix
-	got, gotErr = QuotedPrefix(in)
-	if gotErr == nil && wantErr != nil {
-		_, wantErr = Unquote(got) // original input had trailing junk, reparse with only valid prefix
-		want = got
-	}
-	if got != want || gotErr != wantErr {
-		t.Errorf("QuotedPrefix(%q) = (%q, %v), want (%q, %v)", in, got, gotErr, want, wantErr)
+	for i, tt := range tests {
+		got, err := Unquote(tt.in)
+		var gotErr string
+		if err != nil {
+			gotErr = err.Error()
+		}
+		if gotErr != tt.wantErr {
+			t.Errorf("%d. Unquote(%q) = err %v; want %q", i, tt.in, err, tt.wantErr)
+		}
+		if tt.wantErr == "" && err == nil && got != tt.want {
+			t.Errorf("%d. Unquote(%q) = %02x; want %02x", i, tt.in, []byte(got), []byte(tt.want))
+		}
 	}
 }
 

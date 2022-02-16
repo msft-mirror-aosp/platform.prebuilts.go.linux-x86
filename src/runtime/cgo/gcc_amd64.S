@@ -30,14 +30,9 @@ EXT(crosscall_amd64):
 	pushq %r15
 
 #if defined(_WIN64)
-	movq %r8, %rdi	/* arg of setg_gcc */
-	call *%rdx	/* setg_gcc */
 	call *%rcx	/* fn */
 #else
-	movq %rdi, %rbx
-	movq %rdx, %rdi	/* arg of setg_gcc */
-	call *%rsi	/* setg_gcc */
-	call *%rbx	/* fn */
+	call *%rdi	/* fn */
 #endif
 
 	popq %r15

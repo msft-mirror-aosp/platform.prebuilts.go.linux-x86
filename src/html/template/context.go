@@ -6,7 +6,6 @@ package template
 
 import (
 	"fmt"
-	"text/template/parse"
 )
 
 // context describes the state an HTML parser must be in when it reaches the
@@ -23,7 +22,6 @@ type context struct {
 	jsCtx   jsCtx
 	attr    attr
 	element element
-	n       parse.Node // for range break/continue
 	err     *Error
 }
 
@@ -143,8 +141,6 @@ const (
 	// stateError is an infectious error state outside any valid
 	// HTML/CSS/JS construct.
 	stateError
-	// stateDead marks unreachable code after a {{break}} or {{continue}}.
-	stateDead
 )
 
 // isComment is true for any state that contains content meant for template

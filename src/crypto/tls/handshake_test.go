@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -85,7 +86,7 @@ func checkOpenSSLVersion() error {
 	println("to update the test data.")
 	println("")
 	println("Configure it with:")
-	println("./Configure enable-weak-ssl-ciphers no-shared")
+	println("./Configure enable-weak-ssl-ciphers")
 	println("and then add the apps/ directory at the front of your PATH.")
 	println("***********************************************")
 
@@ -191,17 +192,18 @@ func parseTestData(r io.Reader) (flows [][]byte, err error) {
 		// Otherwise the line is a line of hex dump that looks like:
 		// 00000170  fc f5 06 bf (...)  |.....X{&?......!|
 		// (Some bytes have been omitted from the middle section.)
-		_, after, ok := strings.Cut(line, " ")
-		if !ok {
-			return nil, errors.New("invalid test data")
-		}
-		line = after
 
-		before, _, ok := strings.Cut(line, "|")
-		if !ok {
+		if i := strings.IndexByte(line, ' '); i >= 0 {
+			line = line[i:]
+		} else {
 			return nil, errors.New("invalid test data")
 		}
-		line = before
+
+		if i := strings.IndexByte(line, '|'); i >= 0 {
+			line = line[:i]
+		} else {
+			return nil, errors.New("invalid test data")
+		}
 
 		hexBytes := strings.Fields(line)
 		for _, hexByte := range hexBytes {
@@ -222,7 +224,7 @@ func parseTestData(r io.Reader) (flows [][]byte, err error) {
 
 // tempFile creates a temp file containing contents and returns its path.
 func tempFile(contents string) string {
-	file, err := os.CreateTemp("", "go-tls-test")
+	file, err := ioutil.TempFile("", "go-tls-test")
 	if err != nil {
 		panic("failed to create temp file: " + err.Error())
 	}
@@ -334,9 +336,15 @@ func TestMain(m *testing.M) {
 }
 
 func runMain(m *testing.M) int {
-	// Cipher suites preferences change based on the architecture. Force them to
-	// the version without AES acceleration for test consistency.
-	hasAESGCMHardwareSupport = false
+	// TLS 1.3 cipher suites preferences are not configurable and change based
+	// on the architecture. Force them to the version with AES acceleration for
+	// test consistency.
+	once.Do(initDefaultCipherSuites)
+	varDefaultCipherSuitesTLS13 = []uint16{
+		TLS_AES_128_GCM_SHA256,
+		TLS_CHACHA20_POLY1305_SHA256,
+		TLS_AES_256_GCM_SHA384,
+	}
 
 	// Set up localPipe.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -363,8 +371,6 @@ func runMain(m *testing.M) int {
 		Certificates:       make([]Certificate, 2),
 		InsecureSkipVerify: true,
 		CipherSuites:       allCipherSuites(),
-		MinVersion:         VersionTLS10,
-		MaxVersion:         VersionTLS13,
 	}
 	testConfig.Certificates[0].Certificate = [][]byte{testRSACertificate}
 	testConfig.Certificates[0].PrivateKey = testRSAPrivateKey
@@ -397,7 +403,7 @@ func testHandshake(t *testing.T, clientConfig, serverConfig *Config) (serverStat
 		}
 		defer cli.Close()
 		clientState = cli.ConnectionState()
-		buf, err := io.ReadAll(cli)
+		buf, err := ioutil.ReadAll(cli)
 		if err != nil {
 			t.Errorf("failed to call cli.Read: %v", err)
 		}

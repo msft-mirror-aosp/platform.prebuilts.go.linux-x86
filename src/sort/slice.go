@@ -4,38 +4,34 @@
 
 package sort
 
-// Slice sorts the slice x given the provided less function.
-// It panics if x is not a slice.
+// Slice sorts the provided slice given the provided less function.
 //
-// The sort is not guaranteed to be stable: equal elements
-// may be reversed from their original order.
-// For a stable sort, use SliceStable.
+// The sort is not guaranteed to be stable. For a stable sort, use
+// SliceStable.
 //
-// The less function must satisfy the same requirements as
-// the Interface type's Less method.
-func Slice(x any, less func(i, j int) bool) {
-	rv := reflectValueOf(x)
-	swap := reflectSwapper(x)
+// The function panics if the provided interface is not a slice.
+func Slice(slice interface{}, less func(i, j int) bool) {
+	rv := reflectValueOf(slice)
+	swap := reflectSwapper(slice)
 	length := rv.Len()
 	quickSort_func(lessSwap{less, swap}, 0, length, maxDepth(length))
 }
 
-// SliceStable sorts the slice x using the provided less
-// function, keeping equal elements in their original order.
-// It panics if x is not a slice.
+// SliceStable sorts the provided slice given the provided less
+// function while keeping the original order of equal elements.
 //
-// The less function must satisfy the same requirements as
-// the Interface type's Less method.
-func SliceStable(x any, less func(i, j int) bool) {
-	rv := reflectValueOf(x)
-	swap := reflectSwapper(x)
+// The function panics if the provided interface is not a slice.
+func SliceStable(slice interface{}, less func(i, j int) bool) {
+	rv := reflectValueOf(slice)
+	swap := reflectSwapper(slice)
 	stable_func(lessSwap{less, swap}, rv.Len())
 }
 
-// SliceIsSorted reports whether the slice x is sorted according to the provided less function.
-// It panics if x is not a slice.
-func SliceIsSorted(x any, less func(i, j int) bool) bool {
-	rv := reflectValueOf(x)
+// SliceIsSorted tests whether a slice is sorted.
+//
+// The function panics if the provided interface is not a slice.
+func SliceIsSorted(slice interface{}, less func(i, j int) bool) bool {
+	rv := reflectValueOf(slice)
 	n := rv.Len()
 	for i := n - 1; i > 0; i-- {
 		if less(i, i-1) {

@@ -48,16 +48,11 @@ type Scanner struct {
 	ErrorCount int // number of errors encountered
 }
 
-const (
-	bom = 0xFEFF // byte order mark, only permitted as very first character
-	eof = -1     // end of file
-)
+const bom = 0xFEFF // byte order mark, only permitted as very first character
 
 // Read the next Unicode char into s.ch.
 // s.ch < 0 means end-of-file.
 //
-// For optimization, there is some overlap between this method and
-// s.scanIdentifier.
 func (s *Scanner) next() {
 	if s.rdOffset < len(s.src) {
 		s.offset = s.rdOffset
@@ -86,7 +81,7 @@ func (s *Scanner) next() {
 			s.lineOffset = s.offset
 			s.file.AddLine(s.offset)
 		}
-		s.ch = eof
+		s.ch = -1 // eof
 	}
 }
 
@@ -155,7 +150,7 @@ func (s *Scanner) error(offs int, msg string) {
 	s.ErrorCount++
 }
 
-func (s *Scanner) errorf(offs int, format string, args ...any) {
+func (s *Scanner) errorf(offs int, format string, args ...interface{}) {
 	s.error(offs, fmt.Sprintf(format, args...))
 }
 
@@ -352,53 +347,11 @@ func isDigit(ch rune) bool {
 	return isDecimal(ch) || ch >= utf8.RuneSelf && unicode.IsDigit(ch)
 }
 
-// scanIdentifier reads the string of valid identifier characters at s.offset.
-// It must only be called when s.ch is known to be a valid letter.
-//
-// Be careful when making changes to this function: it is optimized and affects
-// scanning performance significantly.
 func (s *Scanner) scanIdentifier() string {
 	offs := s.offset
-
-	// Optimize for the common case of an ASCII identifier.
-	//
-	// Ranging over s.src[s.rdOffset:] lets us avoid some bounds checks, and
-	// avoids conversions to runes.
-	//
-	// In case we encounter a non-ASCII character, fall back on the slower path
-	// of calling into s.next().
-	for rdOffset, b := range s.src[s.rdOffset:] {
-		if 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z' || b == '_' || '0' <= b && b <= '9' {
-			// Avoid assigning a rune for the common case of an ascii character.
-			continue
-		}
-		s.rdOffset += rdOffset
-		if 0 < b && b < utf8.RuneSelf {
-			// Optimization: we've encountered an ASCII character that's not a letter
-			// or number. Avoid the call into s.next() and corresponding set up.
-			//
-			// Note that s.next() does some line accounting if s.ch is '\n', so this
-			// shortcut is only possible because we know that the preceding character
-			// is not '\n'.
-			s.ch = rune(b)
-			s.offset = s.rdOffset
-			s.rdOffset++
-			goto exit
-		}
-		// We know that the preceding character is valid for an identifier because
-		// scanIdentifier is only called when s.ch is a letter, so calling s.next()
-		// at s.rdOffset resets the scanner state.
+	for isLetter(s.ch) || isDigit(s.ch) {
 		s.next()
-		for isLetter(s.ch) || isDigit(s.ch) {
-			s.next()
-		}
-		goto exit
 	}
-	s.offset = len(s.src)
-	s.rdOffset = len(s.src)
-	s.ch = eof
-
-exit:
 	return string(s.src[offs:s.offset])
 }
 
@@ -430,7 +383,7 @@ func (s *Scanner) digits(base int, invalid *int) (digsep int) {
 			if s.ch == '_' {
 				ds = 2
 			} else if s.ch >= max && *invalid < 0 {
-				*invalid = s.offset // record invalid rune offset
+				*invalid = int(s.offset) // record invalid rune offset
 			}
 			digsep |= ds
 			s.next()
@@ -969,8 +922,6 @@ scanAgain:
 			}
 		case '|':
 			tok = s.switch3(token.OR, token.OR_ASSIGN, '|', token.LOR)
-		case '~':
-			tok = token.TILDE
 		default:
 			// next reports unexpected BOMs - don't repeat
 			if ch != bom {

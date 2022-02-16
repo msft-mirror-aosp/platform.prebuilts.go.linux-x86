@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build linux
+// +build linux
 
 package net
 
 import (
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -46,14 +47,20 @@ type spliceTestCase struct {
 }
 
 func (tc spliceTestCase) test(t *testing.T) {
-	clientUp, serverUp := spliceTestSocketPair(t, tc.upNet)
+	clientUp, serverUp, err := spliceTestSocketPair(tc.upNet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer serverUp.Close()
 	cleanup, err := startSpliceClient(clientUp, "w", tc.chunkSize, tc.totalSize)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	clientDown, serverDown := spliceTestSocketPair(t, tc.downNet)
+	clientDown, serverDown, err := spliceTestSocketPair(tc.downNet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer serverDown.Close()
 	cleanup, err = startSpliceClient(clientDown, "r", tc.chunkSize, tc.totalSize)
 	if err != nil {
@@ -97,9 +104,15 @@ func (tc spliceTestCase) test(t *testing.T) {
 }
 
 func testSpliceReaderAtEOF(t *testing.T, upNet, downNet string) {
-	clientUp, serverUp := spliceTestSocketPair(t, upNet)
+	clientUp, serverUp, err := spliceTestSocketPair(upNet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer clientUp.Close()
-	clientDown, serverDown := spliceTestSocketPair(t, downNet)
+	clientDown, serverDown, err := spliceTestSocketPair(downNet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer clientDown.Close()
 
 	serverUp.Close()
@@ -128,7 +141,7 @@ func testSpliceReaderAtEOF(t *testing.T, upNet, downNet string) {
 	}()
 
 	buf := make([]byte, 3)
-	_, err := io.ReadFull(clientDown, buf)
+	_, err = io.ReadFull(clientDown, buf)
 	if err != nil {
 		t.Errorf("clientDown: %v", err)
 	}
@@ -138,9 +151,15 @@ func testSpliceReaderAtEOF(t *testing.T, upNet, downNet string) {
 }
 
 func testSpliceIssue25985(t *testing.T, upNet, downNet string) {
-	front := newLocalListener(t, upNet)
+	front, err := newLocalListener(upNet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer front.Close()
-	back := newLocalListener(t, downNet)
+	back, err := newLocalListener(downNet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer back.Close()
 
 	var wg sync.WaitGroup
@@ -183,7 +202,7 @@ func testSpliceIssue25985(t *testing.T, upNet, downNet string) {
 	}
 	defer fromProxy.Close()
 
-	_, err = io.ReadAll(fromProxy)
+	_, err = ioutil.ReadAll(fromProxy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,10 +211,16 @@ func testSpliceIssue25985(t *testing.T, upNet, downNet string) {
 }
 
 func testSpliceNoUnixpacket(t *testing.T) {
-	clientUp, serverUp := spliceTestSocketPair(t, "unixpacket")
+	clientUp, serverUp, err := spliceTestSocketPair("unixpacket")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer clientUp.Close()
 	defer serverUp.Close()
-	clientDown, serverDown := spliceTestSocketPair(t, "tcp")
+	clientDown, serverDown, err := spliceTestSocketPair("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer clientDown.Close()
 	defer serverDown.Close()
 	// If splice called poll.Splice here, we'd get err == syscall.EINVAL
@@ -213,7 +238,7 @@ func testSpliceNoUnixpacket(t *testing.T) {
 }
 
 func testSpliceNoUnixgram(t *testing.T) {
-	addr, err := ResolveUnixAddr("unixgram", testUnixAddr(t))
+	addr, err := ResolveUnixAddr("unixgram", testUnixAddr())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +248,10 @@ func testSpliceNoUnixgram(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer up.Close()
-	clientDown, serverDown := spliceTestSocketPair(t, "tcp")
+	clientDown, serverDown, err := spliceTestSocketPair("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer clientDown.Close()
 	defer serverDown.Close()
 	// Analogous to testSpliceNoUnixpacket.
@@ -257,7 +285,10 @@ func (tc spliceTestCase) bench(b *testing.B) {
 	// To benchmark the genericReadFrom code path, set this to false.
 	useSplice := true
 
-	clientUp, serverUp := spliceTestSocketPair(b, tc.upNet)
+	clientUp, serverUp, err := spliceTestSocketPair(tc.upNet)
+	if err != nil {
+		b.Fatal(err)
+	}
 	defer serverUp.Close()
 
 	cleanup, err := startSpliceClient(clientUp, "w", tc.chunkSize, tc.chunkSize*b.N)
@@ -266,7 +297,10 @@ func (tc spliceTestCase) bench(b *testing.B) {
 	}
 	defer cleanup()
 
-	clientDown, serverDown := spliceTestSocketPair(b, tc.downNet)
+	clientDown, serverDown, err := spliceTestSocketPair(tc.downNet)
+	if err != nil {
+		b.Fatal(err)
+	}
 	defer serverDown.Close()
 
 	cleanup, err = startSpliceClient(clientDown, "r", tc.chunkSize, tc.chunkSize*b.N)
@@ -294,9 +328,11 @@ func (tc spliceTestCase) bench(b *testing.B) {
 	}
 }
 
-func spliceTestSocketPair(t testing.TB, net string) (client, server Conn) {
-	t.Helper()
-	ln := newLocalListener(t, net)
+func spliceTestSocketPair(net string) (client, server Conn, err error) {
+	ln, err := newLocalListener(net)
+	if err != nil {
+		return nil, nil, err
+	}
 	defer ln.Close()
 	var cerr, serr error
 	acceptDone := make(chan struct{})
@@ -310,15 +346,15 @@ func spliceTestSocketPair(t testing.TB, net string) (client, server Conn) {
 		if server != nil {
 			server.Close()
 		}
-		t.Fatal(cerr)
+		return nil, nil, cerr
 	}
 	if serr != nil {
 		if client != nil {
 			client.Close()
 		}
-		t.Fatal(serr)
+		return nil, nil, serr
 	}
-	return client, server
+	return client, server, nil
 }
 
 func startSpliceClient(conn Conn, op string, chunkSize, totalSize int) (func(), error) {

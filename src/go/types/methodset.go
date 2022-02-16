@@ -63,7 +63,7 @@ func (s *MethodSet) Lookup(pkg *Package, name string) *Selection {
 var emptyMethodSet MethodSet
 
 // Note: NewMethodSet is intended for external use only as it
-//       requires interfaces to be complete. It may be used
+//       requires interfaces to be complete. If may be used
 //       internally if LookupFieldOrMethod completed the same
 //       interfaces beforehand.
 
@@ -72,9 +72,6 @@ var emptyMethodSet MethodSet
 func NewMethodSet(T Type) *MethodSet {
 	// WARNING: The code in this function is extremely subtle - do not modify casually!
 	//          This function and lookupFieldOrMethod should be kept in sync.
-
-	// TODO(rfindley) confirm that this code is in sync with lookupFieldOrMethod
-	//                with respect to type params.
 
 	// method set up to the current depth, allocated lazily
 	var base methodSet
@@ -127,12 +124,8 @@ func NewMethodSet(T Type) *MethodSet {
 
 				mset = mset.add(named.methods, e.index, e.indirect, e.multiples)
 
-				// continue with underlying type, but only if it's not a type parameter
-				// TODO(rFindley): should this use named.under()? Can there be a difference?
+				// continue with underlying type
 				typ = named.underlying
-				if _, ok := typ.(*TypeParam); ok {
-					continue
-				}
 			}
 
 			switch t := typ.(type) {
@@ -157,10 +150,7 @@ func NewMethodSet(T Type) *MethodSet {
 				}
 
 			case *Interface:
-				mset = mset.add(t.typeSet().methods, e.index, true, e.multiples)
-
-			case *TypeParam:
-				mset = mset.add(t.iface().typeSet().methods, e.index, true, e.multiples)
+				mset = mset.add(t.allMethods, e.index, true, e.multiples)
 			}
 		}
 
@@ -190,7 +180,12 @@ func NewMethodSet(T Type) *MethodSet {
 			}
 		}
 
-		current = consolidateMultiples(next)
+		// It's ok to call consolidateMultiples with a nil *Checker because
+		// MethodSets are not used internally (outside debug mode). When used
+		// externally, interfaces are expected to be completed and then we do
+		// not need a *Checker to complete them when (indirectly) calling
+		// Checker.identical via consolidateMultiples.
+		current = (*Checker)(nil).consolidateMultiples(next)
 	}
 
 	if len(base) == 0 {
@@ -232,10 +227,10 @@ func (s methodSet) add(list []*Func, index []int, indirect bool, multiples bool)
 		// if f is not in the set, add it
 		if !multiples {
 			// TODO(gri) A found method may not be added because it's not in the method set
-			// (!indirect && f.hasPtrRecv()). A 2nd method on the same level may be in the method
+			// (!indirect && ptrRecv(f)). A 2nd method on the same level may be in the method
 			// set and may not collide with the first one, thus leading to a false positive.
 			// Is that possible? Investigate.
-			if _, found := s[key]; !found && (indirect || !f.hasPtrRecv()) {
+			if _, found := s[key]; !found && (indirect || !ptrRecv(f)) {
 				s[key] = &Selection{MethodVal, nil, f, concat(index, i), indirect}
 				continue
 			}
@@ -243,4 +238,23 @@ func (s methodSet) add(list []*Func, index []int, indirect bool, multiples bool)
 		s[key] = nil // collision
 	}
 	return s
+}
+
+// ptrRecv reports whether the receiver is of the form *T.
+func ptrRecv(f *Func) bool {
+	// If a method's receiver type is set, use that as the source of truth for the receiver.
+	// Caution: Checker.funcDecl (decl.go) marks a function by setting its type to an empty
+	// signature. We may reach here before the signature is fully set up: we must explicitly
+	// check if the receiver is set (we cannot just look for non-nil f.typ).
+	if sig, _ := f.typ.(*Signature); sig != nil && sig.recv != nil {
+		_, isPtr := deref(sig.recv.typ)
+		return isPtr
+	}
+
+	// If a method's type is not set it may be a method/function that is:
+	// 1) client-supplied (via NewFunc with no signature), or
+	// 2) internally created but not yet type-checked.
+	// For case 1) we can't do anything; the client must know what they are doing.
+	// For case 2) we can use the information gathered by the resolver.
+	return f.hasPtrRecv
 }

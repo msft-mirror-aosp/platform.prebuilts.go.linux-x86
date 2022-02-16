@@ -6,4 +6,4 @@
 
 package p
 
-var _ = ... . // ERROR "unexpected ...|expected operand|expected .*;"
+var _ = ... . // ERROR "unexpected ..."

@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !plan9
+// +build !plan9
 
 #include "go_asm.h"
 #include "textflag.h"
 
-// See memclrNoHeapPointers Go doc for important implementation constraints.
+// NOTE: Windows externalthreadhandler expects memclr to preserve DX.
 
 // func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr)
 TEXT runtime·memclrNoHeapPointers(SB), NOSPLIT, $0-8
@@ -29,9 +29,8 @@ tail:
 	JBE	_5through8
 	CMPL	BX, $16
 	JBE	_9through16
-#ifdef GO386_softfloat
-	JMP	nosse2
-#endif
+	CMPB	internal∕cpu·X86+const_offsetX86HasSSE2(SB), $1
+	JNE	nosse2
 	PXOR	X0, X0
 	CMPL	BX, $32
 	JBE	_17through32

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+// +build js,wasm
 
 package runtime
 
@@ -30,21 +30,11 @@ func wasmWrite(fd uintptr, p unsafe.Pointer, n int32)
 
 func usleep(usec uint32)
 
-//go:nosplit
-func usleep_no_g(usec uint32) {
-	usleep(usec)
-}
-
 func exitThread(wait *uint32)
 
 type mOS struct{}
 
 func osyield()
-
-//go:nosplit
-func osyield_no_g() {
-	osyield()
-}
 
 const _SIGSEGV = 0xb
 
@@ -82,7 +72,7 @@ func clearSignalHandlers() {
 }
 
 //go:nosplit
-func sigblock(exiting bool) {
+func sigblock() {
 }
 
 // Called to initialize a new m (including the bootstrap m).
@@ -92,11 +82,6 @@ func minit() {
 
 // Called from dropm to undo the effect of an minit.
 func unminit() {
-}
-
-// Called from exitm, but not from drop, to undo the effect of thread-owned
-// resources in minit, semacreate, or elsewhere. Do not take locks after calling this.
-func mdestroy(mp *m) {
 }
 
 func osinit() {
