@@ -13,8 +13,8 @@ package tar
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"math"
+	"os"
 	"path"
 	"reflect"
 	"strconv"
@@ -316,10 +316,10 @@ func invertSparseEntries(src []sparseEntry, size int64) []sparseEntry {
 // fileState tracks the number of logical (includes sparse holes) and physical
 // (actual in tar archive) bytes remaining for the current file.
 //
-// Invariant: logicalRemaining >= physicalRemaining
+// Invariant: LogicalRemaining >= PhysicalRemaining
 type fileState interface {
-	logicalRemaining() int64
-	physicalRemaining() int64
+	LogicalRemaining() int64
+	PhysicalRemaining() int64
 }
 
 // allowedFormats determines which formats can be used.
@@ -413,22 +413,22 @@ func (h Header) allowedFormats() (format Format, paxHdrs map[string]string, err 
 
 	// Check basic fields.
 	var blk block
-	v7 := blk.toV7()
-	ustar := blk.toUSTAR()
-	gnu := blk.toGNU()
-	verifyString(h.Name, len(v7.name()), "Name", paxPath)
-	verifyString(h.Linkname, len(v7.linkName()), "Linkname", paxLinkpath)
-	verifyString(h.Uname, len(ustar.userName()), "Uname", paxUname)
-	verifyString(h.Gname, len(ustar.groupName()), "Gname", paxGname)
-	verifyNumeric(h.Mode, len(v7.mode()), "Mode", paxNone)
-	verifyNumeric(int64(h.Uid), len(v7.uid()), "Uid", paxUid)
-	verifyNumeric(int64(h.Gid), len(v7.gid()), "Gid", paxGid)
-	verifyNumeric(h.Size, len(v7.size()), "Size", paxSize)
-	verifyNumeric(h.Devmajor, len(ustar.devMajor()), "Devmajor", paxNone)
-	verifyNumeric(h.Devminor, len(ustar.devMinor()), "Devminor", paxNone)
-	verifyTime(h.ModTime, len(v7.modTime()), "ModTime", paxMtime)
-	verifyTime(h.AccessTime, len(gnu.accessTime()), "AccessTime", paxAtime)
-	verifyTime(h.ChangeTime, len(gnu.changeTime()), "ChangeTime", paxCtime)
+	v7 := blk.V7()
+	ustar := blk.USTAR()
+	gnu := blk.GNU()
+	verifyString(h.Name, len(v7.Name()), "Name", paxPath)
+	verifyString(h.Linkname, len(v7.LinkName()), "Linkname", paxLinkpath)
+	verifyString(h.Uname, len(ustar.UserName()), "Uname", paxUname)
+	verifyString(h.Gname, len(ustar.GroupName()), "Gname", paxGname)
+	verifyNumeric(h.Mode, len(v7.Mode()), "Mode", paxNone)
+	verifyNumeric(int64(h.Uid), len(v7.UID()), "Uid", paxUid)
+	verifyNumeric(int64(h.Gid), len(v7.GID()), "Gid", paxGid)
+	verifyNumeric(h.Size, len(v7.Size()), "Size", paxSize)
+	verifyNumeric(h.Devmajor, len(ustar.DevMajor()), "Devmajor", paxNone)
+	verifyNumeric(h.Devminor, len(ustar.DevMinor()), "Devminor", paxNone)
+	verifyTime(h.ModTime, len(v7.ModTime()), "ModTime", paxMtime)
+	verifyTime(h.AccessTime, len(gnu.AccessTime()), "AccessTime", paxAtime)
+	verifyTime(h.ChangeTime, len(gnu.ChangeTime()), "ChangeTime", paxCtime)
 
 	// Check for header-only types.
 	var whyOnlyPAX, whyOnlyGNU string
@@ -525,12 +525,12 @@ func (h Header) allowedFormats() (format Format, paxHdrs map[string]string, err 
 	return format, paxHdrs, err
 }
 
-// FileInfo returns an fs.FileInfo for the Header.
-func (h *Header) FileInfo() fs.FileInfo {
+// FileInfo returns an os.FileInfo for the Header.
+func (h *Header) FileInfo() os.FileInfo {
 	return headerFileInfo{h}
 }
 
-// headerFileInfo implements fs.FileInfo.
+// headerFileInfo implements os.FileInfo.
 type headerFileInfo struct {
 	h *Header
 }
@@ -538,7 +538,7 @@ type headerFileInfo struct {
 func (fi headerFileInfo) Size() int64        { return fi.h.Size }
 func (fi headerFileInfo) IsDir() bool        { return fi.Mode().IsDir() }
 func (fi headerFileInfo) ModTime() time.Time { return fi.h.ModTime }
-func (fi headerFileInfo) Sys() any           { return fi.h }
+func (fi headerFileInfo) Sys() interface{}   { return fi.h }
 
 // Name returns the base name of the file.
 func (fi headerFileInfo) Name() string {
@@ -549,57 +549,57 @@ func (fi headerFileInfo) Name() string {
 }
 
 // Mode returns the permission and mode bits for the headerFileInfo.
-func (fi headerFileInfo) Mode() (mode fs.FileMode) {
+func (fi headerFileInfo) Mode() (mode os.FileMode) {
 	// Set file permission bits.
-	mode = fs.FileMode(fi.h.Mode).Perm()
+	mode = os.FileMode(fi.h.Mode).Perm()
 
 	// Set setuid, setgid and sticky bits.
 	if fi.h.Mode&c_ISUID != 0 {
-		mode |= fs.ModeSetuid
+		mode |= os.ModeSetuid
 	}
 	if fi.h.Mode&c_ISGID != 0 {
-		mode |= fs.ModeSetgid
+		mode |= os.ModeSetgid
 	}
 	if fi.h.Mode&c_ISVTX != 0 {
-		mode |= fs.ModeSticky
+		mode |= os.ModeSticky
 	}
 
 	// Set file mode bits; clear perm, setuid, setgid, and sticky bits.
-	switch m := fs.FileMode(fi.h.Mode) &^ 07777; m {
+	switch m := os.FileMode(fi.h.Mode) &^ 07777; m {
 	case c_ISDIR:
-		mode |= fs.ModeDir
+		mode |= os.ModeDir
 	case c_ISFIFO:
-		mode |= fs.ModeNamedPipe
+		mode |= os.ModeNamedPipe
 	case c_ISLNK:
-		mode |= fs.ModeSymlink
+		mode |= os.ModeSymlink
 	case c_ISBLK:
-		mode |= fs.ModeDevice
+		mode |= os.ModeDevice
 	case c_ISCHR:
-		mode |= fs.ModeDevice
-		mode |= fs.ModeCharDevice
+		mode |= os.ModeDevice
+		mode |= os.ModeCharDevice
 	case c_ISSOCK:
-		mode |= fs.ModeSocket
+		mode |= os.ModeSocket
 	}
 
 	switch fi.h.Typeflag {
 	case TypeSymlink:
-		mode |= fs.ModeSymlink
+		mode |= os.ModeSymlink
 	case TypeChar:
-		mode |= fs.ModeDevice
-		mode |= fs.ModeCharDevice
+		mode |= os.ModeDevice
+		mode |= os.ModeCharDevice
 	case TypeBlock:
-		mode |= fs.ModeDevice
+		mode |= os.ModeDevice
 	case TypeDir:
-		mode |= fs.ModeDir
+		mode |= os.ModeDir
 	case TypeFifo:
-		mode |= fs.ModeNamedPipe
+		mode |= os.ModeNamedPipe
 	}
 
 	return mode
 }
 
 // sysStat, if non-nil, populates h from system-dependent fields of fi.
-var sysStat func(fi fs.FileInfo, h *Header) error
+var sysStat func(fi os.FileInfo, h *Header) error
 
 const (
 	// Mode constants from the USTAR spec:
@@ -623,10 +623,10 @@ const (
 // If fi describes a symlink, FileInfoHeader records link as the link target.
 // If fi describes a directory, a slash is appended to the name.
 //
-// Since fs.FileInfo's Name method only returns the base name of
+// Since os.FileInfo's Name method only returns the base name of
 // the file it describes, it may be necessary to modify Header.Name
 // to provide the full path name of the file.
-func FileInfoHeader(fi fs.FileInfo, link string) (*Header, error) {
+func FileInfoHeader(fi os.FileInfo, link string) (*Header, error) {
 	if fi == nil {
 		return nil, errors.New("archive/tar: FileInfo is nil")
 	}
@@ -643,29 +643,29 @@ func FileInfoHeader(fi fs.FileInfo, link string) (*Header, error) {
 	case fi.IsDir():
 		h.Typeflag = TypeDir
 		h.Name += "/"
-	case fm&fs.ModeSymlink != 0:
+	case fm&os.ModeSymlink != 0:
 		h.Typeflag = TypeSymlink
 		h.Linkname = link
-	case fm&fs.ModeDevice != 0:
-		if fm&fs.ModeCharDevice != 0 {
+	case fm&os.ModeDevice != 0:
+		if fm&os.ModeCharDevice != 0 {
 			h.Typeflag = TypeChar
 		} else {
 			h.Typeflag = TypeBlock
 		}
-	case fm&fs.ModeNamedPipe != 0:
+	case fm&os.ModeNamedPipe != 0:
 		h.Typeflag = TypeFifo
-	case fm&fs.ModeSocket != 0:
+	case fm&os.ModeSocket != 0:
 		return nil, fmt.Errorf("archive/tar: sockets not supported")
 	default:
 		return nil, fmt.Errorf("archive/tar: unknown file mode %v", fm)
 	}
-	if fm&fs.ModeSetuid != 0 {
+	if fm&os.ModeSetuid != 0 {
 		h.Mode |= c_ISUID
 	}
-	if fm&fs.ModeSetgid != 0 {
+	if fm&os.ModeSetgid != 0 {
 		h.Mode |= c_ISGID
 	}
-	if fm&fs.ModeSticky != 0 {
+	if fm&os.ModeSticky != 0 {
 		h.Mode |= c_ISVTX
 	}
 	// If possible, populate additional fields from OS-specific

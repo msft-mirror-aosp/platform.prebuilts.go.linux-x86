@@ -23,7 +23,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:build !plan9
+// +build !plan9
 
 #include "go_asm.h"
 #include "textflag.h"
@@ -54,9 +54,8 @@ tail:
 	JBE	move_5through8
 	CMPL	BX, $16
 	JBE	move_9through16
-#ifdef GO386_softfloat
-	JMP	nosse2
-#endif
+	CMPB	internal∕cpu·X86+const_offsetX86HasSSE2(SB), $1
+	JNE	nosse2
 	CMPL	BX, $32
 	JBE	move_17through32
 	CMPL	BX, $64

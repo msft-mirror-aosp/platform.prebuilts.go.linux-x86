@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"runtime"
 	"testing"
@@ -26,14 +27,14 @@ func BenchmarkEncode(b *testing.B) {
 			copy(buf1[i:], buf0)
 		}
 		buf0 = nil
-		w, err := NewWriter(io.Discard, level)
+		w, err := NewWriter(ioutil.Discard, level)
 		if err != nil {
 			b.Fatal(err)
 		}
 		runtime.GC()
 		b.StartTimer()
 		for i := 0; i < b.N; i++ {
-			w.Reset(io.Discard)
+			w.Reset(ioutil.Discard)
 			w.Write(buf1)
 			w.Close()
 		}
@@ -95,7 +96,7 @@ func TestWriteError(t *testing.T) {
 				t.Fatal("Level", l, "Expected an error on close")
 			}
 
-			w.Reset(io.Discard)
+			w.Reset(ioutil.Discard)
 			n2, err = w.Write([]byte{1, 2, 3, 4, 5, 6})
 			if err != nil {
 				t.Fatal("Level", l, "Got unexpected error after reset:", err)
@@ -205,7 +206,7 @@ func TestDeflateFast_Reset(t *testing.T) {
 	w.Close()
 
 	for ; offset <= 256; offset *= 2 {
-		w, err := NewWriter(io.Discard, level)
+		w, err := NewWriter(ioutil.Discard, level)
 		if err != nil {
 			t.Fatalf("NewWriter: level %d: %v", level, err)
 		}

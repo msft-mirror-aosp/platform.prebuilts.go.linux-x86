@@ -10,7 +10,7 @@ package escape
 
 var x bool
 
-func f1() {
+func _() {
 	var p *int
 loop:
 	if x {
@@ -22,7 +22,7 @@ loop:
 	_ = p
 }
 
-func f2() {
+func _() {
 	var p *int
 	if x {
 	loop:
@@ -33,7 +33,7 @@ func f2() {
 	_ = p
 }
 
-func f3() {
+func _() {
 	var p *int
 	if x {
 	loop:

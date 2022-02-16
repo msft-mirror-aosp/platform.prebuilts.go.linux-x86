@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
+// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package syscall
 
 import (
-	"internal/itoa"
 	"internal/oserror"
 	"internal/race"
 	"internal/unsafeheader"
@@ -23,7 +22,7 @@ var (
 )
 
 const (
-	darwin64Bit = (runtime.GOOS == "darwin" || runtime.GOOS == "ios") && sizeofPtr == 8
+	darwin64Bit = runtime.GOOS == "darwin" && sizeofPtr == 8
 	netbsd32Bit = runtime.GOOS == "netbsd" && sizeofPtr == 4
 )
 
@@ -111,7 +110,7 @@ func (m *mmapper) Munmap(data []byte) (err error) {
 // using errors.Is. For example:
 //
 //	_, _, err := syscall.Syscall(...)
-//	if errors.Is(err, fs.ErrNotExist) ...
+//	if errors.Is(err, os.ErrNotExist) ...
 type Errno uintptr
 
 func (e Errno) Error() string {
@@ -121,7 +120,7 @@ func (e Errno) Error() string {
 			return s
 		}
 	}
-	return "errno " + itoa.Itoa(int(e))
+	return "errno " + itoa(int(e))
 }
 
 func (e Errno) Is(target error) bool {
@@ -181,7 +180,7 @@ func (s Signal) String() string {
 			return str
 		}
 	}
-	return "signal " + itoa.Itoa(int(s))
+	return "signal " + itoa(int(s))
 }
 
 func Read(fd int, p []byte) (n int, err error) {
@@ -196,9 +195,6 @@ func Read(fd int, p []byte) (n int, err error) {
 	}
 	if msanenabled && n > 0 {
 		msanWrite(unsafe.Pointer(&p[0]), n)
-	}
-	if asanenabled && n > 0 {
-		asanWrite(unsafe.Pointer(&p[0]), n)
 	}
 	return
 }
@@ -220,9 +216,6 @@ func Write(fd int, p []byte) (n int, err error) {
 	}
 	if msanenabled && n > 0 {
 		msanRead(unsafe.Pointer(&p[0]), n)
-	}
-	if asanenabled && n > 0 {
-		asanRead(unsafe.Pointer(&p[0]), n)
 	}
 	return
 }
@@ -295,119 +288,6 @@ func Recvfrom(fd int, p []byte, flags int) (n int, from Sockaddr, err error) {
 		from, err = anyToSockaddr(&rsa)
 	}
 	return
-}
-
-func recvfromInet4(fd int, p []byte, flags int, from *SockaddrInet4) (n int, err error) {
-	var rsa RawSockaddrAny
-	var socklen _Socklen = SizeofSockaddrAny
-	if n, err = recvfrom(fd, p, flags, &rsa, &socklen); err != nil {
-		return
-	}
-	pp := (*RawSockaddrInet4)(unsafe.Pointer(&rsa))
-	port := (*[2]byte)(unsafe.Pointer(&pp.Port))
-	from.Port = int(port[0])<<8 + int(port[1])
-	from.Addr = pp.Addr
-	return
-}
-
-func recvfromInet6(fd int, p []byte, flags int, from *SockaddrInet6) (n int, err error) {
-	var rsa RawSockaddrAny
-	var socklen _Socklen = SizeofSockaddrAny
-	if n, err = recvfrom(fd, p, flags, &rsa, &socklen); err != nil {
-		return
-	}
-	pp := (*RawSockaddrInet6)(unsafe.Pointer(&rsa))
-	port := (*[2]byte)(unsafe.Pointer(&pp.Port))
-	from.Port = int(port[0])<<8 + int(port[1])
-	from.ZoneId = pp.Scope_id
-	from.Addr = pp.Addr
-	return
-}
-
-func recvmsgInet4(fd int, p, oob []byte, flags int, from *SockaddrInet4) (n, oobn int, recvflags int, err error) {
-	var rsa RawSockaddrAny
-	n, oobn, recvflags, err = recvmsgRaw(fd, p, oob, flags, &rsa)
-	if err != nil {
-		return
-	}
-	pp := (*RawSockaddrInet4)(unsafe.Pointer(&rsa))
-	port := (*[2]byte)(unsafe.Pointer(&pp.Port))
-	from.Port = int(port[0])<<8 + int(port[1])
-	from.Addr = pp.Addr
-	return
-}
-
-func recvmsgInet6(fd int, p, oob []byte, flags int, from *SockaddrInet6) (n, oobn int, recvflags int, err error) {
-	var rsa RawSockaddrAny
-	n, oobn, recvflags, err = recvmsgRaw(fd, p, oob, flags, &rsa)
-	if err != nil {
-		return
-	}
-	pp := (*RawSockaddrInet6)(unsafe.Pointer(&rsa))
-	port := (*[2]byte)(unsafe.Pointer(&pp.Port))
-	from.Port = int(port[0])<<8 + int(port[1])
-	from.ZoneId = pp.Scope_id
-	from.Addr = pp.Addr
-	return
-}
-
-func Recvmsg(fd int, p, oob []byte, flags int) (n, oobn int, recvflags int, from Sockaddr, err error) {
-	var rsa RawSockaddrAny
-	n, oobn, recvflags, err = recvmsgRaw(fd, p, oob, flags, &rsa)
-	// source address is only specified if the socket is unconnected
-	if rsa.Addr.Family != AF_UNSPEC {
-		from, err = anyToSockaddr(&rsa)
-	}
-	return
-}
-
-func Sendmsg(fd int, p, oob []byte, to Sockaddr, flags int) (err error) {
-	_, err = SendmsgN(fd, p, oob, to, flags)
-	return
-}
-
-func SendmsgN(fd int, p, oob []byte, to Sockaddr, flags int) (n int, err error) {
-	var ptr unsafe.Pointer
-	var salen _Socklen
-	if to != nil {
-		ptr, salen, err = to.sockaddr()
-		if err != nil {
-			return 0, err
-		}
-	}
-	return sendmsgN(fd, p, oob, ptr, salen, flags)
-}
-
-func sendmsgNInet4(fd int, p, oob []byte, to *SockaddrInet4, flags int) (n int, err error) {
-	ptr, salen, err := to.sockaddr()
-	if err != nil {
-		return 0, err
-	}
-	return sendmsgN(fd, p, oob, ptr, salen, flags)
-}
-
-func sendmsgNInet6(fd int, p, oob []byte, to *SockaddrInet6, flags int) (n int, err error) {
-	ptr, salen, err := to.sockaddr()
-	if err != nil {
-		return 0, err
-	}
-	return sendmsgN(fd, p, oob, ptr, salen, flags)
-}
-
-func sendtoInet4(fd int, p []byte, flags int, to *SockaddrInet4) (err error) {
-	ptr, n, err := to.sockaddr()
-	if err != nil {
-		return err
-	}
-	return sendto(fd, p, flags, ptr, n)
-}
-
-func sendtoInet6(fd int, p []byte, flags int, to *SockaddrInet6) (err error) {
-	ptr, n, err := to.sockaddr()
-	if err != nil {
-		return err
-	}
-	return sendto(fd, p, flags, ptr, n)
 }
 
 func Sendto(fd int, p []byte, flags int, to Sockaddr) (err error) {

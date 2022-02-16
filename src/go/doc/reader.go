@@ -101,10 +101,6 @@ func baseTypeName(x ast.Expr) (name string, imported bool) {
 	switch t := x.(type) {
 	case *ast.Ident:
 		return t.Name, false
-	case *ast.IndexExpr:
-		return baseTypeName(t.X)
-	case *ast.IndexListExpr:
-		return baseTypeName(t.X)
 	case *ast.SelectorExpr:
 		if _, ok := t.X.(*ast.Ident); ok {
 			// only possible for qualified type names;
@@ -116,7 +112,7 @@ func baseTypeName(x ast.Expr) (name string, imported bool) {
 	case *ast.StarExpr:
 		return baseTypeName(t.X)
 	}
-	return "", false
+	return
 }
 
 // An embeddedSet describes a set of embedded types.
@@ -167,9 +163,9 @@ type reader struct {
 	types     map[string]*namedType
 	funcs     methodSet
 
-	// support for package-local shadowing of predeclared types
-	shadowedPredecl map[string]bool
-	fixmap          map[string][]*ast.InterfaceType
+	// support for package-local error type declarations
+	errorDecl bool                 // if set, type "error" was declared locally
+	fixlist   []*ast.InterfaceType // list of interfaces containing anonymous field "error"
 }
 
 func (r *reader) isVisible(name string) bool {
@@ -228,11 +224,8 @@ func (r *reader) readDoc(comment *ast.CommentGroup) {
 	r.doc += "\n" + text
 }
 
-func (r *reader) remember(predecl string, typ *ast.InterfaceType) {
-	if r.fixmap == nil {
-		r.fixmap = make(map[string][]*ast.InterfaceType)
-	}
-	r.fixmap[predecl] = append(r.fixmap[predecl], typ)
+func (r *reader) remember(typ *ast.InterfaceType) {
+	r.fixlist = append(r.fixlist, typ)
 }
 
 func specNames(specs []ast.Spec) []string {
@@ -425,11 +418,6 @@ func (r *reader) readFunc(fun *ast.FuncDecl) {
 				factoryType = t.Elt
 			}
 			if n, imp := baseTypeName(factoryType); !imp && r.isVisible(n) && !r.isPredeclared(n) {
-				if lookupTypeParam(n, fun.Type.TypeParams) != nil {
-					// Issue #49477: don't associate fun with its type parameter result.
-					// A type parameter is not a defined type.
-					continue
-				}
 				if t := r.lookupType(n); t != nil {
 					typ = t
 					numResultTypes++
@@ -449,22 +437,6 @@ func (r *reader) readFunc(fun *ast.FuncDecl) {
 
 	// just an ordinary function
 	r.funcs.set(fun, r.mode&PreserveAST != 0)
-}
-
-// lookupTypeParam searches for type parameters named name within the tparams
-// field list, returning the relevant identifier if found, or nil if not.
-func lookupTypeParam(name string, tparams *ast.FieldList) *ast.Ident {
-	if tparams == nil {
-		return nil
-	}
-	for _, field := range tparams.List {
-		for _, id := range field.Names {
-			if id.Name == name {
-				return id
-			}
-		}
-	}
-	return nil
 }
 
 var (
@@ -707,11 +679,10 @@ func (r *reader) computeMethodSets() {
 		}
 	}
 
-	// For any predeclared names that are declared locally, don't treat them as
-	// exported fields anymore.
-	for predecl := range r.shadowedPredecl {
-		for _, ityp := range r.fixmap[predecl] {
-			removeAnonymousField(predecl, ityp)
+	// if error was declared locally, don't treat it as exported field anymore
+	if r.errorDecl {
+		for _, ityp := range r.fixlist {
+			removeErrorField(ityp)
 		}
 	}
 }
@@ -898,7 +869,6 @@ func IsPredeclared(s string) bool {
 }
 
 var predeclaredTypes = map[string]bool{
-	"any":        true,
 	"bool":       true,
 	"byte":       true,
 	"complex64":  true,

@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
+// +build darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package modload
 
 import (
-	"io/fs"
 	"os"
 	"syscall"
 )
@@ -18,7 +17,7 @@ import (
 // Although the root user on most Unix systems can write to files even without
 // permission, hasWritePerm reports false if no appropriate permission bit is
 // set even if the current user is root.
-func hasWritePerm(path string, fi fs.FileInfo) bool {
+func hasWritePerm(path string, fi os.FileInfo) bool {
 	if os.Getuid() == 0 {
 		// The root user can access any file, but we still want to default to
 		// read-only mode if the go.mod file is marked as globally non-writable.

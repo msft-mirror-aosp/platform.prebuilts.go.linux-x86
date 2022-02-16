@@ -14,7 +14,7 @@ import (
 
 // hasNUL reports whether the NUL character exists within s.
 func hasNUL(s string) bool {
-	return strings.Contains(s, "\x00")
+	return strings.IndexByte(s, 0) >= 0
 }
 
 // isASCII reports whether the input is an ASCII C-style string.
@@ -28,7 +28,7 @@ func isASCII(s string) bool {
 }
 
 // toASCII converts the input to an ASCII C-style string.
-// This is a best effort conversion, so invalid characters are dropped.
+// This a best effort conversion, so invalid characters are dropped.
 func toASCII(s string) string {
 	if isASCII(s) {
 		return s
@@ -201,7 +201,10 @@ func parsePAXTime(s string) (time.Time, error) {
 	const maxNanoSecondDigits = 9
 
 	// Split string into seconds and sub-seconds parts.
-	ss, sn, _ := strings.Cut(s, ".")
+	ss, sn := s, ""
+	if pos := strings.IndexByte(s, '.'); pos >= 0 {
+		ss, sn = s[:pos], s[pos+1:]
+	}
 
 	// Parse the seconds.
 	secs, err := strconv.ParseInt(ss, 10, 64)
@@ -251,32 +254,29 @@ func formatPAXTime(ts time.Time) (s string) {
 // return the remainder as r.
 func parsePAXRecord(s string) (k, v, r string, err error) {
 	// The size field ends at the first space.
-	nStr, rest, ok := strings.Cut(s, " ")
-	if !ok {
+	sp := strings.IndexByte(s, ' ')
+	if sp == -1 {
 		return "", "", s, ErrHeader
 	}
 
 	// Parse the first token as a decimal integer.
-	n, perr := strconv.ParseInt(nStr, 10, 0) // Intentionally parse as native int
-	if perr != nil || n < 5 || n > int64(len(s)) {
-		return "", "", s, ErrHeader
-	}
-	n -= int64(len(nStr) + 1) // convert from index in s to index in rest
-	if n <= 0 {
+	n, perr := strconv.ParseInt(s[:sp], 10, 0) // Intentionally parse as native int
+	if perr != nil || n < 5 || int64(len(s)) < n {
 		return "", "", s, ErrHeader
 	}
 
 	// Extract everything between the space and the final newline.
-	rec, nl, rem := rest[:n-1], rest[n-1:n], rest[n:]
+	rec, nl, rem := s[sp+1:n-1], s[n-1:n], s[n:]
 	if nl != "\n" {
 		return "", "", s, ErrHeader
 	}
 
 	// The first equals separates the key from the value.
-	k, v, ok = strings.Cut(rec, "=")
-	if !ok {
+	eq := strings.IndexByte(rec, '=')
+	if eq == -1 {
 		return "", "", s, ErrHeader
 	}
+	k, v = rec[:eq], rec[eq+1:]
 
 	if !validPAXRecord(k, v) {
 		return "", "", s, ErrHeader
@@ -314,7 +314,7 @@ func formatPAXRecord(k, v string) (string, error) {
 // for the PAX version of the USTAR string fields.
 // The key must not contain an '=' character.
 func validPAXRecord(k, v string) bool {
-	if k == "" || strings.Contains(k, "=") {
+	if k == "" || strings.IndexByte(k, '=') >= 0 {
 		return false
 	}
 	switch k {

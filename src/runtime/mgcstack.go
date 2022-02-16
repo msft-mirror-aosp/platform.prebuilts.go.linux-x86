@@ -95,7 +95,7 @@
 package runtime
 
 import (
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -107,7 +107,7 @@ const stackTraceDebug = false
 //go:notinheap
 type stackWorkBuf struct {
 	stackWorkBufHdr
-	obj [(_WorkbufSize - unsafe.Sizeof(stackWorkBufHdr{})) / goarch.PtrSize]uintptr
+	obj [(_WorkbufSize - unsafe.Sizeof(stackWorkBufHdr{})) / sys.PtrSize]uintptr
 }
 
 // Header declaration must come after the buf declaration above, because of issue #14620.
@@ -150,19 +150,19 @@ func init() {
 //
 //go:notinheap
 type stackObject struct {
-	off   uint32             // offset above stack.lo
-	size  uint32             // size of object
-	r     *stackObjectRecord // info of the object (for ptr/nonptr bits). nil if object has been scanned.
-	left  *stackObject       // objects with lower addresses
-	right *stackObject       // objects with higher addresses
+	off   uint32       // offset above stack.lo
+	size  uint32       // size of object
+	typ   *_type       // type info (for ptr/nonptr bits). nil if object has been scanned.
+	left  *stackObject // objects with lower addresses
+	right *stackObject // objects with higher addresses
 }
 
-// obj.r = r, but with no write barrier.
+// obj.typ = typ, but with no write barrier.
 //go:nowritebarrier
-func (obj *stackObject) setRecord(r *stackObjectRecord) {
+func (obj *stackObject) setType(typ *_type) {
 	// Types of stack objects are always in read-only memory, not the heap.
 	// So not using a write barrier is ok.
-	*(*uintptr)(unsafe.Pointer(&obj.r)) = uintptr(unsafe.Pointer(r))
+	*(*uintptr)(unsafe.Pointer(&obj.typ)) = uintptr(unsafe.Pointer(typ))
 }
 
 // A stackScanState keeps track of the state used during the GC walk
@@ -271,7 +271,7 @@ func (s *stackScanState) getPtr() (p uintptr, conservative bool) {
 }
 
 // addObject adds a stack object at addr of type typ to the set of stack objects.
-func (s *stackScanState) addObject(addr uintptr, r *stackObjectRecord) {
+func (s *stackScanState) addObject(addr uintptr, typ *_type) {
 	x := s.tail
 	if x == nil {
 		// initial setup
@@ -294,8 +294,8 @@ func (s *stackScanState) addObject(addr uintptr, r *stackObjectRecord) {
 	obj := &x.obj[x.nobj]
 	x.nobj++
 	obj.off = uint32(addr - s.stack.lo)
-	obj.size = uint32(r.size)
-	obj.setRecord(r)
+	obj.size = uint32(typ.size)
+	obj.setType(typ)
 	// obj.left and obj.right will be initialized by buildIndex before use.
 	s.nobjs++
 }

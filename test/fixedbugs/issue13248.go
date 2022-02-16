@@ -9,5 +9,5 @@
 package main
 
 func main() {
-    foo( // GCCGO_ERROR "undefined name"
-} // ERROR "unexpected }|expected operand|missing"
+    foo(
+} // ERROR "unexpected }"

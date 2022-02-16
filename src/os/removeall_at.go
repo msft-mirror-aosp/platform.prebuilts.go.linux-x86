@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
+// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package os
 
@@ -22,7 +22,7 @@ func removeAll(path string) error {
 	// The rmdir system call does not permit removing ".",
 	// so we don't permit it either.
 	if endsWithDot(path) {
-		return &PathError{Op: "RemoveAll", Path: path, Err: syscall.EINVAL}
+		return &PathError{"RemoveAll", path, syscall.EINVAL}
 	}
 
 	// Simple case: if Remove works, we're done.
@@ -70,7 +70,7 @@ func removeAllFrom(parent *File, base string) error {
 	// whose contents need to be removed.
 	// Otherwise just return the error.
 	if err != syscall.EISDIR && err != syscall.EPERM && err != syscall.EACCES {
-		return &PathError{Op: "unlinkat", Path: base, Err: err}
+		return &PathError{"unlinkat", base, err}
 	}
 
 	// Is this a directory we need to recurse into?
@@ -80,11 +80,11 @@ func removeAllFrom(parent *File, base string) error {
 		if IsNotExist(statErr) {
 			return nil
 		}
-		return &PathError{Op: "fstatat", Path: base, Err: statErr}
+		return &PathError{"fstatat", base, statErr}
 	}
 	if statInfo.Mode&syscall.S_IFMT != syscall.S_IFDIR {
 		// Not a directory; return the error from the unix.Unlinkat.
-		return &PathError{Op: "unlinkat", Path: base, Err: err}
+		return &PathError{"unlinkat", base, err}
 	}
 
 	// Remove the directory's entries.
@@ -99,7 +99,7 @@ func removeAllFrom(parent *File, base string) error {
 			if IsNotExist(err) {
 				return nil
 			}
-			recurseErr = &PathError{Op: "openfdat", Path: base, Err: err}
+			recurseErr = &PathError{"openfdat", base, err}
 			break
 		}
 
@@ -113,7 +113,7 @@ func removeAllFrom(parent *File, base string) error {
 				if IsNotExist(readErr) {
 					return nil
 				}
-				return &PathError{Op: "readdirnames", Path: base, Err: readErr}
+				return &PathError{"readdirnames", base, readErr}
 			}
 
 			respSize = len(names)
@@ -159,7 +159,7 @@ func removeAllFrom(parent *File, base string) error {
 	if recurseErr != nil {
 		return recurseErr
 	}
-	return &PathError{Op: "unlinkat", Path: base, Err: unlinkError}
+	return &PathError{"unlinkat", base, unlinkError}
 }
 
 // openFdAt opens path relative to the directory in fd.

@@ -8,9 +8,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"flag"
+	"fmt"
 	"internal/testenv"
-	"io"
-	"io/fs"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -46,32 +46,36 @@ var altRepos = []string{
 var localGitRepo string
 
 func testMain(m *testing.M) int {
-	dir, err := os.MkdirTemp("", "gitrepo-test-")
+	if _, err := exec.LookPath("git"); err != nil {
+		fmt.Fprintln(os.Stderr, "skipping because git binary not found")
+		fmt.Println("PASS")
+		return 0
+	}
+
+	dir, err := ioutil.TempDir("", "gitrepo-test-")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
 
 	if testenv.HasExternalNetwork() && testenv.HasExec() {
-		if _, err := exec.LookPath("git"); err == nil {
-			// Clone gitrepo1 into a local directory.
-			// If we use a file:// URL to access the local directory,
-			// then git starts up all the usual protocol machinery,
-			// which will let us test remote git archive invocations.
-			localGitRepo = filepath.Join(dir, "gitrepo2")
-			if _, err := Run("", "git", "clone", "--mirror", gitrepo1, localGitRepo); err != nil {
-				log.Fatal(err)
-			}
-			if _, err := Run(localGitRepo, "git", "config", "daemon.uploadarch", "true"); err != nil {
-				log.Fatal(err)
-			}
+		// Clone gitrepo1 into a local directory.
+		// If we use a file:// URL to access the local directory,
+		// then git starts up all the usual protocol machinery,
+		// which will let us test remote git archive invocations.
+		localGitRepo = filepath.Join(dir, "gitrepo2")
+		if _, err := Run("", "git", "clone", "--mirror", gitrepo1, localGitRepo); err != nil {
+			log.Fatal(err)
+		}
+		if _, err := Run(localGitRepo, "git", "config", "daemon.uploadarch", "true"); err != nil {
+			log.Fatal(err)
 		}
 	}
 
 	return m.Run()
 }
 
-func testRepo(t *testing.T, remote string) (Repo, error) {
+func testRepo(remote string) (Repo, error) {
 	if remote == "localGitRepo" {
 		// Convert absolute path to file URL. LocalGitRepo will not accept
 		// Windows absolute paths because they look like a host:path remote.
@@ -82,17 +86,15 @@ func testRepo(t *testing.T, remote string) (Repo, error) {
 		} else {
 			url = "file:///" + filepath.ToSlash(localGitRepo)
 		}
-		testenv.MustHaveExecPath(t, "git")
 		return LocalGitRepo(url)
 	}
-	vcs := "git"
+	kind := "git"
 	for _, k := range []string{"hg"} {
 		if strings.Contains(remote, "/"+k+"/") {
-			vcs = k
+			kind = k
 		}
 	}
-	testenv.MustHaveExecPath(t, vcs)
-	return NewRepo(vcs, remote)
+	return NewRepo(kind, remote)
 }
 
 var tagsTests = []struct {
@@ -113,7 +115,7 @@ func TestTags(t *testing.T) {
 
 	for _, tt := range tagsTests {
 		f := func(t *testing.T) {
-			r, err := testRepo(t, tt.repo)
+			r, err := testRepo(tt.repo)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +167,7 @@ func TestLatest(t *testing.T) {
 
 	for _, tt := range latestTests {
 		f := func(t *testing.T) {
-			r, err := testRepo(t, tt.repo)
+			r, err := testRepo(tt.repo)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,7 +210,7 @@ var readFileTests = []struct {
 		repo: gitrepo1,
 		rev:  "v2.3.4",
 		file: "another.txt",
-		err:  fs.ErrNotExist.Error(),
+		err:  os.ErrNotExist.Error(),
 	},
 }
 
@@ -218,7 +220,7 @@ func TestReadFile(t *testing.T) {
 
 	for _, tt := range readFileTests {
 		f := func(t *testing.T) {
-			r, err := testRepo(t, tt.repo)
+			r, err := testRepo(tt.repo)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -409,7 +411,7 @@ func TestReadZip(t *testing.T) {
 
 	for _, tt := range readZipTests {
 		f := func(t *testing.T) {
-			r, err := testRepo(t, tt.repo)
+			r, err := testRepo(tt.repo)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -430,7 +432,7 @@ func TestReadZip(t *testing.T) {
 			if tt.err != "" {
 				t.Fatalf("ReadZip: no error, wanted %v", tt.err)
 			}
-			zipdata, err := io.ReadAll(rc)
+			zipdata, err := ioutil.ReadAll(rc)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -578,7 +580,7 @@ func TestStat(t *testing.T) {
 
 	for _, tt := range statTests {
 		f := func(t *testing.T) {
-			r, err := testRepo(t, tt.repo)
+			r, err := testRepo(tt.repo)
 			if err != nil {
 				t.Fatal(err)
 			}

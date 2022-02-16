@@ -9,7 +9,7 @@
 // See the comment on the declaration of makeFuncStub in makefunc.go
 // for more details.
 // No arg size here; runtime pulls arg map out of the func value.
-TEXT ·makeFuncStub(SB),(NOSPLIT|WRAPPER),$40
+TEXT ·makeFuncStub(SB),(NOSPLIT|WRAPPER),$32
 	NO_LOCAL_POINTERS
 
 	MOVD CTXT, 0(SP)
@@ -21,9 +21,8 @@ TEXT ·makeFuncStub(SB),(NOSPLIT|WRAPPER),$40
 	I64Add
 	I64Store $8
 
-	MOVB $0, 32(SP)
-	MOVD $32(SP), 16(SP)
-	MOVD $0, 24(SP)
+	MOVB $0, 24(SP)
+	MOVD $24(SP), 16(SP)
 
 	CALL ·callReflect(SB)
 	RET
@@ -32,7 +31,7 @@ TEXT ·makeFuncStub(SB),(NOSPLIT|WRAPPER),$40
 // See the comment on the declaration of methodValueCall in makefunc.go
 // for more details.
 // No arg size here; runtime pulls arg map out of the func value.
-TEXT ·methodValueCall(SB),(NOSPLIT|WRAPPER),$40
+TEXT ·methodValueCall(SB),(NOSPLIT|WRAPPER),$32
 	NO_LOCAL_POINTERS
 
 	MOVD CTXT, 0(SP)
@@ -44,9 +43,8 @@ TEXT ·methodValueCall(SB),(NOSPLIT|WRAPPER),$40
 	I64Add
 	I64Store $8
 
-	MOVB $0, 32(SP)
-	MOVD $32(SP), 16(SP)
-	MOVD $0, 24(SP)
+	MOVB $0, 24(SP)
+	MOVD $24(SP), 16(SP)
 
 	CALL ·callMethod(SB)
 	RET

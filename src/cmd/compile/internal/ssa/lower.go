@@ -7,7 +7,7 @@ package ssa
 // convert to machine-dependent ops
 func lower(f *Func) {
 	// repeat rewrites until we find no more rewrites
-	applyRewrite(f, f.Config.lowerBlock, f.Config.lowerValue, removeDeadValues)
+	applyRewrite(f, f.Config.lowerBlock, f.Config.lowerValue)
 }
 
 // checkLower checks for unlowered opcodes and fails if we find one.
@@ -21,12 +21,8 @@ func checkLower(f *Func) {
 				continue // lowered
 			}
 			switch v.Op {
-			case OpSP, OpSB, OpInitMem, OpArg, OpArgIntReg, OpArgFloatReg, OpPhi, OpVarDef, OpVarKill, OpVarLive, OpKeepAlive, OpSelect0, OpSelect1, OpSelectN, OpConvert, OpInlMark:
+			case OpSP, OpSB, OpInitMem, OpArg, OpPhi, OpVarDef, OpVarKill, OpVarLive, OpKeepAlive, OpSelect0, OpSelect1, OpConvert, OpInlMark:
 				continue // ok not to lower
-			case OpMakeResult:
-				if b.Controls[0] == v {
-					continue
-				}
 			case OpGetG:
 				if f.Config.hasGReg {
 					// has hardware g register, regalloc takes care of it
@@ -34,7 +30,6 @@ func checkLower(f *Func) {
 				}
 			}
 			s := "not lowered: " + v.String() + ", " + v.Op.String() + " " + v.Type.SimpleString()
-
 			for _, a := range v.Args {
 				s += " " + a.Type.SimpleString()
 			}

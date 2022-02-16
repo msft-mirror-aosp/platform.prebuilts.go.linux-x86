@@ -125,11 +125,6 @@ const (
 	TYPE
 	VAR
 	keyword_end
-
-	additional_beg
-	// additional tokens, handled in an ad-hoc manner
-	TILDE
-	additional_end
 )
 
 var tokens = [...]string{
@@ -230,8 +225,6 @@ var tokens = [...]string{
 	SWITCH: "switch",
 	TYPE:   "type",
 	VAR:    "var",
-
-	TILDE: "~",
 }
 
 // String returns the string corresponding to the token tok.
@@ -311,9 +304,7 @@ func (tok Token) IsLiteral() bool { return literal_beg < tok && tok < literal_en
 // IsOperator returns true for tokens corresponding to operators and
 // delimiters; it returns false otherwise.
 //
-func (tok Token) IsOperator() bool {
-	return (operator_beg < tok && tok < operator_end) || tok == TILDE
-}
+func (tok Token) IsOperator() bool { return operator_beg < tok && tok < operator_end }
 
 // IsKeyword returns true for tokens corresponding to keywords;
 // it returns false otherwise.
