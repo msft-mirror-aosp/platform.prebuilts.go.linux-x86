@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+// +build js,wasm
 
 package syscall
 
 import (
 	"errors"
+	"io"
 	"sync"
 	"syscall/js"
 )
@@ -455,11 +456,11 @@ func Seek(fd int, offset int64, whence int) (int64, error) {
 
 	var newPos int64
 	switch whence {
-	case 0:
+	case io.SeekStart:
 		newPos = offset
-	case 1:
+	case io.SeekCurrent:
 		newPos = f.pos + offset
-	case 2:
+	case io.SeekEnd:
 		var st Stat_t
 		if err := Fstat(fd, &st); err != nil {
 			return 0, err
@@ -491,14 +492,14 @@ func Pipe(fd []int) error {
 	return ENOSYS
 }
 
-func fsCall(name string, args ...any) (js.Value, error) {
+func fsCall(name string, args ...interface{}) (js.Value, error) {
 	type callResult struct {
 		val js.Value
 		err error
 	}
 
 	c := make(chan callResult, 1)
-	f := js.FuncOf(func(this js.Value, args []js.Value) any {
+	f := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		var res callResult
 
 		if len(args) >= 1 { // on Node.js 8, fs.utimes calls the callback without any arguments

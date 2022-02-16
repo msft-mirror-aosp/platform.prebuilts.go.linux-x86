@@ -5,7 +5,7 @@
 package main
 
 import (
-	"io"
+	"io/ioutil"
 	"runtime/pprof"
 )
 
@@ -13,7 +13,7 @@ import "C"
 
 //export go_start_profile
 func go_start_profile() {
-	pprof.StartCPUProfile(io.Discard)
+	pprof.StartCPUProfile(ioutil.Discard)
 }
 
 //export go_stop_profile

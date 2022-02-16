@@ -9,9 +9,8 @@ import (
 	"image"
 	"image/color"
 	"image/color/palette"
-	"image/draw"
 	_ "image/png"
-	"io"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"reflect"
@@ -285,7 +284,7 @@ func TestEncodeMismatchDelay(t *testing.T) {
 		Image: images,
 		Delay: make([]int, 1),
 	}
-	if err := EncodeAll(io.Discard, g0); err == nil {
+	if err := EncodeAll(ioutil.Discard, g0); err == nil {
 		t.Error("expected error from mismatched delay and image slice lengths")
 	}
 
@@ -297,13 +296,13 @@ func TestEncodeMismatchDelay(t *testing.T) {
 	for i := range g1.Disposal {
 		g1.Disposal[i] = DisposalNone
 	}
-	if err := EncodeAll(io.Discard, g1); err == nil {
+	if err := EncodeAll(ioutil.Discard, g1); err == nil {
 		t.Error("expected error from mismatched disposal and image slice lengths")
 	}
 }
 
 func TestEncodeZeroGIF(t *testing.T) {
-	if err := EncodeAll(io.Discard, &GIF{}); err == nil {
+	if err := EncodeAll(ioutil.Discard, &GIF{}); err == nil {
 		t.Error("expected error from providing empty gif")
 	}
 }
@@ -324,7 +323,7 @@ func TestEncodeAllFramesOutOfBounds(t *testing.T) {
 				Height: upperBound,
 			},
 		}
-		err := EncodeAll(io.Discard, g)
+		err := EncodeAll(ioutil.Discard, g)
 		if upperBound >= 8 {
 			if err != nil {
 				t.Errorf("upperBound=%d: %v", upperBound, err)
@@ -430,7 +429,7 @@ func TestEncodeImplicitConfigSize(t *testing.T) {
 			Image: images,
 			Delay: make([]int, len(images)),
 		}
-		err := EncodeAll(io.Discard, g)
+		err := EncodeAll(ioutil.Discard, g)
 		if lowerBound >= 0 {
 			if err != nil {
 				t.Errorf("lowerBound=%d: %v", lowerBound, err)
@@ -509,7 +508,7 @@ func TestEncodeBadPalettes(t *testing.T) {
 				}
 			}
 
-			err := EncodeAll(io.Discard, &GIF{
+			err := EncodeAll(ioutil.Discard, &GIF{
 				Image: []*image.Paletted{
 					image.NewPaletted(image.Rect(0, 0, w, h), pal),
 				},
@@ -657,28 +656,39 @@ func TestEncodeWrappedImage(t *testing.T) {
 	}
 }
 
-func BenchmarkEncodeRandomPaletted(b *testing.B) {
-	paletted := image.NewPaletted(image.Rect(0, 0, 640, 480), palette.Plan9)
+func BenchmarkEncode(b *testing.B) {
 	rnd := rand.New(rand.NewSource(123))
-	for i := range paletted.Pix {
-		paletted.Pix[i] = uint8(rnd.Intn(256))
+
+	// Restrict to a 256-color paletted image to avoid quantization path.
+	palette := make(color.Palette, 256)
+	for i := range palette {
+		palette[i] = color.RGBA{
+			uint8(rnd.Intn(256)),
+			uint8(rnd.Intn(256)),
+			uint8(rnd.Intn(256)),
+			255,
+		}
+	}
+	img := image.NewPaletted(image.Rect(0, 0, 640, 480), palette)
+	for i := range img.Pix {
+		img.Pix[i] = uint8(rnd.Intn(256))
 	}
 
-	b.SetBytes(640 * 480 * 1)
+	b.SetBytes(640 * 480 * 4)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Encode(io.Discard, paletted, nil)
+		Encode(ioutil.Discard, img, nil)
 	}
 }
 
-func BenchmarkEncodeRandomRGBA(b *testing.B) {
-	rgba := image.NewRGBA(image.Rect(0, 0, 640, 480))
-	bo := rgba.Bounds()
+func BenchmarkQuantizedEncode(b *testing.B) {
+	img := image.NewRGBA(image.Rect(0, 0, 640, 480))
+	bo := img.Bounds()
 	rnd := rand.New(rand.NewSource(123))
 	for y := bo.Min.Y; y < bo.Max.Y; y++ {
 		for x := bo.Min.X; x < bo.Max.X; x++ {
-			rgba.SetRGBA(x, y, color.RGBA{
+			img.SetRGBA(x, y, color.RGBA{
 				uint8(rnd.Intn(256)),
 				uint8(rnd.Intn(256)),
 				uint8(rnd.Intn(256)),
@@ -686,49 +696,10 @@ func BenchmarkEncodeRandomRGBA(b *testing.B) {
 			})
 		}
 	}
-
 	b.SetBytes(640 * 480 * 4)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Encode(io.Discard, rgba, nil)
-	}
-}
-
-func BenchmarkEncodeRealisticPaletted(b *testing.B) {
-	img, err := readImg("../testdata/video-001.png")
-	if err != nil {
-		b.Fatalf("readImg: %v", err)
-	}
-	bo := img.Bounds()
-	paletted := image.NewPaletted(bo, palette.Plan9)
-	draw.Draw(paletted, bo, img, bo.Min, draw.Src)
-
-	b.SetBytes(int64(bo.Dx() * bo.Dy() * 1))
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		Encode(io.Discard, paletted, nil)
-	}
-}
-
-func BenchmarkEncodeRealisticRGBA(b *testing.B) {
-	img, err := readImg("../testdata/video-001.png")
-	if err != nil {
-		b.Fatalf("readImg: %v", err)
-	}
-	bo := img.Bounds()
-	// Converting img to rgba is redundant for video-001.png, which is already
-	// in the RGBA format, but for those copy/pasting this benchmark (but
-	// changing the source image), the conversion ensures that we're still
-	// benchmarking encoding an RGBA image.
-	rgba := image.NewRGBA(bo)
-	draw.Draw(rgba, bo, img, bo.Min, draw.Src)
-
-	b.SetBytes(int64(bo.Dx() * bo.Dy() * 4))
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		Encode(io.Discard, rgba, nil)
+		Encode(ioutil.Discard, img, nil)
 	}
 }

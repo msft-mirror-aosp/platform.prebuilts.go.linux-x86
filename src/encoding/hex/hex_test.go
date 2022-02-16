@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"strings"
 	"testing"
 )
@@ -149,7 +150,7 @@ func TestEncoderDecoder(t *testing.T) {
 func TestDecoderErr(t *testing.T) {
 	for _, tt := range errTests {
 		dec := NewDecoder(strings.NewReader(tt.in))
-		out, err := io.ReadAll(dec)
+		out, err := ioutil.ReadAll(dec)
 		wantErr := tt.err
 		// Decoder is reading from stream, so it reports io.ErrUnexpectedEOF instead of ErrLength.
 		if wantErr == ErrLength {

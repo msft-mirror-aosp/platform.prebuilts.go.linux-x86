@@ -13,7 +13,6 @@
 package runtime
 
 import (
-	"internal/abi"
 	"runtime/internal/atomic"
 	"runtime/internal/sys"
 	"unsafe"
@@ -89,7 +88,7 @@ func SetCPUProfileRate(hz int) {
 // held at the time of the signal, nor can it use substantial amounts
 // of stack.
 //go:nowritebarrierrec
-func (p *cpuProfile) add(tagPtr *unsafe.Pointer, stk []uintptr) {
+func (p *cpuProfile) add(gp *g, stk []uintptr) {
 	// Simple cas-lock to coordinate with setcpuprofilerate.
 	for !atomic.Cas(&prof.signalLock, 0, 1) {
 		osyield()
@@ -104,7 +103,7 @@ func (p *cpuProfile) add(tagPtr *unsafe.Pointer, stk []uintptr) {
 		// because otherwise its write barrier behavior may not
 		// be correct. See the long comment there before
 		// changing the argument here.
-		cpuprof.log.write(tagPtr, nanotime(), hdr[:], stk)
+		cpuprof.log.write(&gp.labels, nanotime(), hdr[:], stk)
 	}
 
 	atomic.Store(&prof.signalLock, 0)
@@ -158,8 +157,8 @@ func (p *cpuProfile) addExtra() {
 	if p.lostExtra > 0 {
 		hdr := [1]uint64{p.lostExtra}
 		lostStk := [2]uintptr{
-			abi.FuncPCABIInternal(_LostExternalCode) + sys.PCQuantum,
-			abi.FuncPCABIInternal(_ExternalCode) + sys.PCQuantum,
+			funcPC(_LostExternalCode) + sys.PCQuantum,
+			funcPC(_ExternalCode) + sys.PCQuantum,
 		}
 		p.log.write(nil, 0, hdr[:], lostStk[:])
 		p.lostExtra = 0
@@ -168,8 +167,8 @@ func (p *cpuProfile) addExtra() {
 	if p.lostAtomic > 0 {
 		hdr := [1]uint64{p.lostAtomic}
 		lostStk := [2]uintptr{
-			abi.FuncPCABIInternal(_LostSIGPROFDuringAtomic64) + sys.PCQuantum,
-			abi.FuncPCABIInternal(_System) + sys.PCQuantum,
+			funcPC(_LostSIGPROFDuringAtomic64) + sys.PCQuantum,
+			funcPC(_System) + sys.PCQuantum,
 		}
 		p.log.write(nil, 0, hdr[:], lostStk[:])
 		p.lostAtomic = 0
@@ -200,8 +199,6 @@ func runtime_pprof_runtime_cyclesPerSecond() int64 {
 // If profiling is turned off and all the profile data accumulated while it was
 // on has been returned, readProfile returns eof=true.
 // The caller must save the returned data and tags before calling readProfile again.
-// The returned data contains a whole number of records, and tags contains
-// exactly one entry per record.
 //
 //go:linkname runtime_pprof_readProfile runtime/pprof.readProfile
 func runtime_pprof_readProfile() ([]uint64, []unsafe.Pointer, bool) {

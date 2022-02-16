@@ -14,7 +14,6 @@ import (
 )
 
 const N = 10
-
 var count int64
 
 func run() error {
@@ -32,9 +31,10 @@ func run() error {
 }
 
 func main() {
-	// Does not work with gccgo, due to partially conservative GC.
+	// Does not work on 32-bits, or with gccgo, due to partially
+	// conservative GC.
 	// Try to enable when we have fully precise GC.
-	if runtime.Compiler == "gccgo" {
+	if runtime.GOARCH != "amd64" || runtime.Compiler == "gccgo" {
 		return
 	}
 	count = N
@@ -56,3 +56,4 @@ func main() {
 		panic("not all finalizers are called")
 	}
 }
+

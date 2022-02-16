@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix
+// +build aix
 
 package runtime
 
 import (
-	"internal/abi"
+	"internal/cpu"
 	"unsafe"
 )
 
@@ -48,7 +48,7 @@ func semacreate(mp *m) {
 
 //go:nosplit
 func semasleep(ns int64) int32 {
-	mp := getg().m
+	_m_ := getg().m
 	if ns >= 0 {
 		var ts timespec
 
@@ -62,17 +62,17 @@ func semasleep(ns int64) int32 {
 			ts.tv_nsec -= 1e9
 		}
 
-		if r, err := sem_timedwait((*semt)(unsafe.Pointer(mp.waitsema)), &ts); r != 0 {
+		if r, err := sem_timedwait((*semt)(unsafe.Pointer(_m_.waitsema)), &ts); r != 0 {
 			if err == _ETIMEDOUT || err == _EAGAIN || err == _EINTR {
 				return -1
 			}
-			println("sem_timedwait err ", err, " ts.tv_sec ", ts.tv_sec, " ts.tv_nsec ", ts.tv_nsec, " ns ", ns, " id ", mp.id)
+			println("sem_timedwait err ", err, " ts.tv_sec ", ts.tv_sec, " ts.tv_nsec ", ts.tv_nsec, " ns ", ns, " id ", _m_.id)
 			throw("sem_timedwait")
 		}
 		return 0
 	}
 	for {
-		r1, err := sem_wait((*semt)(unsafe.Pointer(mp.waitsema)))
+		r1, err := sem_wait((*semt)(unsafe.Pointer(_m_.waitsema)))
 		if r1 == 0 {
 			break
 		}
@@ -94,6 +94,7 @@ func semawakeup(mp *m) {
 func osinit() {
 	ncpu = int32(sysconf(__SC_NPROCESSORS_ONLN))
 	physPageSize = sysconf(__SC_PAGE_SIZE)
+	setupSystemConf()
 }
 
 // newosproc0 is a version of newosproc that can be called before the runtime
@@ -181,11 +182,6 @@ func unminit() {
 	unminitSignals()
 }
 
-// Called from exitm, but not from drop, to undo the effect of thread-owned
-// resources in minit, semacreate, or elsewhere. Do not take locks after calling this.
-func mdestroy(mp *m) {
-}
-
 // tstart is a function descriptor to _tstart defined in assembly.
 var tstart funcDescriptor
 
@@ -267,7 +263,7 @@ func setsig(i uint32, fn uintptr) {
 	var sa sigactiont
 	sa.sa_flags = _SA_SIGINFO | _SA_ONSTACK | _SA_RESTART
 	sa.sa_mask = sigset_all
-	if fn == abi.FuncPCABIInternal(sighandler) { // abi.FuncPCABIInternal(sighandler) matches the callers in signal_unix.go
+	if fn == funcPC(sighandler) {
 		fn = uintptr(unsafe.Pointer(&sigtramp))
 	}
 	sa.sa_handler = fn
@@ -322,19 +318,6 @@ func sigdelset(mask *sigset, i int) {
 	(*mask)[(i-1)/64] &^= 1 << ((uint32(i) - 1) & 63)
 }
 
-func setProcessCPUProfiler(hz int32) {
-	setProcessCPUProfilerTimer(hz)
-}
-
-func setThreadCPUProfiler(hz int32) {
-	setThreadCPUProfilerHz(hz)
-}
-
-//go:nosplit
-func validSIGPROF(mp *m, c *sigctxt) bool {
-	return true
-}
-
 const (
 	_CLOCK_REALTIME  = 9
 	_CLOCK_MONOTONIC = 10
@@ -349,12 +332,31 @@ func nanotime1() int64 {
 	return tp.tv_sec*1000000000 + tp.tv_nsec
 }
 
-func walltime() (sec int64, nsec int32) {
+func walltime1() (sec int64, nsec int32) {
 	ts := &timespec{}
 	if clock_gettime(_CLOCK_REALTIME, ts) != 0 {
 		throw("syscall clock_gettime failed")
 	}
 	return ts.tv_sec, int32(ts.tv_nsec)
+}
+
+const (
+	// getsystemcfg constants
+	_SC_IMPL     = 2
+	_IMPL_POWER8 = 0x10000
+	_IMPL_POWER9 = 0x20000
+)
+
+// setupSystemConf retrieves information about the CPU and updates
+// cpu.HWCap variables.
+func setupSystemConf() {
+	impl := getsystemcfg(_SC_IMPL)
+	if impl&_IMPL_POWER8 != 0 {
+		cpu.HWCap2 |= cpu.PPC_FEATURE2_ARCH_2_07
+	}
+	if impl&_IMPL_POWER9 != 0 {
+		cpu.HWCap2 |= cpu.PPC_FEATURE2_ARCH_3_00
+	}
 }
 
 //go:nosplit

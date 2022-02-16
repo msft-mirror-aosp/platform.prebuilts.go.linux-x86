@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"go/types"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
@@ -58,7 +59,7 @@ func walkDir(t *testing.T, path string, endTime time.Time) (int, bool) {
 		return 0, false
 	}
 
-	list, err := os.ReadDir(filepath.Join(runtime.GOROOT(), "src", path))
+	list, err := ioutil.ReadDir(filepath.Join(runtime.GOROOT(), "src", path))
 	if err != nil {
 		t.Fatalf("walkDir %s failed (%v)", path, err)
 	}

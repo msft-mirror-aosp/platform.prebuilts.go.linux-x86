@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !js
+// +build !js
 
 package net
 
@@ -59,7 +59,10 @@ func TestProhibitionaryDialArg(t *testing.T) {
 }
 
 func TestDialLocal(t *testing.T) {
-	ln := newLocalListener(t, "tcp")
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer ln.Close()
 	_, port, err := SplitHostPort(ln.Addr().String())
 	if err != nil {
@@ -151,27 +154,40 @@ func slowDialTCP(ctx context.Context, network string, laddr, raddr *TCPAddr) (*T
 	return c, err
 }
 
-func dialClosedPort(t *testing.T) (dialLatency time.Duration) {
-	// On most platforms, dialing a closed port should be nearly instantaneous —
-	// less than a few hundred milliseconds. However, on some platforms it may be
-	// much slower: on Windows and OpenBSD, it has been observed to take up to a
-	// few seconds.
+func dialClosedPort(t *testing.T) (actual, expected time.Duration) {
+	// Estimate the expected time for this platform.
+	// On Windows, dialing a closed port takes roughly 1 second,
+	// but other platforms should be instantaneous.
+	if runtime.GOOS == "windows" {
+		expected = 1500 * time.Millisecond
+	} else if runtime.GOOS == "darwin" {
+		expected = 150 * time.Millisecond
+	} else {
+		expected = 95 * time.Millisecond
+	}
 
 	l, err := Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("dialClosedPort: Listen failed: %v", err)
+		t.Logf("dialClosedPort: Listen failed: %v", err)
+		return 999 * time.Hour, expected
 	}
 	addr := l.Addr().String()
 	l.Close()
-
-	startTime := time.Now()
-	c, err := Dial("tcp", addr)
-	if err == nil {
-		c.Close()
+	// On OpenBSD, interference from TestTCPSelfConnect is mysteriously
+	// causing the first attempt to hang for a few seconds, so we throw
+	// away the first result and keep the second.
+	for i := 1; ; i++ {
+		startTime := time.Now()
+		c, err := Dial("tcp", addr)
+		if err == nil {
+			c.Close()
+		}
+		elapsed := time.Now().Sub(startTime)
+		if i == 2 {
+			t.Logf("dialClosedPort: measured delay %v", elapsed)
+			return elapsed, expected
+		}
 	}
-	elapsed := time.Now().Sub(startTime)
-	t.Logf("dialClosedPort: measured delay %v", elapsed)
-	return elapsed
 }
 
 func TestDialParallel(t *testing.T) {
@@ -181,7 +197,10 @@ func TestDialParallel(t *testing.T) {
 		t.Skip("both IPv4 and IPv6 are required")
 	}
 
-	closedPortDelay := dialClosedPort(t)
+	closedPortDelay, expectClosedPortDelay := dialClosedPort(t)
+	if closedPortDelay > expectClosedPortDelay {
+		t.Errorf("got %v; want <= %v", closedPortDelay, expectClosedPortDelay)
+	}
 
 	const instant time.Duration = 0
 	const fallbackDelay = 200 * time.Millisecond
@@ -534,9 +553,6 @@ func TestDialerPartialDeadline(t *testing.T) {
 	}
 }
 
-// isEADDRINUSE reports whether err is syscall.EADDRINUSE.
-var isEADDRINUSE = func(err error) bool { return false }
-
 func TestDialerLocalAddr(t *testing.T) {
 	if !supportsIPv4() || !supportsIPv6() {
 		t.Skip("both IPv4 and IPv6 are required")
@@ -592,9 +608,7 @@ func TestDialerLocalAddr(t *testing.T) {
 		{"tcp", "::1", &UnixAddr{}, &AddrError{Err: "some error"}},
 	}
 
-	issue34264Index := -1
 	if supportsIPv4map() {
-		issue34264Index = len(tests)
 		tests = append(tests, test{
 			"tcp", "127.0.0.1", &TCPAddr{IP: ParseIP("::")}, nil,
 		})
@@ -616,16 +630,20 @@ func TestDialerLocalAddr(t *testing.T) {
 			c.Close()
 		}
 	}
+	var err error
 	var lss [2]*localServer
 	for i, network := range []string{"tcp4", "tcp6"} {
-		lss[i] = newLocalServer(t, network)
+		lss[i], err = newLocalServer(network)
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer lss[i].teardown()
 		if err := lss[i].buildup(handler); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	for i, tt := range tests {
+	for _, tt := range tests {
 		d := &Dialer{LocalAddr: tt.laddr}
 		var addr string
 		ip := ParseIP(tt.raddr)
@@ -637,12 +655,12 @@ func TestDialerLocalAddr(t *testing.T) {
 		}
 		c, err := d.Dial(tt.network, addr)
 		if err == nil && tt.error != nil || err != nil && tt.error == nil {
-			if i == issue34264Index && runtime.GOOS == "freebsd" && isEADDRINUSE(err) {
-				// https://golang.org/issue/34264: FreeBSD through at least version 12.2
-				// has been observed to fail with EADDRINUSE when dialing from an IPv6
-				// local address to an IPv4 remote address.
-				t.Logf("%s %v->%s: got %v; want %v", tt.network, tt.laddr, tt.raddr, err, tt.error)
-				t.Logf("(spurious EADDRINUSE ignored on freebsd: see https://golang.org/issue/34264)")
+			// A suspected kernel bug in macOS 10.12 occasionally results in
+			// timeout errors when dialing address ::1. The errors have not
+			// been observed on newer versions of the OS, so we don't plan to work
+			// around them. See https://golang.org/issue/22019.
+			if tt.raddr == "::1" && os.Getenv("GO_BUILDER_NAME") == "darwin-amd64-10_12" && os.IsTimeout(err) {
+				t.Logf("ignoring timeout error on Darwin; see https://golang.org/issue/22019")
 			} else {
 				t.Errorf("%s %v->%s: got %v; want %v", tt.network, tt.laddr, tt.raddr, err, tt.error)
 			}
@@ -664,7 +682,10 @@ func TestDialerDualStack(t *testing.T) {
 		t.Skip("both IPv4 and IPv6 are required")
 	}
 
-	closedPortDelay := dialClosedPort(t)
+	closedPortDelay, expectClosedPortDelay := dialClosedPort(t)
+	if closedPortDelay > expectClosedPortDelay {
+		t.Errorf("got %v; want <= %v", closedPortDelay, expectClosedPortDelay)
+	}
 
 	origTestHookLookupIP := testHookLookupIP
 	defer func() { testHookLookupIP = origTestHookLookupIP }()
@@ -718,7 +739,10 @@ func TestDialerKeepAlive(t *testing.T) {
 			c.Close()
 		}
 	}
-	ls := newLocalServer(t, "tcp")
+	ls, err := newLocalServer("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer ls.teardown()
 	if err := ls.buildup(handler); err != nil {
 		t.Fatal(err)
@@ -816,7 +840,10 @@ func TestCancelAfterDial(t *testing.T) {
 		t.Skip("avoiding time.Sleep")
 	}
 
-	ln := newLocalListener(t, "tcp")
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -919,7 +946,11 @@ func TestDialerControl(t *testing.T) {
 			if !testableNetwork(network) {
 				continue
 			}
-			ln := newLocalListener(t, network)
+			ln, err := newLocalListener(network)
+			if err != nil {
+				t.Error(err)
+				continue
+			}
 			defer ln.Close()
 			d := Dialer{Control: controlOnConnSetup}
 			c, err := d.Dial(network, ln.Addr().String())
@@ -935,7 +966,11 @@ func TestDialerControl(t *testing.T) {
 			if !testableNetwork(network) {
 				continue
 			}
-			c1 := newLocalPacketListener(t, network)
+			c1, err := newLocalPacketListener(network)
+			if err != nil {
+				t.Error(err)
+				continue
+			}
 			if network == "unixgram" {
 				defer os.Remove(c1.LocalAddr().String())
 			}
@@ -955,7 +990,7 @@ func TestDialerControl(t *testing.T) {
 // except that it won't skip testing on non-mobile builders.
 func mustHaveExternalNetwork(t *testing.T) {
 	t.Helper()
-	mobile := runtime.GOOS == "android" || runtime.GOOS == "ios"
+	mobile := runtime.GOOS == "android" || runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 	if testenv.Builder() == "" || mobile {
 		testenv.MustHaveExternalNetwork(t)
 	}
@@ -971,7 +1006,10 @@ func (contextWithNonZeroDeadline) Deadline() (time.Time, bool) {
 }
 
 func TestDialWithNonZeroDeadline(t *testing.T) {
-	ln := newLocalListener(t, "tcp")
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer ln.Close()
 	_, port, err := SplitHostPort(ln.Addr().String())
 	if err != nil {

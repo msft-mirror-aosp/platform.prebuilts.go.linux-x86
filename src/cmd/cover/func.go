@@ -15,16 +15,14 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	exec "internal/execabs"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"text/tabwriter"
-
-	"golang.org/x/tools/cover"
 )
 
 // funcOutput takes two file names as arguments, a coverage profile to read as input and an output
@@ -40,7 +38,7 @@ import (
 //	total:		(statements)			91.9%
 
 func funcOutput(profile, outputFile string) error {
-	profiles, err := cover.ParseProfiles(profile)
+	profiles, err := ParseProfiles(profile)
 	if err != nil {
 		return err
 	}
@@ -146,7 +144,7 @@ func (v *FuncVisitor) Visit(node ast.Node) ast.Visitor {
 }
 
 // coverage returns the fraction of the statements in the function that were covered, as a numerator and denominator.
-func (f *FuncExtent) coverage(profile *cover.Profile) (num, den int64) {
+func (f *FuncExtent) coverage(profile *Profile) (num, den int64) {
 	// We could avoid making this n^2 overall by doing a single scan and annotating the functions,
 	// but the sizes of the data structures is never very large and the scan is almost instantaneous.
 	var covered, total int64
@@ -177,7 +175,7 @@ type Pkg struct {
 	}
 }
 
-func findPkgs(profiles []*cover.Profile) (map[string]*Pkg, error) {
+func findPkgs(profiles []*Profile) (map[string]*Pkg, error) {
 	// Run go list to find the location of every package we care about.
 	pkgs := make(map[string]*Pkg)
 	var list []string

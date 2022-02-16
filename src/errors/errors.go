@@ -27,30 +27,30 @@
 // second. It reports whether it finds a match. It should be used in preference to
 // simple equality checks:
 //
-//	if errors.Is(err, fs.ErrExist)
+//	if errors.Is(err, os.ErrExist)
 //
 // is preferable to
 //
-//	if err == fs.ErrExist
+//	if err == os.ErrExist
 //
-// because the former will succeed if err wraps fs.ErrExist.
+// because the former will succeed if err wraps os.ErrExist.
 //
 // As unwraps its first argument sequentially looking for an error that can be
 // assigned to its second argument, which must be a pointer. If it succeeds, it
 // performs the assignment and returns true. Otherwise, it returns false. The form
 //
-//	var perr *fs.PathError
+//	var perr *os.PathError
 //	if errors.As(err, &perr) {
 //		fmt.Println(perr.Path)
 //	}
 //
 // is preferable to
 //
-//	if perr, ok := err.(*fs.PathError); ok {
+//	if perr, ok := err.(*os.PathError); ok {
 //		fmt.Println(perr.Path)
 //	}
 //
-// because the former will succeed if err wraps an *fs.PathError.
+// because the former will succeed if err wraps an *os.PathError.
 package errors
 
 // New returns an error that formats as the given text.

@@ -43,9 +43,8 @@ TEXT memeqbody<>(SB),NOSPLIT,$0-0
 hugeloop:
 	CMPL	BX, $64
 	JB	bigloop
-#ifdef GO386_softfloat
-	JMP	bigloop
-#endif
+	CMPB	internal∕cpu·X86+const_offsetX86HasSSE2(SB), $1
+	JNE	bigloop
 	MOVOU	(SI), X0
 	MOVOU	(DI), X1
 	MOVOU	16(SI), X2

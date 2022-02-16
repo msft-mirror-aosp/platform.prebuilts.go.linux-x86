@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build mips || mipsle
+// +build mips mipsle
 
 #include "go_asm.h"
 #include "go_tls.h"
@@ -11,7 +11,7 @@
 
 #define	REGCTXT	R22
 
-TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
+TEXT runtime·rt0_go(SB),NOSPLIT,$0
 	// R29 = stack; R4 = argc; R5 = argv
 
 	ADDU	$-12, R29
@@ -63,11 +63,12 @@ nocgo:
 
 	// create a new goroutine to start program
 	MOVW	$runtime·mainPC(SB), R1	// entry
-	ADDU	$-8, R29
-	MOVW	R1, 4(R29)
+	ADDU	$-12, R29
+	MOVW	R1, 8(R29)
+	MOVW	R0, 4(R29)
 	MOVW	R0, 0(R29)
 	JAL	runtime·newproc(SB)
-	ADDU	$8, R29
+	ADDU	$12, R29
 
 	// start this M
 	JAL	runtime·mstart(SB)
@@ -85,25 +86,33 @@ TEXT runtime·breakpoint(SB),NOSPLIT,$0-0
 TEXT runtime·asminit(SB),NOSPLIT,$0-0
 	RET
 
-TEXT runtime·mstart(SB),NOSPLIT|TOPFRAME,$0
-	JAL	runtime·mstart0(SB)
-	RET // not reached
-
 /*
  *  go-routine
  */
 
+// void gosave(Gobuf*)
+// save state in Gobuf; setjmp
+TEXT runtime·gosave(SB),NOSPLIT|NOFRAME,$0-4
+	MOVW	buf+0(FP), R1
+	MOVW	R29, gobuf_sp(R1)
+	MOVW	R31, gobuf_pc(R1)
+	MOVW	g, gobuf_g(R1)
+	MOVW	R0, gobuf_lr(R1)
+	MOVW	R0, gobuf_ret(R1)
+	// Assert ctxt is zero. See func save.
+	MOVW	gobuf_ctxt(R1), R1
+	BEQ	R1, 2(PC)
+	JAL	runtime·badctxt(SB)
+	RET
+
 // void gogo(Gobuf*)
 // restore state from Gobuf; longjmp
-TEXT runtime·gogo(SB),NOSPLIT|NOFRAME,$0-4
+TEXT runtime·gogo(SB),NOSPLIT,$8-4
 	MOVW	buf+0(FP), R3
-	MOVW	gobuf_g(R3), R4
-	MOVW	0(R4), R5	// make sure g != nil
-	JMP	gogo<>(SB)
-
-TEXT gogo<>(SB),NOSPLIT|NOFRAME,$0
-	MOVW	R4, g
+	MOVW	gobuf_g(R3), g	// make sure g is not nil
 	JAL	runtime·save_g(SB)
+
+	MOVW	0(g), R2
 	MOVW	gobuf_sp(R3), R29
 	MOVW	gobuf_lr(R3), R31
 	MOVW	gobuf_ret(R3), R1
@@ -124,6 +133,7 @@ TEXT runtime·mcall(SB),NOSPLIT|NOFRAME,$0-4
 	MOVW	R29, (g_sched+gobuf_sp)(g)
 	MOVW	R31, (g_sched+gobuf_pc)(g)
 	MOVW	R0, (g_sched+gobuf_lr)(g)
+	MOVW	g, (g_sched+gobuf_g)(g)
 
 	// Switch to m->g0 & its stack, call fn.
 	MOVW	g, R1
@@ -175,12 +185,21 @@ TEXT runtime·systemstack(SB),NOSPLIT,$0-4
 switch:
 	// save our state in g->sched.  Pretend to
 	// be systemstack_switch if the G stack is scanned.
-	JAL	gosave_systemstack_switch<>(SB)
+	MOVW	$runtime·systemstack_switch(SB), R4
+	ADDU	$8, R4	// get past prologue
+	MOVW	R4, (g_sched+gobuf_pc)(g)
+	MOVW	R29, (g_sched+gobuf_sp)(g)
+	MOVW	R0, (g_sched+gobuf_lr)(g)
+	MOVW	g, (g_sched+gobuf_g)(g)
 
 	// switch to g0
 	MOVW	R3, g
 	JAL	runtime·save_g(SB)
 	MOVW	(g_sched+gobuf_sp)(g), R1
+	// make it look like mstart called systemstack on g0, to stop traceback
+	ADDU	$-4, R1
+	MOVW	$runtime·mstart(SB), R2
+	MOVW	R2, 0(R1)
 	MOVW	R1, R29
 
 	// call target function
@@ -261,7 +280,7 @@ TEXT runtime·morestack_noctxt(SB),NOSPLIT,$0-0
 	JMP	runtime·morestack(SB)
 
 // reflectcall: call a function with the given argument list
-// func call(stackArgsType *_type, f *FuncVal, stackArgs *byte, stackArgsSize, stackRetOffset, frameSize uint32, regArgs *abi.RegArgs).
+// func call(argtype *_type, f *FuncVal, arg *byte, argsize, retoffset uint32).
 // we don't have variable-sized frames, so we use a small number
 // of constant-sized-frame functions to encode a few bits of size in the pc.
 
@@ -272,8 +291,8 @@ TEXT runtime·morestack_noctxt(SB),NOSPLIT,$0-0
 	MOVW	$NAME(SB), R4;	\
 	JMP	(R4)
 
-TEXT ·reflectcall(SB),NOSPLIT|NOFRAME,$0-28
-	MOVW	frameSize+20(FP), R1
+TEXT ·reflectcall(SB),NOSPLIT|NOFRAME,$0-20
+	MOVW	argsize+12(FP), R1
 
 	DISPATCH(runtime·call16, 16)
 	DISPATCH(runtime·call32, 32)
@@ -306,11 +325,11 @@ TEXT ·reflectcall(SB),NOSPLIT|NOFRAME,$0-28
 	JMP	(R4)
 
 #define CALLFN(NAME,MAXSIZE)	\
-TEXT NAME(SB),WRAPPER,$MAXSIZE-28;	\
+TEXT NAME(SB),WRAPPER,$MAXSIZE-20;	\
 	NO_LOCAL_POINTERS;	\
 	/* copy arguments to stack */		\
-	MOVW	stackArgs+8(FP), R1;	\
-	MOVW	stackArgsSize+12(FP), R2;	\
+	MOVW	arg+8(FP), R1;	\
+	MOVW	argsize+12(FP), R2;	\
 	MOVW	R29, R3;	\
 	ADDU	$4, R3;	\
 	ADDU	R3, R2;	\
@@ -326,10 +345,10 @@ TEXT NAME(SB),WRAPPER,$MAXSIZE-28;	\
 	PCDATA	$PCDATA_StackMapIndex, $0;	\
 	JAL	(R4);	\
 	/* copy return values back */		\
-	MOVW	stackArgsType+0(FP), R5;	\
-	MOVW	stackArgs+8(FP), R1;	\
-	MOVW	stackArgsSize+12(FP), R2;	\
-	MOVW	stackRetOffset+16(FP), R4;	\
+	MOVW	argtype+0(FP), R5;	\
+	MOVW	arg+8(FP), R1;	\
+	MOVW	n+12(FP), R2;	\
+	MOVW	retoffset+16(FP), R4;	\
 	ADDU	$4, R29, R3;	\
 	ADDU	R4, R3;	\
 	ADDU	R4, R1;	\
@@ -341,12 +360,11 @@ TEXT NAME(SB),WRAPPER,$MAXSIZE-28;	\
 // separate function so it can allocate stack space for the arguments
 // to reflectcallmove. It does not follow the Go ABI; it expects its
 // arguments in registers.
-TEXT callRet<>(SB), NOSPLIT, $20-0
+TEXT callRet<>(SB), NOSPLIT, $16-0
 	MOVW	R5, 4(R29)
 	MOVW	R1, 8(R29)
 	MOVW	R3, 12(R29)
 	MOVW	R2, 16(R29)
-	MOVW    $0, 20(R29)
 	JAL	runtime·reflectcallmove(SB)
 	RET
 
@@ -381,22 +399,32 @@ CALLFN(·call1073741824, 1073741824)
 TEXT runtime·procyield(SB),NOSPLIT,$0-4
 	RET
 
-// Save state of caller into g->sched,
-// but using fake PC from systemstack_switch.
-// Must only be called from functions with no locals ($0)
-// or else unwinding from systemstack_switch is incorrect.
-// Smashes R1.
-TEXT gosave_systemstack_switch<>(SB),NOSPLIT|NOFRAME,$0
-	MOVW	$runtime·systemstack_switch(SB), R1
-	ADDU	$8, R1	// get past prologue
-	MOVW	R1, (g_sched+gobuf_pc)(g)
+// void jmpdefer(fv, sp);
+// called from deferreturn.
+// 1. grab stored LR for caller
+// 2. sub 8 bytes to get back to JAL deferreturn
+// 3. JMP to fn
+TEXT runtime·jmpdefer(SB),NOSPLIT,$0-8
+	MOVW	0(R29), R31
+	ADDU	$-8, R31
+
+	MOVW	fv+0(FP), REGCTXT
+	MOVW	argp+4(FP), R29
+	ADDU	$-4, R29
+	NOR	R0, R0	// prevent scheduling
+	MOVW	0(REGCTXT), R4
+	JMP	(R4)
+
+// Save state of caller into g->sched. Smashes R1.
+TEXT gosave<>(SB),NOSPLIT|NOFRAME,$0
+	MOVW	R31, (g_sched+gobuf_pc)(g)
 	MOVW	R29, (g_sched+gobuf_sp)(g)
 	MOVW	R0, (g_sched+gobuf_lr)(g)
 	MOVW	R0, (g_sched+gobuf_ret)(g)
 	// Assert ctxt is zero. See func save.
 	MOVW	(g_sched+gobuf_ctxt)(g), R1
 	BEQ	R1, 2(PC)
-	JAL	runtime·abort(SB)
+	JAL	runtime·badctxt(SB)
 	RET
 
 // func asmcgocall(fn, arg unsafe.Pointer) int32
@@ -412,15 +440,12 @@ TEXT ·asmcgocall(SB),NOSPLIT,$0-12
 
 	// Figure out if we need to switch to m->g0 stack.
 	// We get called to create new OS threads too, and those
-	// come in on the m->g0 stack already. Or we might already
-	// be on the m->gsignal stack.
+	// come in on the m->g0 stack already.
 	MOVW	g_m(g), R5
-	MOVW	m_gsignal(R5), R6
-	BEQ	R6, g, g0
 	MOVW	m_g0(R5), R6
 	BEQ	R6, g, g0
 
-	JAL	gosave_systemstack_switch<>(SB)
+	JAL	gosave<>(SB)
 	MOVW	R6, g
 	JAL	runtime·save_g(SB)
 	MOVW	(g_sched+gobuf_sp)(g), R29
@@ -447,9 +472,25 @@ g0:
 	MOVW	R2, ret+8(FP)
 	RET
 
-// cgocallback(fn, frame unsafe.Pointer, ctxt uintptr)
+// cgocallback(void (*fn)(void*), void *frame, uintptr framesize)
+// Turn the fn into a Go func (by taking its address) and call
+// cgocallback_gofunc.
+TEXT runtime·cgocallback(SB),NOSPLIT,$16-16
+	MOVW	$fn+0(FP), R1
+	MOVW	R1, 4(R29)
+	MOVW	frame+4(FP), R1
+	MOVW	R1, 8(R29)
+	MOVW	framesize+8(FP), R1
+	MOVW	R1, 12(R29)
+	MOVW	ctxt+12(FP), R1
+	MOVW	R1, 16(R29)
+	MOVW	$runtime·cgocallback_gofunc(SB), R1
+	JAL	(R1)
+	RET
+
+// cgocallback_gofunc(FuncVal*, void *frame, uintptr framesize, uintptr ctxt)
 // See cgocall.go for more details.
-TEXT ·cgocallback(SB),NOSPLIT,$12-12
+TEXT ·cgocallback_gofunc(SB),NOSPLIT,$8-16
 	NO_LOCAL_POINTERS
 
 	// Load m and g from thread-local storage.
@@ -497,7 +538,7 @@ havem:
 	// NOTE: unwindm knows that the saved g->sched.sp is at 4(R29) aka savedsp-8(SP).
 	MOVW	m_g0(R3), R1
 	MOVW	(g_sched+gobuf_sp)(R1), R2
-	MOVW	R2, savedsp-12(SP)	// must match frame size
+	MOVW	R2, savedsp-8(SP)
 	MOVW	R29, (g_sched+gobuf_sp)(R1)
 
 	// Switch to m->curg stack and call runtime.cgocallbackg.
@@ -506,30 +547,30 @@ havem:
 	// save that information (m->curg->sched) so we can restore it.
 	// We can restore m->curg->sched.sp easily, because calling
 	// runtime.cgocallbackg leaves SP unchanged upon return.
-	// To save m->curg->sched.pc, we push it onto the curg stack and
-	// open a frame the same size as cgocallback's g0 frame.
-	// Once we switch to the curg stack, the pushed PC will appear
-	// to be the return PC of cgocallback, so that the traceback
-	// will seamlessly trace back into the earlier calls.
+	// To save m->curg->sched.pc, we push it onto the stack.
+	// This has the added benefit that it looks to the traceback
+	// routine like cgocallbackg is going to return to that
+	// PC (because the frame we allocate below has the same
+	// size as cgocallback_gofunc's frame declared above)
+	// so that the traceback will seamlessly trace back into
+	// the earlier calls.
+	//
+	// In the new goroutine, -4(SP) is unused (where SP refers to
+	// m->curg's SP while we're setting it up, before we've adjusted it).
 	MOVW	m_curg(R3), g
 	JAL	runtime·save_g(SB)
 	MOVW	(g_sched+gobuf_sp)(g), R2 // prepare stack as R2
 	MOVW	(g_sched+gobuf_pc)(g), R4
-	MOVW	R4, -(12+4)(R2)	// "saved LR"; must match frame size
-	// Gather our arguments into registers.
-	MOVW	fn+0(FP), R5
-	MOVW	frame+4(FP), R6
-	MOVW	ctxt+8(FP), R7
-	MOVW	$-(12+4)(R2), R29	// switch stack; must match frame size
-	MOVW	R5, 4(R29)
-	MOVW	R6, 8(R29)
-	MOVW	R7, 12(R29)
+	MOVW	R4, -12(R2)
+	MOVW    ctxt+12(FP), R1
+	MOVW    R1, -8(R2)
+	MOVW	$-12(R2), R29
 	JAL	runtime·cgocallbackg(SB)
 
 	// Restore g->sched (== m->curg->sched) from saved values.
 	MOVW	0(R29), R4
 	MOVW	R4, (g_sched+gobuf_pc)(g)
-	MOVW	$(12+4)(R29), R2	// must match frame size
+	MOVW	$12(R29), R2
 	MOVW	R2, (g_sched+gobuf_sp)(g)
 
 	// Switch back to m->g0's stack and restore m->g0->sched.sp.
@@ -539,7 +580,7 @@ havem:
 	MOVW	m_g0(R3), g
 	JAL	runtime·save_g(SB)
 	MOVW	(g_sched+gobuf_sp)(g), R29
-	MOVW	savedsp-12(SP), R2	// must match frame size
+	MOVW	savedsp-8(SP), R2
 	MOVW	R2, (g_sched+gobuf_sp)(g)
 
 	// If the m on entry was nil, we called needm above to borrow an m
@@ -787,10 +828,6 @@ TEXT runtime·panicSlice3CU(SB),NOSPLIT,$0-8
 	MOVW	R1, x+0(FP)
 	MOVW	R2, y+4(FP)
 	JMP	runtime·goPanicSlice3CU(SB)
-TEXT runtime·panicSliceConvert(SB),NOSPLIT,$0-8
-	MOVW	R3, x+0(FP)
-	MOVW	R4, y+4(FP)
-	JMP	runtime·goPanicSliceConvert(SB)
 
 // Extended versions for 64-bit indexes.
 TEXT runtime·panicExtendIndex(SB),NOSPLIT,$0-12

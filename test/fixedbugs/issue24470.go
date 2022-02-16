@@ -1,4 +1,4 @@
-// errorcheck -d=panic
+// errorcheck
 
 // Copyright 2018 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -10,7 +10,6 @@
 package p
 
 func f(i interface{}) {
-	if x, ok := i.(type); ok { // ERROR "assignment mismatch|outside type switch"
-		_ = x
+	if x, ok := i.(type); ok { // ERROR "outside type switch"
 	}
 }

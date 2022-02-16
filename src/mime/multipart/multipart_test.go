@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/textproto"
 	"os"
 	"reflect"
@@ -306,7 +307,7 @@ Oh no, premature EOF!
 	if err != nil {
 		t.Fatalf("didn't get a part")
 	}
-	_, err = io.Copy(io.Discard, part)
+	_, err = io.Copy(ioutil.Discard, part)
 	if err != io.ErrUnexpectedEOF {
 		t.Fatalf("expected error io.ErrUnexpectedEOF; got %v", err)
 	}
@@ -371,7 +372,7 @@ Body 2
 		if !reflect.DeepEqual(part.Header, hdr) {
 			t.Errorf("Part %d: part.Header = %v, want %v", i, part.Header, hdr)
 		}
-		data, err := io.ReadAll(part)
+		data, err := ioutil.ReadAll(part)
 		expectEq(t, body, string(data), fmt.Sprintf("Part %d body", i))
 		if err != nil {
 			t.Fatalf("Part %d: ReadAll failed: %v", i, err)
@@ -529,14 +530,14 @@ func TestNested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading text/plain part: %v", err)
 	}
-	if b, err := io.ReadAll(p); string(b) != "*body*\r\n" || err != nil {
+	if b, err := ioutil.ReadAll(p); string(b) != "*body*\r\n" || err != nil {
 		t.Fatalf("reading text/plain part: got %q, %v", b, err)
 	}
 	p, err = mr2.NextPart()
 	if err != nil {
 		t.Fatalf("reading text/html part: %v", err)
 	}
-	if b, err := io.ReadAll(p); string(b) != "<b>body</b>\r\n" || err != nil {
+	if b, err := ioutil.ReadAll(p); string(b) != "<b>body</b>\r\n" || err != nil {
 		t.Fatalf("reading text/html part: got %q, %v", b, err)
 	}
 
@@ -849,7 +850,7 @@ Cases:
 				t.Errorf("in test %q, NextPart: %v", tt.name, err)
 				continue Cases
 			}
-			pbody, err := io.ReadAll(p)
+			pbody, err := ioutil.ReadAll(p)
 			if err != nil {
 				t.Errorf("in test %q, error reading part: %v", tt.name, err)
 				continue Cases
@@ -881,7 +882,7 @@ func partsFromReader(r *Reader) ([]headerBody, error) {
 		if err != nil {
 			return nil, fmt.Errorf("NextPart: %v", err)
 		}
-		pbody, err := io.ReadAll(p)
+		pbody, err := ioutil.ReadAll(p)
 		if err != nil {
 			return nil, fmt.Errorf("error reading part: %v", err)
 		}

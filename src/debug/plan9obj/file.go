@@ -82,7 +82,7 @@ type Sym struct {
 type formatError struct {
 	off int
 	msg string
-	val any
+	val interface{}
 }
 
 func (e *formatError) Error() string {
@@ -301,15 +301,11 @@ func newTable(symtab []byte, ptrsz int) ([]Sym, error) {
 	return syms, nil
 }
 
-// ErrNoSymbols is returned by File.Symbols if there is no such section
-// in the File.
-var ErrNoSymbols = errors.New("no symbol section")
-
 // Symbols returns the symbol table for f.
 func (f *File) Symbols() ([]Sym, error) {
 	symtabSection := f.Section("syms")
 	if symtabSection == nil {
-		return nil, ErrNoSymbols
+		return nil, errors.New("no symbol section")
 	}
 
 	symtab, err := symtabSection.Data()

@@ -48,9 +48,7 @@ func (d *Data) parseUnits() ([]unit, error) {
 			break
 		}
 		b.skip(int(len))
-		if len > 0 {
-			nunit++
-		}
+		nunit++
 	}
 	if b.err != nil {
 		return nil, b.err
@@ -63,9 +61,7 @@ func (d *Data) parseUnits() ([]unit, error) {
 		u := &units[i]
 		u.base = b.off
 		var n Offset
-		for n == 0 {
-			n, u.is64 = b.unitLength()
-		}
+		n, u.is64 = b.unitLength()
 		dataOff := b.off
 		vers := b.uint16()
 		if vers < 2 || vers > 5 {
