@@ -6,8 +6,6 @@ package cpu
 
 const CacheLinePadSize = 256
 
-var HWCap uint
-
 // bitIsSet reports whether the bit at index is set. The bit index
 // is in big endian order, so bit index 0 is the leftmost bit.
 func bitIsSet(bits []uint64, index uint) bool {
@@ -97,10 +95,8 @@ const (
 	// vector facilities
 	vxe facility = 135 // vector-enhancements 1
 
-	// Note: vx requires kernel support
-	// and so must be fetched from HWCAP.
-
-	hwcap_VX = 1 << 11 // vector facility
+	// Note: vx and highgprs are excluded because they require
+	// kernel support and so must be fetched from HWCAP.
 )
 
 // facilityList contains the result of an STFLE call.
@@ -192,14 +188,7 @@ func doinit() {
 			S390X.HasEDDSA = kdsa.Has(eddsaVerifyEd25519, eddsaSignEd25519, eddsaVerifyEd448, eddsaSignEd448)
 		}
 	}
-
-	S390X.HasVX = isSet(HWCap, hwcap_VX)
-
 	if S390X.HasVX {
 		S390X.HasVXE = facilities.Has(vxe)
 	}
-}
-
-func isSet(hwc uint, value uint) bool {
-	return hwc&value != 0
 }

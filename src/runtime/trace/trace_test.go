@@ -10,6 +10,7 @@ import (
 	"internal/race"
 	"internal/trace"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"runtime"
@@ -585,7 +586,7 @@ func saveTrace(t *testing.T, buf *bytes.Buffer, name string) {
 	if !*saveTraces {
 		return
 	}
-	if err := os.WriteFile(name+".trace", buf.Bytes(), 0600); err != nil {
+	if err := ioutil.WriteFile(name+".trace", buf.Bytes(), 0600); err != nil {
 		t.Errorf("failed to write trace file: %s", err)
 	}
 }

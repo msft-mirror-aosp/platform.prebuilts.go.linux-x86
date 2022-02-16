@@ -319,12 +319,8 @@ func (p *printer) exprList(prev0 token.Pos, list []ast.Expr, depth int, mode exp
 	}
 }
 
-func (p *printer) parameters(fields *ast.FieldList, isTypeParam bool) {
-	openTok, closeTok := token.LPAREN, token.RPAREN
-	if isTypeParam {
-		openTok, closeTok = token.LBRACK, token.RBRACK
-	}
-	p.print(fields.Opening, openTok)
+func (p *printer) parameters(fields *ast.FieldList) {
+	p.print(fields.Opening, token.LPAREN)
 	if len(fields.List) > 0 {
 		prevLine := p.lineFor(fields.Opening)
 		ws := indent
@@ -332,8 +328,13 @@ func (p *printer) parameters(fields *ast.FieldList, isTypeParam bool) {
 			// determine par begin and end line (may be different
 			// if there are multiple parameter names for this par
 			// or the type is on a separate line)
-			parLineBeg := p.lineFor(par.Pos())
-			parLineEnd := p.lineFor(par.End())
+			var parLineBeg int
+			if len(par.Names) > 0 {
+				parLineBeg = p.lineFor(par.Names[0].Pos())
+			} else {
+				parLineBeg = p.lineFor(par.Type.Pos())
+			}
+			var parLineEnd = p.lineFor(par.Type.End())
 			// separating "," if needed
 			needsLinebreak := 0 < prevLine && prevLine < parLineBeg
 			if i > 0 {
@@ -378,29 +379,25 @@ func (p *printer) parameters(fields *ast.FieldList, isTypeParam bool) {
 			p.print(unindent)
 		}
 	}
-	p.print(fields.Closing, closeTok)
+	p.print(fields.Closing, token.RPAREN)
 }
 
-func (p *printer) signature(sig *ast.FuncType) {
-	if sig.TypeParams != nil {
-		p.parameters(sig.TypeParams, true)
-	}
-	if sig.Params != nil {
-		p.parameters(sig.Params, false)
+func (p *printer) signature(params, result *ast.FieldList) {
+	if params != nil {
+		p.parameters(params)
 	} else {
 		p.print(token.LPAREN, token.RPAREN)
 	}
-	res := sig.Results
-	n := res.NumFields()
+	n := result.NumFields()
 	if n > 0 {
-		// res != nil
+		// result != nil
 		p.print(blank)
-		if n == 1 && res.List[0].Names == nil {
-			// single anonymous res; no ()'s
-			p.expr(stripParensAlways(res.List[0].Type))
+		if n == 1 && result.List[0].Names == nil {
+			// single anonymous result; no ()'s
+			p.expr(stripParensAlways(result.List[0].Type))
 			return
 		}
-		p.parameters(res, false)
+		p.parameters(result)
 	}
 }
 
@@ -470,10 +467,10 @@ func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) 
 				}
 				p.expr(f.Type)
 			} else { // interface
-				if len(f.Names) > 0 {
-					name := f.Names[0] // method name
-					p.expr(name)
-					p.signature(f.Type.(*ast.FuncType)) // don't print "func"
+				if ftyp, isFtyp := f.Type.(*ast.FuncType); isFtyp {
+					// method
+					p.expr(f.Names[0])
+					p.signature(ftyp.Params, ftyp.Results)
 				} else {
 					// embedded interface
 					p.expr(f.Type)
@@ -541,33 +538,19 @@ func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) 
 	} else { // interface
 
 		var line int
-		var prev *ast.Ident // previous "type" identifier
 		for i, f := range list {
-			var name *ast.Ident // first name, or nil
-			if len(f.Names) > 0 {
-				name = f.Names[0]
-			}
 			if i > 0 {
-				// don't do a line break (min == 0) if we are printing a list of types
-				// TODO(gri) this doesn't work quite right if the list of types is
-				//           spread across multiple lines
-				min := 1
-				if prev != nil && name == prev {
-					min = 0
-				}
-				p.linebreak(p.lineFor(f.Pos()), min, ignore, p.linesFrom(line) > 0)
+				p.linebreak(p.lineFor(f.Pos()), 1, ignore, p.linesFrom(line) > 0)
 			}
 			p.setComment(f.Doc)
 			p.recordLine(&line)
-			if name != nil {
+			if ftyp, isFtyp := f.Type.(*ast.FuncType); isFtyp {
 				// method
-				p.expr(name)
-				p.signature(f.Type.(*ast.FuncType)) // don't print "func"
-				prev = nil
+				p.expr(f.Names[0])
+				p.signature(ftyp.Params, ftyp.Results)
 			} else {
 				// embedded interface
 				p.expr(f.Type)
-				prev = nil
 			}
 			p.setComment(f.Comment)
 		}
@@ -817,7 +800,7 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 		p.print(x.Type.Pos(), token.FUNC)
 		// See the comment in funcDecl about how the header size is computed.
 		startCol := p.out.Column - len("func")
-		p.signature(x.Type)
+		p.signature(x.Type.Params, x.Type.Results)
 		p.funcBody(p.distanceFrom(x.Type.Pos(), startCol), blank, x.Body)
 
 	case *ast.ParenExpr:
@@ -849,14 +832,6 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 		p.expr1(x.X, token.HighestPrec, 1)
 		p.print(x.Lbrack, token.LBRACK)
 		p.expr0(x.Index, depth+1)
-		p.print(x.Rbrack, token.RBRACK)
-
-	case *ast.IndexListExpr:
-		// TODO(gri): as for IndexExpr, should treat [] like parentheses and undo
-		// one level of depth
-		p.expr1(x.X, token.HighestPrec, 1)
-		p.print(x.Lbrack, token.LBRACK)
-		p.exprList(x.Lbrack, x.Indices, depth+1, commaTerm, x.Rbrack, false)
 		p.print(x.Rbrack, token.RBRACK)
 
 	case *ast.SliceExpr:
@@ -970,7 +945,7 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 
 	case *ast.FuncType:
 		p.print(token.FUNC)
-		p.signature(x)
+		p.signature(x.Params, x.Results)
 
 	case *ast.InterfaceType:
 		p.print(token.INTERFACE)
@@ -1027,7 +1002,7 @@ func normalizedNumber(lit *ast.BasicLit) *ast.BasicLit {
 			break
 		}
 		// remove leading 0's from integer (but not floating-point) imaginary literals
-		if x[len(x)-1] == 'i' && !strings.ContainsAny(x, ".e") {
+		if x[len(x)-1] == 'i' && strings.IndexByte(x, '.') < 0 && strings.IndexByte(x, 'e') < 0 {
 			x = strings.TrimLeft(x, "0_")
 			if x == "i" {
 				x = "0i"
@@ -1610,9 +1585,6 @@ func (p *printer) spec(spec ast.Spec, n int, doIndent bool) {
 	case *ast.TypeSpec:
 		p.setComment(s.Doc)
 		p.expr(s.Name)
-		if s.TypeParams != nil {
-			p.parameters(s.TypeParams, true)
-		}
 		if n == 1 {
 			p.print(blank)
 		} else {
@@ -1801,11 +1773,11 @@ func (p *printer) funcDecl(d *ast.FuncDecl) {
 	// FUNC is emitted).
 	startCol := p.out.Column - len("func ")
 	if d.Recv != nil {
-		p.parameters(d.Recv, false) // method: print receiver
+		p.parameters(d.Recv) // method: print receiver
 		p.print(blank)
 	}
 	p.expr(d.Name)
-	p.signature(d.Type)
+	p.signature(d.Type.Params, d.Type.Results)
 	p.funcBody(p.distanceFrom(d.Pos(), startCol), vtab, d.Body)
 }
 

@@ -5,9 +5,8 @@
 package runtime
 
 import (
-	"internal/abi"
 	"internal/bytealg"
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -56,20 +55,20 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	return s
 }
 
-func concatstring2(buf *tmpBuf, a0, a1 string) string {
-	return concatstrings(buf, []string{a0, a1})
+func concatstring2(buf *tmpBuf, a [2]string) string {
+	return concatstrings(buf, a[:])
 }
 
-func concatstring3(buf *tmpBuf, a0, a1, a2 string) string {
-	return concatstrings(buf, []string{a0, a1, a2})
+func concatstring3(buf *tmpBuf, a [3]string) string {
+	return concatstrings(buf, a[:])
 }
 
-func concatstring4(buf *tmpBuf, a0, a1, a2, a3 string) string {
-	return concatstrings(buf, []string{a0, a1, a2, a3})
+func concatstring4(buf *tmpBuf, a [4]string) string {
+	return concatstrings(buf, a[:])
 }
 
-func concatstring5(buf *tmpBuf, a0, a1, a2, a3, a4 string) string {
-	return concatstrings(buf, []string{a0, a1, a2, a3, a4})
+func concatstring5(buf *tmpBuf, a [5]string) string {
+	return concatstrings(buf, a[:])
 }
 
 // slicebytetostring converts a byte slice to a string.
@@ -89,17 +88,14 @@ func slicebytetostring(buf *tmpBuf, ptr *byte, n int) (str string) {
 		racereadrangepc(unsafe.Pointer(ptr),
 			uintptr(n),
 			getcallerpc(),
-			abi.FuncPCABIInternal(slicebytetostring))
+			funcPC(slicebytetostring))
 	}
 	if msanenabled {
 		msanread(unsafe.Pointer(ptr), uintptr(n))
 	}
-	if asanenabled {
-		asanread(unsafe.Pointer(ptr), uintptr(n))
-	}
 	if n == 1 {
 		p := unsafe.Pointer(&staticuint64s[*ptr])
-		if goarch.BigEndian {
+		if sys.BigEndian {
 			p = add(p, 7)
 		}
 		stringStructOf(&str).str = p
@@ -156,13 +152,10 @@ func slicebytetostringtmp(ptr *byte, n int) (str string) {
 		racereadrangepc(unsafe.Pointer(ptr),
 			uintptr(n),
 			getcallerpc(),
-			abi.FuncPCABIInternal(slicebytetostringtmp))
+			funcPC(slicebytetostringtmp))
 	}
 	if msanenabled && n > 0 {
 		msanread(unsafe.Pointer(ptr), uintptr(n))
-	}
-	if asanenabled && n > 0 {
-		asanread(unsafe.Pointer(ptr), uintptr(n))
 	}
 	stringStructOf(&str).str = unsafe.Pointer(ptr)
 	stringStructOf(&str).len = n
@@ -210,13 +203,10 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 		racereadrangepc(unsafe.Pointer(&a[0]),
 			uintptr(len(a))*unsafe.Sizeof(a[0]),
 			getcallerpc(),
-			abi.FuncPCABIInternal(slicerunetostring))
+			funcPC(slicerunetostring))
 	}
 	if msanenabled && len(a) > 0 {
 		msanread(unsafe.Pointer(&a[0]), uintptr(len(a))*unsafe.Sizeof(a[0]))
-	}
-	if asanenabled && len(a) > 0 {
-		asanread(unsafe.Pointer(&a[0]), uintptr(len(a))*unsafe.Sizeof(a[0]))
 	}
 	var dum [4]byte
 	size1 := 0
@@ -343,6 +333,22 @@ func gostringn(p *byte, l int) string {
 	s, b := rawstring(l)
 	memmove(unsafe.Pointer(&b[0]), unsafe.Pointer(p), uintptr(l))
 	return s
+}
+
+func index(s, t string) int {
+	if len(t) == 0 {
+		return 0
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == t[0] && hasPrefix(s[i:], t) {
+			return i
+		}
+	}
+	return -1
+}
+
+func contains(s, t string) bool {
+	return index(s, t) >= 0
 }
 
 func hasPrefix(s, prefix string) bool {
@@ -492,4 +498,38 @@ func gostringw(strw *uint16) string {
 	}
 	b[n2] = 0 // for luck
 	return s[:n2]
+}
+
+// parseRelease parses a dot-separated version number. It follows the
+// semver syntax, but allows the minor and patch versions to be
+// elided.
+func parseRelease(rel string) (major, minor, patch int, ok bool) {
+	// Strip anything after a dash or plus.
+	for i := 0; i < len(rel); i++ {
+		if rel[i] == '-' || rel[i] == '+' {
+			rel = rel[:i]
+			break
+		}
+	}
+
+	next := func() (int, bool) {
+		for i := 0; i < len(rel); i++ {
+			if rel[i] == '.' {
+				ver, ok := atoi(rel[:i])
+				rel = rel[i+1:]
+				return ver, ok
+			}
+		}
+		ver, ok := atoi(rel)
+		rel = ""
+		return ver, ok
+	}
+	if major, ok = next(); !ok || rel == "" {
+		return
+	}
+	if minor, ok = next(); !ok || rel == "" {
+		return
+	}
+	patch, ok = next()
+	return
 }

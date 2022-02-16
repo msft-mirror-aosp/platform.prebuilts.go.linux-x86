@@ -7,6 +7,8 @@ package ld
 import (
 	"bytes"
 	"internal/testenv"
+	"io/ioutil"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -16,18 +18,18 @@ func TestDeadcode(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
 	t.Parallel()
 
-	tmpdir := t.TempDir()
+	tmpdir, err := ioutil.TempDir("", "TestDeadcode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
 
 	tests := []struct {
-		src      string
-		pos, neg string // positive and negative patterns
+		src     string
+		pattern string
 	}{
-		{"reflectcall", "", "main.T.M"},
-		{"typedesc", "", "type.main.T"},
-		{"ifacemethod", "", "main.T.M"},
-		{"ifacemethod2", "main.T.M", ""},
-		{"ifacemethod3", "main.S.M", ""},
-		{"ifacemethod4", "", "main.T.M"},
+		{"reflectcall", "main.T.M"},
+		{"typedesc", "type.main.T"},
 	}
 	for _, test := range tests {
 		test := test
@@ -40,11 +42,8 @@ func TestDeadcode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%v: %v:\n%s", cmd.Args, err, out)
 			}
-			if test.pos != "" && !bytes.Contains(out, []byte(test.pos+"\n")) {
-				t.Errorf("%s should be reachable. Output:\n%s", test.pos, out)
-			}
-			if test.neg != "" && bytes.Contains(out, []byte(test.neg+"\n")) {
-				t.Errorf("%s should not be reachable. Output:\n%s", test.neg, out)
+			if bytes.Contains(out, []byte(test.pattern)) {
+				t.Errorf("%s should not be reachable. Output:\n%s", test.pattern, out)
 			}
 		})
 	}

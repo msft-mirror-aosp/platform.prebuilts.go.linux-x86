@@ -4,17 +4,14 @@
 
 package syscall
 
-import (
-	"internal/abi"
-	"unsafe"
-)
+import "unsafe"
 
 func setTimespec(sec, nsec int64) Timespec {
-	return Timespec{Sec: sec, Nsec: nsec}
+	return Timespec{Sec: int64(sec), Nsec: int64(nsec)}
 }
 
 func setTimeval(sec, usec int64) Timeval {
-	return Timeval{Sec: sec, Usec: int32(usec)}
+	return Timeval{Sec: int64(sec), Usec: int32(usec)}
 }
 
 //sys	Fstat(fd int, stat *Stat_t) (err error)
@@ -23,8 +20,14 @@ func setTimeval(sec, usec int64) Timeval {
 //sys	Lstat(path string, stat *Stat_t) (err error)
 //sys	Stat(path string, stat *Stat_t) (err error)
 //sys	Statfs(path string, stat *Statfs_t) (err error)
-//sys	fstatat(fd int, path string, stat *Stat_t, flags int) (err error)
-//sys	ptrace1(request int, pid int, addr uintptr, data uintptr) (err error) = SYS_ptrace
+//sys   fstatat(fd int, path string, stat *Stat_t, flags int) (err error)
+
+// Marked nosplit because it is called from forkAndExecInChild where
+// stack growth is forbidden.
+//go:nosplit
+func ptrace(request int, pid int, addr uintptr, data uintptr) error {
+	return ENOTSUP
+}
 
 func SetKevent(k *Kevent_t, fd, mode, flags int) {
 	k.Ident = uint64(fd)
@@ -47,7 +50,7 @@ func (cmsg *Cmsghdr) SetLen(length int) {
 func sendfile(outfd int, infd int, offset *int64, count int) (written int, err error) {
 	var length = uint64(count)
 
-	_, _, e1 := syscall6(abi.FuncPCABI0(libc_sendfile_trampoline), uintptr(infd), uintptr(outfd), uintptr(*offset), uintptr(unsafe.Pointer(&length)), 0, 0)
+	_, _, e1 := syscall6(funcPC(libc_sendfile_trampoline), uintptr(infd), uintptr(outfd), uintptr(*offset), uintptr(unsafe.Pointer(&length)), 0, 0)
 
 	written = int(length)
 
@@ -59,6 +62,7 @@ func sendfile(outfd int, infd int, offset *int64, count int) (written int, err e
 
 func libc_sendfile_trampoline()
 
+//go:linkname libc_sendfile libc_sendfile
 //go:cgo_import_dynamic libc_sendfile sendfile "/usr/lib/libSystem.B.dylib"
 
 // Implemented in the runtime package (runtime/sys_darwin_64.go)

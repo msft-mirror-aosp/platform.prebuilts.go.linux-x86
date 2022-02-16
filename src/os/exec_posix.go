@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix || darwin || dragonfly || freebsd || (js && wasm) || linux || netbsd || openbsd || solaris || windows
+// +build aix darwin dragonfly freebsd js,wasm linux netbsd openbsd solaris windows
 
 package os
 
 import (
-	"internal/itoa"
 	"internal/syscall/execenv"
 	"runtime"
 	"syscall"
@@ -57,7 +56,7 @@ func startProcess(name string, argv []string, attr *ProcAttr) (p *Process, err e
 	runtime.KeepAlive(attr)
 
 	if e != nil {
-		return nil, &PathError{Op: "fork/exec", Path: name, Err: e}
+		return nil, &PathError{"fork/exec", name, e}
 	}
 
 	return newProcess(pid, h), nil
@@ -87,11 +86,11 @@ func (p *ProcessState) success() bool {
 	return p.status.ExitStatus() == 0
 }
 
-func (p *ProcessState) sys() any {
+func (p *ProcessState) sys() interface{} {
 	return p.status
 }
 
-func (p *ProcessState) sysUsage() any {
+func (p *ProcessState) sysUsage() interface{} {
 	return p.rusage
 }
 
@@ -103,18 +102,13 @@ func (p *ProcessState) String() string {
 	res := ""
 	switch {
 	case status.Exited():
-		code := status.ExitStatus()
-		if runtime.GOOS == "windows" && uint(code) >= 1<<16 { // windows uses large hex numbers
-			res = "exit status " + uitox(uint(code))
-		} else { // unix systems use small decimal integers
-			res = "exit status " + itoa.Itoa(code) // unix
-		}
+		res = "exit status " + itoa(status.ExitStatus())
 	case status.Signaled():
 		res = "signal: " + status.Signal().String()
 	case status.Stopped():
 		res = "stop signal: " + status.StopSignal().String()
 		if status.StopSignal() == syscall.SIGTRAP && status.TrapCause() != 0 {
-			res += " (trap " + itoa.Itoa(status.TrapCause()) + ")"
+			res += " (trap " + itoa(status.TrapCause()) + ")"
 		}
 	case status.Continued():
 		res = "continued"

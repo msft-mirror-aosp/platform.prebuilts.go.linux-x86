@@ -12,6 +12,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"sort"
@@ -40,8 +41,8 @@ Finally, to generate modified source code with coverage annotations
 `
 
 func usage() {
-	fmt.Fprint(os.Stderr, usageMessage)
-	fmt.Fprintln(os.Stderr, "\nFlags:")
+	fmt.Fprintln(os.Stderr, usageMessage)
+	fmt.Fprintln(os.Stderr, "Flags:")
 	flag.PrintDefaults()
 	fmt.Fprintln(os.Stderr, "\n  Only one of -html, -func, or -mode may be set.")
 	os.Exit(2)
@@ -303,7 +304,7 @@ func (f *File) Visit(node ast.Node) ast.Visitor {
 
 func annotate(name string) {
 	fset := token.NewFileSet()
-	content, err := os.ReadFile(name)
+	content, err := ioutil.ReadFile(name)
 	if err != nil {
 		log.Fatalf("cover: %s: %s", name, err)
 	}

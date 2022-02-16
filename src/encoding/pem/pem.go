@@ -78,7 +78,6 @@ func removeSpacesAndTabs(data []byte) []byte {
 var pemStart = []byte("\n-----BEGIN ")
 var pemEnd = []byte("\n-----END ")
 var pemEndOfLine = []byte("-----")
-var colon = []byte(":")
 
 // Decode will find the next PEM formatted block (certificate, private key
 // etc) in the input. It returns that block and the remainder of the input. If
@@ -90,8 +89,8 @@ func Decode(data []byte) (p *Block, rest []byte) {
 	rest = data
 	if bytes.HasPrefix(data, pemStart[1:]) {
 		rest = rest[len(pemStart)-1 : len(data)]
-	} else if _, after, ok := bytes.Cut(data, pemStart); ok {
-		rest = after
+	} else if i := bytes.Index(data, pemStart); i >= 0 {
+		rest = rest[i+len(pemStart) : len(data)]
 	} else {
 		return nil, data
 	}
@@ -115,12 +114,13 @@ func Decode(data []byte) (p *Block, rest []byte) {
 		}
 		line, next := getLine(rest)
 
-		key, val, ok := bytes.Cut(line, colon)
-		if !ok {
+		i := bytes.IndexByte(line, ':')
+		if i == -1 {
 			break
 		}
 
 		// TODO(agl): need to cope with values that spread across lines.
+		key, val := line[:i], line[i+1:]
 		key = bytes.TrimSpace(key)
 		val = bytes.TrimSpace(val)
 		p.Headers[string(key)] = string(val)

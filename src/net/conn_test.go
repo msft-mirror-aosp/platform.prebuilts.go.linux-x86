@@ -5,7 +5,7 @@
 // This file implements API tests across platforms and will never have a build
 // tag.
 
-//go:build !js
+// +build !js
 
 package net
 
@@ -26,10 +26,13 @@ func TestConnAndListener(t *testing.T) {
 			continue
 		}
 
-		ls := newLocalServer(t, network)
+		ls, err := newLocalServer(network)
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer ls.teardown()
 		ch := make(chan error, 1)
-		handler := func(ls *localServer, ln Listener) { ls.transponder(ln, ch) }
+		handler := func(ls *localServer, ln Listener) { transponder(ln, ch) }
 		if err := ls.buildup(handler); err != nil {
 			t.Fatal(err)
 		}

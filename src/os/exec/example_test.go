@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -127,7 +128,7 @@ func ExampleCmd_StderrPipe() {
 		log.Fatal(err)
 	}
 
-	slurp, _ := io.ReadAll(stderr)
+	slurp, _ := ioutil.ReadAll(stderr)
 	fmt.Printf("%s\n", slurp)
 
 	if err := cmd.Wait(); err != nil {

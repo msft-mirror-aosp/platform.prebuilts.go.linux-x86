@@ -20,24 +20,16 @@ func Init() (*sys.Arch, ld.Arch) {
 		Dwarfregsp: dwarfRegSP,
 		Dwarfreglr: dwarfRegLR,
 
+		Adddynrel:        adddynrel,
 		Archinit:         archinit,
 		Archreloc:        archreloc,
 		Archrelocvariant: archrelocvariant,
-		Extreloc:         extreloc,
+		Asmb:             asmb,
+		Asmb2:            asmb2,
 		Elfreloc1:        elfreloc1,
-		ElfrelocSize:     24,
 		Elfsetupplt:      elfsetupplt,
-
-		// TrampLimit is set such that we always run the trampoline
-		// generation code. This is necessary since calls to external
-		// symbols require the use of trampolines, regardless of the
-		// text size.
-		TrampLimit: 1,
-		Trampoline: trampoline,
-
-		Gentext:     gentext,
-		GenSymsLate: genSymsLate,
-		Machoreloc1: machoreloc1,
+		Gentext2:         gentext2,
+		Machoreloc1:      machoreloc1,
 
 		Linuxdynld: "/lib/ld.so.1",
 

@@ -127,17 +127,6 @@ func TestEncodeRune(t *testing.T) {
 	}
 }
 
-func TestAppendRune(t *testing.T) {
-	for _, m := range utf8map {
-		if buf := AppendRune(nil, m.r); string(buf) != m.str {
-			t.Errorf("AppendRune(nil, %#04x) = %s, want %s", m.r, buf, m.str)
-		}
-		if buf := AppendRune([]byte("init"), m.r); string(buf) != "init"+m.str {
-			t.Errorf("AppendRune(init, %#04x) = %s, want %s", m.r, buf, "init"+m.str)
-		}
-	}
-}
-
 func TestDecodeRune(t *testing.T) {
 	for _, m := range utf8map {
 		b := []byte(m.str)
@@ -594,20 +583,6 @@ func BenchmarkEncodeJapaneseRune(b *testing.B) {
 	}
 }
 
-func BenchmarkAppendASCIIRune(b *testing.B) {
-	buf := make([]byte, UTFMax)
-	for i := 0; i < b.N; i++ {
-		AppendRune(buf[:0], 'a')
-	}
-}
-
-func BenchmarkAppendJapaneseRune(b *testing.B) {
-	buf := make([]byte, UTFMax)
-	for i := 0; i < b.N; i++ {
-		AppendRune(buf[:0], '本')
-	}
-}
-
 func BenchmarkDecodeASCIIRune(b *testing.B) {
 	a := []byte{'a'}
 	for i := 0; i < b.N; i++ {
@@ -622,24 +597,16 @@ func BenchmarkDecodeJapaneseRune(b *testing.B) {
 	}
 }
 
-// boolSink is used to reference the return value of benchmarked
-// functions to avoid dead code elimination.
-var boolSink bool
-
-func BenchmarkFullRune(b *testing.B) {
-	benchmarks := []struct {
-		name string
-		data []byte
-	}{
-		{"ASCII", []byte("a")},
-		{"Incomplete", []byte("\xf0\x90\x80")},
-		{"Japanese", []byte("本")},
+func BenchmarkFullASCIIRune(b *testing.B) {
+	a := []byte{'a'}
+	for i := 0; i < b.N; i++ {
+		FullRune(a)
 	}
-	for _, bm := range benchmarks {
-		b.Run(bm.name, func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				boolSink = FullRune(bm.data)
-			}
-		})
+}
+
+func BenchmarkFullJapaneseRune(b *testing.B) {
+	nihon := []byte("本")
+	for i := 0; i < b.N; i++ {
+		FullRune(nihon)
 	}
 }

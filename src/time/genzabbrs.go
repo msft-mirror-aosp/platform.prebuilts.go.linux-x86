@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build ignore
+// +build ignore
 
 //
 // usage:
@@ -17,10 +17,9 @@ import (
 	"encoding/xml"
 	"flag"
 	"go/format"
-	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 	"text/template"
 	"time"
@@ -72,7 +71,7 @@ func readWindowsZones() ([]*zone, error) {
 	}
 	defer r.Body.Close()
 
-	data, err := io.ReadAll(r.Body)
+	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +127,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = os.WriteFile(*filename, data, 0644)
+	err = ioutil.WriteFile(*filename, data, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
