@@ -2,51 +2,17 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Copied from Go distribution src/go/build/build.go, syslist.go.
-// That package does not export the ability to process raw file data,
-// although we could fake it with an appropriate build.Context
-// and a lot of unwrapping.
-// More importantly, that package does not implement the tags["*"]
-// special case, in which both tag and !tag are considered to be true
-// for essentially all tags (except "ignore").
-//
-// If we added this API to go/build directly, we wouldn't need this
-// file anymore, but this API is not terribly general-purpose and we
-// don't really want to commit to any public form of it, nor do we
-// want to move the core parts of go/build into a top-level internal package.
-// These details change very infrequently, so the copy is fine.
+// Copied from Go distribution src/go/build/build.go, syslist.go
 
 package imports
 
 import (
 	"bytes"
-	"errors"
-	"fmt"
-	"go/build/constraint"
 	"strings"
 	"unicode"
 )
 
-var (
-	bSlashSlash = []byte("//")
-	bStarSlash  = []byte("*/")
-	bSlashStar  = []byte("/*")
-	bPlusBuild  = []byte("+build")
-
-	goBuildComment = []byte("//go:build")
-
-	errGoBuildWithoutBuild = errors.New("//go:build comment without // +build comment")
-	errMultipleGoBuild     = errors.New("multiple //go:build comments")
-)
-
-func isGoBuildComment(line []byte) bool {
-	if !bytes.HasPrefix(line, goBuildComment) {
-		return false
-	}
-	line = bytes.TrimSpace(line)
-	rest := line[len(goBuildComment):]
-	return len(rest) == 0 || len(bytes.TrimSpace(rest)) < len(rest)
-}
+var slashslash = []byte("//")
 
 // ShouldBuild reports whether it is okay to use this file,
 // The rule is that in the file's leading run of // comments
@@ -68,61 +34,10 @@ func isGoBuildComment(line []byte) bool {
 // in any build.
 //
 func ShouldBuild(content []byte, tags map[string]bool) bool {
-	// Identify leading run of // comments and blank lines,
+	// Pass 1. Identify leading run of // comments and blank lines,
 	// which must be followed by a blank line.
-	// Also identify any //go:build comments.
-	content, goBuild, _, err := parseFileHeader(content)
-	if err != nil {
-		return false
-	}
-
-	// If //go:build line is present, it controls.
-	// Otherwise fall back to +build processing.
-	var shouldBuild bool
-	switch {
-	case goBuild != nil:
-		x, err := constraint.Parse(string(goBuild))
-		if err != nil {
-			return false
-		}
-		shouldBuild = eval(x, tags, true)
-
-	default:
-		shouldBuild = true
-		p := content
-		for len(p) > 0 {
-			line := p
-			if i := bytes.IndexByte(line, '\n'); i >= 0 {
-				line, p = line[:i], p[i+1:]
-			} else {
-				p = p[len(p):]
-			}
-			line = bytes.TrimSpace(line)
-			if !bytes.HasPrefix(line, bSlashSlash) || !bytes.Contains(line, bPlusBuild) {
-				continue
-			}
-			text := string(line)
-			if !constraint.IsPlusBuild(text) {
-				continue
-			}
-			if x, err := constraint.Parse(text); err == nil {
-				if !eval(x, tags, true) {
-					shouldBuild = false
-				}
-			}
-		}
-	}
-
-	return shouldBuild
-}
-
-func parseFileHeader(content []byte) (trimmed, goBuild []byte, sawBinaryOnly bool, err error) {
 	end := 0
 	p := content
-	ended := false       // found non-blank, non-// line, so stopped accepting // +build lines
-	inSlashStar := false // in /* */ comment
-
-Lines:
 	for len(p) > 0 {
 		line := p
 		if i := bytes.IndexByte(line, '\n'); i >= 0 {
@@ -131,61 +46,78 @@ Lines:
 			p = p[len(p):]
 		}
 		line = bytes.TrimSpace(line)
-		if len(line) == 0 && !ended { // Blank line
-			// Remember position of most recent blank line.
-			// When we find the first non-blank, non-// line,
-			// this "end" position marks the latest file position
-			// where a // +build line can appear.
-			// (It must appear _before_ a blank line before the non-blank, non-// line.
-			// Yes, that's confusing, which is part of why we moved to //go:build lines.)
-			// Note that ended==false here means that inSlashStar==false,
-			// since seeing a /* would have set ended==true.
+		if len(line) == 0 { // Blank line
 			end = len(content) - len(p)
-			continue Lines
+			continue
 		}
-		if !bytes.HasPrefix(line, bSlashSlash) { // Not comment line
-			ended = true
+		if !bytes.HasPrefix(line, slashslash) { // Not comment line
+			break
 		}
+	}
+	content = content[:end]
 
-		if !inSlashStar && isGoBuildComment(line) {
-			if goBuild != nil {
-				return nil, nil, false, errMultipleGoBuild
-			}
-			goBuild = line
+	// Pass 2.  Process each line in the run.
+	p = content
+	allok := true
+	for len(p) > 0 {
+		line := p
+		if i := bytes.IndexByte(line, '\n'); i >= 0 {
+			line, p = line[:i], p[i+1:]
+		} else {
+			p = p[len(p):]
 		}
-
-	Comments:
-		for len(line) > 0 {
-			if inSlashStar {
-				if i := bytes.Index(line, bStarSlash); i >= 0 {
-					inSlashStar = false
-					line = bytes.TrimSpace(line[i+len(bStarSlash):])
-					continue Comments
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, slashslash) {
+			continue
+		}
+		line = bytes.TrimSpace(line[len(slashslash):])
+		if len(line) > 0 && line[0] == '+' {
+			// Looks like a comment +line.
+			f := strings.Fields(string(line))
+			if f[0] == "+build" {
+				ok := false
+				for _, tok := range f[1:] {
+					if matchTags(tok, tags) {
+						ok = true
+					}
 				}
-				continue Lines
+				if !ok {
+					allok = false
+				}
 			}
-			if bytes.HasPrefix(line, bSlashSlash) {
-				continue Lines
-			}
-			if bytes.HasPrefix(line, bSlashStar) {
-				inSlashStar = true
-				line = bytes.TrimSpace(line[len(bSlashStar):])
-				continue Comments
-			}
-			// Found non-comment text.
-			break Lines
 		}
 	}
 
-	return content[:end], goBuild, sawBinaryOnly, nil
+	return allok
 }
 
-// matchTag reports whether the tag name is valid and tags[name] is true.
-// As a special case, if tags["*"] is true and name is not empty or ignore,
-// then matchTag will return prefer instead of the actual answer,
-// which allows the caller to pretend in that case that most tags are
-// both true and false.
-func matchTag(name string, tags map[string]bool, prefer bool) bool {
+// matchTags reports whether the name is one of:
+//
+//	tag (if tags[tag] is true)
+//	!tag (if tags[tag] is false)
+//	a comma-separated list of any of these
+//
+func matchTags(name string, tags map[string]bool) bool {
+	if name == "" {
+		return false
+	}
+	if i := strings.Index(name, ","); i >= 0 {
+		// comma-separated list
+		ok1 := matchTags(name[:i], tags)
+		ok2 := matchTags(name[i+1:], tags)
+		return ok1 && ok2
+	}
+	if strings.HasPrefix(name, "!!") { // bad syntax, reject always
+		return false
+	}
+	if strings.HasPrefix(name, "!") { // negation
+		return len(name) > 1 && matchTag(name[1:], tags, false)
+	}
+	return matchTag(name, tags, true)
+}
+
+// matchTag reports whether the tag name is valid and satisfied by tags[name]==want.
+func matchTag(name string, tags map[string]bool, want bool) bool {
 	// Tags must be letters, digits, underscores or dots.
 	// Unlike in Go identifiers, all digits are fine (e.g., "386").
 	for _, c := range name {
@@ -199,7 +131,7 @@ func matchTag(name string, tags map[string]bool, prefer bool) bool {
 		// if we put * in the tags map then all tags
 		// except "ignore" are considered both present and not
 		// (so we return true no matter how 'want' is set).
-		return prefer
+		return true
 	}
 
 	have := tags[name]
@@ -209,28 +141,7 @@ func matchTag(name string, tags map[string]bool, prefer bool) bool {
 	if name == "solaris" {
 		have = have || tags["illumos"]
 	}
-	if name == "darwin" {
-		have = have || tags["ios"]
-	}
-	return have
-}
-
-// eval is like
-//	x.Eval(func(tag string) bool { return matchTag(tag, tags) })
-// except that it implements the special case for tags["*"] meaning
-// all tags are both true and false at the same time.
-func eval(x constraint.Expr, tags map[string]bool, prefer bool) bool {
-	switch x := x.(type) {
-	case *constraint.TagExpr:
-		return matchTag(x.Tag, tags, prefer)
-	case *constraint.NotExpr:
-		return !eval(x.X, tags, !prefer)
-	case *constraint.AndExpr:
-		return eval(x.X, tags, prefer) && eval(x.Y, tags, prefer)
-	case *constraint.OrExpr:
-		return eval(x.X, tags, prefer) || eval(x.Y, tags, prefer)
-	}
-	panic(fmt.Sprintf("unexpected constraint expression %T", x))
+	return have == want
 }
 
 // MatchFile returns false if the name contains a $GOOS or $GOARCH
@@ -247,7 +158,6 @@ func eval(x constraint.Expr, tags map[string]bool, prefer bool) bool {
 // Exceptions:
 //     if GOOS=android, then files with GOOS=linux are also matched.
 //     if GOOS=illumos, then files with GOOS=solaris are also matched.
-//     if GOOS=ios, then files with GOOS=darwin are also matched.
 //
 // If tags["*"] is true, then MatchFile will consider all possible
 // GOOS and GOARCH to be available and will consequently
@@ -298,7 +208,6 @@ var KnownOS = map[string]bool{
 	"freebsd":   true,
 	"hurd":      true,
 	"illumos":   true,
-	"ios":       true,
 	"js":        true,
 	"linux":     true,
 	"nacl":      true, // legacy; don't remove

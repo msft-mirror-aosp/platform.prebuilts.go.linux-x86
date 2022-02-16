@@ -8,23 +8,21 @@ import (
 	"cmd/compile/internal/amd64"
 	"cmd/compile/internal/arm"
 	"cmd/compile/internal/arm64"
-	"cmd/compile/internal/base"
 	"cmd/compile/internal/gc"
 	"cmd/compile/internal/mips"
 	"cmd/compile/internal/mips64"
 	"cmd/compile/internal/ppc64"
 	"cmd/compile/internal/riscv64"
 	"cmd/compile/internal/s390x"
-	"cmd/compile/internal/ssagen"
 	"cmd/compile/internal/wasm"
 	"cmd/compile/internal/x86"
+	"cmd/internal/objabi"
 	"fmt"
-	"internal/buildcfg"
 	"log"
 	"os"
 )
 
-var archInits = map[string]func(*ssagen.ArchInfo){
+var archInits = map[string]func(*gc.Arch){
 	"386":      x86.Init,
 	"amd64":    amd64.Init,
 	"arm":      arm.Init,
@@ -45,13 +43,12 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("compile: ")
 
-	buildcfg.Check()
-	archInit, ok := archInits[buildcfg.GOARCH]
+	archInit, ok := archInits[objabi.GOARCH]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "compile: unknown architecture %q\n", buildcfg.GOARCH)
+		fmt.Fprintf(os.Stderr, "compile: unknown architecture %q\n", objabi.GOARCH)
 		os.Exit(2)
 	}
 
 	gc.Main(archInit)
-	base.Exit(0)
+	gc.Exit(0)
 }

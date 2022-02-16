@@ -11,12 +11,7 @@ package math
 //	Ldexp(±0, exp) = ±0
 //	Ldexp(±Inf, exp) = ±Inf
 //	Ldexp(NaN, exp) = NaN
-func Ldexp(frac float64, exp int) float64 {
-	if haveArchLdexp {
-		return archLdexp(frac, exp)
-	}
-	return ldexp(frac, exp)
-}
+func Ldexp(frac float64, exp int) float64
 
 func ldexp(frac float64, exp int) float64 {
 	// special cases

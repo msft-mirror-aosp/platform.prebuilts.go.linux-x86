@@ -2,7 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !aix && !darwin && !js && !openbsd && !plan9 && !solaris && !windows
+// +build !plan9
+// +build !solaris
+// +build !windows
+// +build !js
+// +build !darwin
+// +build !aix
 
 package runtime
 
@@ -16,11 +21,6 @@ func closefd(fd int32) int32
 
 func exit(code int32)
 func usleep(usec uint32)
-
-//go:nosplit
-func usleep_no_g(usec uint32) {
-	usleep(usec)
-}
 
 // write calls the write system call.
 // It returns a non-negative number of bytes written or a negative errno value.

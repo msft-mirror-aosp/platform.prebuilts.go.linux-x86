@@ -5,8 +5,8 @@
 package runtime
 
 import (
-	"internal/goarch"
 	"runtime/internal/atomic"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -216,15 +216,13 @@ func printint(v int64) {
 	printuint(uint64(v))
 }
 
-var minhexdigits = 0 // protected by printlock
-
 func printhex(v uint64) {
 	const dig = "0123456789abcdef"
 	var buf [100]byte
 	i := len(buf)
 	for i--; i > 0; i-- {
 		buf[i] = dig[v%16]
-		if v < 16 && len(buf)-i >= minhexdigits {
+		if v < 16 {
 			break
 		}
 		v /= 16
@@ -238,9 +236,6 @@ func printhex(v uint64) {
 
 func printpointer(p unsafe.Pointer) {
 	printhex(uint64(uintptr(p)))
-}
-func printuintptr(p uintptr) {
-	printhex(uint64(p))
 }
 
 func printstring(s string) {
@@ -267,16 +262,29 @@ func printiface(i iface) {
 // and should return a character mark to appear just before that
 // word's value. It can return 0 to indicate no mark.
 func hexdumpWords(p, end uintptr, mark func(uintptr) byte) {
+	p1 := func(x uintptr) {
+		var buf [2 * sys.PtrSize]byte
+		for i := len(buf) - 1; i >= 0; i-- {
+			if x&0xF < 10 {
+				buf[i] = byte(x&0xF) + '0'
+			} else {
+				buf[i] = byte(x&0xF) - 10 + 'a'
+			}
+			x >>= 4
+		}
+		gwrite(buf[:])
+	}
+
 	printlock()
 	var markbuf [1]byte
 	markbuf[0] = ' '
-	minhexdigits = int(unsafe.Sizeof(uintptr(0)) * 2)
-	for i := uintptr(0); p+i < end; i += goarch.PtrSize {
+	for i := uintptr(0); p+i < end; i += sys.PtrSize {
 		if i%16 == 0 {
 			if i != 0 {
 				println()
 			}
-			print(hex(p+i), ": ")
+			p1(p + i)
+			print(": ")
 		}
 
 		if mark != nil {
@@ -287,16 +295,15 @@ func hexdumpWords(p, end uintptr, mark func(uintptr) byte) {
 		}
 		gwrite(markbuf[:])
 		val := *(*uintptr)(unsafe.Pointer(p + i))
-		print(hex(val))
+		p1(val)
 		print(" ")
 
 		// Can we symbolize val?
 		fn := findfunc(val)
 		if fn.valid() {
-			print("<", funcname(fn), "+", hex(val-fn.entry()), "> ")
+			print("<", funcname(fn), "+", val-fn.entry, "> ")
 		}
 	}
-	minhexdigits = 0
 	println()
 	printunlock()
 }

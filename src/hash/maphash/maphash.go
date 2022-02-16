@@ -6,17 +6,15 @@
 // These hash functions are intended to be used to implement hash tables or
 // other data structures that need to map arbitrary strings or byte
 // sequences to a uniform distribution on unsigned 64-bit integers.
-// Each different instance of a hash table or data structure should use its own Seed.
 //
-// The hash functions are not cryptographically secure.
+// The hash functions are collision-resistant but not cryptographically secure.
 // (See crypto/sha256 and crypto/sha512 for cryptographic use.)
 //
+// The hash value of a given byte sequence is consistent within a
+// single process, but will be different in different processes.
 package maphash
 
-import (
-	"internal/unsafeheader"
-	"unsafe"
-)
+import "unsafe"
 
 // A Seed is a random value that selects the specific hash function
 // computed by a Hash. If two Hashes use the same Seeds, they
@@ -37,7 +35,7 @@ type Seed struct {
 //
 // The zero Hash is a valid Hash ready to use.
 // A zero Hash chooses a random seed for itself during
-// the first call to a Reset, Write, Seed, or Sum64 method.
+// the first call to a Reset, Write, Seed, Sum64, or Seed method.
 // For control over the seed, use SetSeed.
 //
 // The computed hash values depend only on the initial seed and
@@ -57,18 +55,12 @@ type Seed struct {
 // If multiple goroutines must compute the same seeded hash,
 // each can declare its own Hash and call SetSeed with a common Seed.
 type Hash struct {
-	_     [0]func()     // not comparable
-	seed  Seed          // initial seed used for this hash
-	state Seed          // current hash of all flushed bytes
-	buf   [bufSize]byte // unflushed byte buffer
-	n     int           // number of unflushed bytes
+	_     [0]func() // not comparable
+	seed  Seed      // initial seed used for this hash
+	state Seed      // current hash of all flushed bytes
+	buf   [64]byte  // unflushed byte buffer
+	n     int       // number of unflushed bytes
 }
-
-// bufSize is the size of the Hash write buffer.
-// The buffer ensures that writes depend only on the sequence of bytes,
-// not the sequence of WriteByte/Write/WriteString calls,
-// by always calling rthash with a full buffer (except for the tail).
-const bufSize = 128
 
 // initSeed seeds the hash if necessary.
 // initSeed is called lazily before any operation that actually uses h.seed/h.state.
@@ -77,9 +69,7 @@ const bufSize = 128
 // which does call h.initSeed.)
 func (h *Hash) initSeed() {
 	if h.seed.s == 0 {
-		seed := MakeSeed()
-		h.seed = seed
-		h.state = seed
+		h.setSeed(MakeSeed())
 	}
 }
 
@@ -98,58 +88,27 @@ func (h *Hash) WriteByte(b byte) error {
 // It always writes all of b and never fails; the count and error result are for implementing io.Writer.
 func (h *Hash) Write(b []byte) (int, error) {
 	size := len(b)
-	// Deal with bytes left over in h.buf.
-	// h.n <= bufSize is always true.
-	// Checking it is ~free and it lets the compiler eliminate a bounds check.
-	if h.n > 0 && h.n <= bufSize {
+	for h.n+len(b) > len(h.buf) {
 		k := copy(h.buf[h.n:], b)
-		h.n += k
-		if h.n < bufSize {
-			// Copied the entirety of b to h.buf.
-			return size, nil
-		}
+		h.n = len(h.buf)
 		b = b[k:]
 		h.flush()
-		// No need to set h.n = 0 here; it happens just before exit.
 	}
-	// Process as many full buffers as possible, without copying, and calling initSeed only once.
-	if len(b) > bufSize {
-		h.initSeed()
-		for len(b) > bufSize {
-			h.state.s = rthash(&b[0], bufSize, h.state.s)
-			b = b[bufSize:]
-		}
-	}
-	// Copy the tail.
-	copy(h.buf[:], b)
-	h.n = len(b)
+	h.n += copy(h.buf[h.n:], b)
 	return size, nil
 }
 
 // WriteString adds the bytes of s to the sequence of bytes hashed by h.
 // It always writes all of s and never fails; the count and error result are for implementing io.StringWriter.
 func (h *Hash) WriteString(s string) (int, error) {
-	// WriteString mirrors Write. See Write for comments.
 	size := len(s)
-	if h.n > 0 && h.n <= bufSize {
+	for h.n+len(s) > len(h.buf) {
 		k := copy(h.buf[h.n:], s)
-		h.n += k
-		if h.n < bufSize {
-			return size, nil
-		}
+		h.n = len(h.buf)
 		s = s[k:]
 		h.flush()
 	}
-	if len(s) > bufSize {
-		h.initSeed()
-		for len(s) > bufSize {
-			ptr := (*byte)((*unsafeheader.String)(unsafe.Pointer(&s)).Data)
-			h.state.s = rthash(ptr, bufSize, h.state.s)
-			s = s[bufSize:]
-		}
-	}
-	copy(h.buf[:], s)
-	h.n = len(s)
+	h.n += copy(h.buf[h.n:], s)
 	return size, nil
 }
 
@@ -165,12 +124,17 @@ func (h *Hash) Seed() Seed {
 // Two Hash objects with different seeds will very likely behave differently.
 // Any bytes added to h before this call will be discarded.
 func (h *Hash) SetSeed(seed Seed) {
+	h.setSeed(seed)
+	h.n = 0
+}
+
+// setSeed sets seed without discarding accumulated data.
+func (h *Hash) setSeed(seed Seed) {
 	if seed.s == 0 {
 		panic("maphash: use of uninitialized Seed")
 	}
 	h.seed = seed
 	h.state = seed
-	h.n = 0
 }
 
 // Reset discards all bytes added to h.
@@ -187,7 +151,7 @@ func (h *Hash) flush() {
 		panic("maphash: flush of partially full buffer")
 	}
 	h.initSeed()
-	h.state.s = rthash(&h.buf[0], h.n, h.state.s)
+	h.state.s = rthash(h.buf[:], h.state.s)
 	h.n = 0
 }
 
@@ -200,7 +164,7 @@ func (h *Hash) flush() {
 // by using bit masking, shifting, or modular arithmetic.
 func (h *Hash) Sum64() uint64 {
 	h.initSeed()
-	return rthash(&h.buf[0], h.n, h.state.s)
+	return rthash(h.buf[:h.n], h.state.s)
 }
 
 // MakeSeed returns a new random seed.
@@ -221,18 +185,18 @@ func MakeSeed() Seed {
 //go:linkname runtime_fastrand runtime.fastrand
 func runtime_fastrand() uint32
 
-func rthash(ptr *byte, len int, seed uint64) uint64 {
-	if len == 0 {
+func rthash(b []byte, seed uint64) uint64 {
+	if len(b) == 0 {
 		return seed
 	}
 	// The runtime hasher only works on uintptr. For 64-bit
 	// architectures, we use the hasher directly. Otherwise,
 	// we use two parallel hashers on the lower and upper 32 bits.
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		return uint64(runtime_memhash(unsafe.Pointer(ptr), uintptr(seed), uintptr(len)))
+		return uint64(runtime_memhash(unsafe.Pointer(&b[0]), uintptr(seed), uintptr(len(b))))
 	}
-	lo := runtime_memhash(unsafe.Pointer(ptr), uintptr(seed), uintptr(len))
-	hi := runtime_memhash(unsafe.Pointer(ptr), uintptr(seed>>32), uintptr(len))
+	lo := runtime_memhash(unsafe.Pointer(&b[0]), uintptr(seed), uintptr(len(b)))
+	hi := runtime_memhash(unsafe.Pointer(&b[0]), uintptr(seed>>32), uintptr(len(b)))
 	return uint64(hi)<<32 | uint64(lo)
 }
 

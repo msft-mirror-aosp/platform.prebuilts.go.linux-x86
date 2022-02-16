@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build ignore
 // +build ignore
 
 // Addmod adds a module as a txtar archive to the testdata/mod directory.
@@ -23,14 +22,14 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	exec "internal/execabs"
-	"io/fs"
+	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/tools/txtar"
+	"cmd/go/internal/txtar"
 )
 
 func usage() {
@@ -40,7 +39,7 @@ func usage() {
 
 var tmpdir string
 
-func fatalf(format string, args ...any) {
+func fatalf(format string, args ...interface{}) {
 	os.RemoveAll(tmpdir)
 	log.Fatalf(format, args...)
 }
@@ -58,7 +57,7 @@ func main() {
 	log.SetFlags(0)
 
 	var err error
-	tmpdir, err = os.MkdirTemp("", "addmod-")
+	tmpdir, err = ioutil.TempDir("", "addmod-")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -82,7 +81,7 @@ func main() {
 
 	exitCode := 0
 	for _, arg := range flag.Args() {
-		if err := os.WriteFile(filepath.Join(tmpdir, "go.mod"), []byte("module m\n"), 0666); err != nil {
+		if err := ioutil.WriteFile(filepath.Join(tmpdir, "go.mod"), []byte("module m\n"), 0666); err != nil {
 			fatalf("%v", err)
 		}
 		run(goCmd, "get", "-d", arg)
@@ -98,13 +97,13 @@ func main() {
 			continue
 		}
 		path, vers, dir := f[0], f[1], f[2]
-		mod, err := os.ReadFile(filepath.Join(gopath, "pkg/mod/cache/download", path, "@v", vers+".mod"))
+		mod, err := ioutil.ReadFile(filepath.Join(gopath, "pkg/mod/cache/download", path, "@v", vers+".mod"))
 		if err != nil {
 			log.Printf("%s: %v", arg, err)
 			exitCode = 1
 			continue
 		}
-		info, err := os.ReadFile(filepath.Join(gopath, "pkg/mod/cache/download", path, "@v", vers+".info"))
+		info, err := ioutil.ReadFile(filepath.Join(gopath, "pkg/mod/cache/download", path, "@v", vers+".info"))
 		if err != nil {
 			log.Printf("%s: %v", arg, err)
 			exitCode = 1
@@ -122,13 +121,13 @@ func main() {
 			{Name: ".info", Data: info},
 		}
 		dir = filepath.Clean(dir)
-		err = filepath.WalkDir(dir, func(path string, info fs.DirEntry, err error) error {
-			if !info.Type().IsRegular() {
+		err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if !info.Mode().IsRegular() {
 				return nil
 			}
 			name := info.Name()
 			if name == "go.mod" || strings.HasSuffix(name, ".go") {
-				data, err := os.ReadFile(path)
+				data, err := ioutil.ReadFile(path)
 				if err != nil {
 					return err
 				}
@@ -144,7 +143,7 @@ func main() {
 
 		data := txtar.Format(a)
 		target := filepath.Join("mod", strings.ReplaceAll(path, "/", "_")+"_"+vers+".txt")
-		if err := os.WriteFile(target, data, 0666); err != nil {
+		if err := ioutil.WriteFile(target, data, 0666); err != nil {
 			log.Printf("%s: %v", arg, err)
 			exitCode = 1
 			continue

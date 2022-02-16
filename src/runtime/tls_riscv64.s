@@ -9,22 +9,10 @@
 
 // If !iscgo, this is a no-op.
 //
-// NOTE: mcall() assumes this clobbers only X31 (REG_TMP).
+// NOTE: mcall() assumes this clobbers only R23 (REGTMP).
+// FIXME: cgo
 TEXT runtime·save_g(SB),NOSPLIT|NOFRAME,$0-0
-	MOVB	runtime·iscgo(SB), X31
-	BEQ	X0, X31, nocgo
-
-	MOV	runtime·tls_g(SB), X31
-	ADD	TP, X31		// add offset to thread pointer (X4)
-	MOV	g, (X31)
-
-nocgo:
 	RET
 
 TEXT runtime·load_g(SB),NOSPLIT|NOFRAME,$0-0
-	MOV	runtime·tls_g(SB), X31
-	ADD	TP, X31		// add offset to thread pointer (X4)
-	MOV	(X31), g
 	RET
-
-GLOBL runtime·tls_g(SB), TLSBSS, $8

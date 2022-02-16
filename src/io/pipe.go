@@ -47,7 +47,7 @@ type pipe struct {
 	werr onceError
 }
 
-func (p *pipe) read(b []byte) (n int, err error) {
+func (p *pipe) Read(b []byte) (n int, err error) {
 	select {
 	case <-p.done:
 		return 0, p.readCloseError()
@@ -64,7 +64,15 @@ func (p *pipe) read(b []byte) (n int, err error) {
 	}
 }
 
-func (p *pipe) closeRead(err error) error {
+func (p *pipe) readCloseError() error {
+	rerr := p.rerr.Load()
+	if werr := p.werr.Load(); rerr == nil && werr != nil {
+		return werr
+	}
+	return ErrClosedPipe
+}
+
+func (p *pipe) CloseRead(err error) error {
 	if err == nil {
 		err = ErrClosedPipe
 	}
@@ -73,7 +81,7 @@ func (p *pipe) closeRead(err error) error {
 	return nil
 }
 
-func (p *pipe) write(b []byte) (n int, err error) {
+func (p *pipe) Write(b []byte) (n int, err error) {
 	select {
 	case <-p.done:
 		return 0, p.writeCloseError()
@@ -95,31 +103,21 @@ func (p *pipe) write(b []byte) (n int, err error) {
 	return n, nil
 }
 
-func (p *pipe) closeWrite(err error) error {
-	if err == nil {
-		err = EOF
-	}
-	p.werr.Store(err)
-	p.once.Do(func() { close(p.done) })
-	return nil
-}
-
-// readCloseError is considered internal to the pipe type.
-func (p *pipe) readCloseError() error {
-	rerr := p.rerr.Load()
-	if werr := p.werr.Load(); rerr == nil && werr != nil {
-		return werr
-	}
-	return ErrClosedPipe
-}
-
-// writeCloseError is considered internal to the pipe type.
 func (p *pipe) writeCloseError() error {
 	werr := p.werr.Load()
 	if rerr := p.rerr.Load(); werr == nil && rerr != nil {
 		return rerr
 	}
 	return ErrClosedPipe
+}
+
+func (p *pipe) CloseWrite(err error) error {
+	if err == nil {
+		err = EOF
+	}
+	p.werr.Store(err)
+	p.once.Do(func() { close(p.done) })
+	return nil
 }
 
 // A PipeReader is the read half of a pipe.
@@ -133,7 +131,7 @@ type PipeReader struct {
 // If the write end is closed with an error, that error is
 // returned as err; otherwise err is EOF.
 func (r *PipeReader) Read(data []byte) (n int, err error) {
-	return r.p.read(data)
+	return r.p.Read(data)
 }
 
 // Close closes the reader; subsequent writes to the
@@ -148,7 +146,7 @@ func (r *PipeReader) Close() error {
 // CloseWithError never overwrites the previous error if it exists
 // and always returns nil.
 func (r *PipeReader) CloseWithError(err error) error {
-	return r.p.closeRead(err)
+	return r.p.CloseRead(err)
 }
 
 // A PipeWriter is the write half of a pipe.
@@ -162,7 +160,7 @@ type PipeWriter struct {
 // If the read end is closed with an error, that err is
 // returned as err; otherwise err is ErrClosedPipe.
 func (w *PipeWriter) Write(data []byte) (n int, err error) {
-	return w.p.write(data)
+	return w.p.Write(data)
 }
 
 // Close closes the writer; subsequent reads from the
@@ -178,7 +176,7 @@ func (w *PipeWriter) Close() error {
 // CloseWithError never overwrites the previous error if it exists
 // and always returns nil.
 func (w *PipeWriter) CloseWithError(err error) error {
-	return w.p.closeWrite(err)
+	return w.p.CloseWrite(err)
 }
 
 // Pipe creates a synchronous in-memory pipe.

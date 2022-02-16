@@ -2,42 +2,29 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build ppc64le || ppc64
+// +build ppc64le ppc64
 
 #include "go_asm.h"
 #include "textflag.h"
 
-TEXT ·Count<ABIInternal>(SB),NOSPLIT|NOFRAME,$0-40
-#ifdef GOEXPERIMENT_regabiargs
-// R3 = byte array pointer 
-// R4 = length
-        MOVBZ R6,R5               // R5 = byte
-#else
-
+TEXT ·Count(SB), NOSPLIT|NOFRAME, $0-40
 	MOVD  b_base+0(FP), R3    // R3 = byte array pointer
 	MOVD  b_len+8(FP), R4     // R4 = length
 	MOVBZ c+24(FP), R5        // R5 = byte
 	MOVD  $ret+32(FP), R14    // R14 = &ret
-#endif
 	BR    countbytebody<>(SB)
 
-TEXT ·CountString<ABIInternal>(SB), NOSPLIT|NOFRAME, $0-32
-#ifdef GOEXPERIMENT_regabiargs
-// R3 = byte array pointer
-// R4 = length
-        MOVBZ R5,R5               // R5 = byte
-#else
+TEXT ·CountString(SB), NOSPLIT|NOFRAME, $0-32
 	MOVD  s_base+0(FP), R3    // R3 = string
 	MOVD  s_len+8(FP), R4     // R4 = length
 	MOVBZ c+16(FP), R5        // R5 = byte
 	MOVD  $ret+24(FP), R14    // R14 = &ret
-#endif
 	BR    countbytebody<>(SB)
 
 // R3: addr of string
 // R4: len of string
 // R5: byte to count
-// R14: addr for return value when not regabi
+// R14: addr for return value
 // endianness shouldn't matter since we are just counting and order
 // is irrelevant
 TEXT countbytebody<>(SB), NOSPLIT|NOFRAME, $0-0
@@ -106,10 +93,5 @@ next2:
 	BR  small
 
 done:
-#ifdef GOEXPERIMENT_regabiargs
-        MOVD R18, R3    // return count
-#else
 	MOVD R18, (R14) // return count
-#endif
-
 	RET

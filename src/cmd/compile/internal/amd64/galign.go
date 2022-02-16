@@ -5,23 +5,22 @@
 package amd64
 
 import (
-	"cmd/compile/internal/ssagen"
+	"cmd/compile/internal/gc"
 	"cmd/internal/obj/x86"
 )
 
 var leaptr = x86.ALEAQ
 
-func Init(arch *ssagen.ArchInfo) {
+func Init(arch *gc.Arch) {
 	arch.LinkArch = &x86.Linkamd64
 	arch.REGSP = x86.REGSP
 	arch.MAXWIDTH = 1 << 50
 
 	arch.ZeroRange = zerorange
 	arch.Ginsnop = ginsnop
+	arch.Ginsnopdefer = ginsnop
 
 	arch.SSAMarkMoves = ssaMarkMoves
 	arch.SSAGenValue = ssaGenValue
 	arch.SSAGenBlock = ssaGenBlock
-	arch.LoadRegResult = loadRegResult
-	arch.SpillArgReg = spillArgReg
 }

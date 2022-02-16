@@ -6,15 +6,11 @@
 package vet
 
 import (
-	"context"
-	"fmt"
-	"path/filepath"
-
 	"cmd/go/internal/base"
-	"cmd/go/internal/cfg"
 	"cmd/go/internal/load"
-	"cmd/go/internal/trace"
+	"cmd/go/internal/modload"
 	"cmd/go/internal/work"
+	"path/filepath"
 )
 
 // Break init loop.
@@ -52,25 +48,10 @@ See also: go fmt, go fix.
 	`,
 }
 
-func runVet(ctx context.Context, cmd *base.Command, args []string) {
+func runVet(cmd *base.Command, args []string) {
+	modload.LoadTests = true
+
 	vetFlags, pkgArgs := vetFlags(args)
-
-	if cfg.DebugTrace != "" {
-		var close func() error
-		var err error
-		ctx, close, err = trace.Start(ctx, cfg.DebugTrace)
-		if err != nil {
-			base.Fatalf("failed to start trace: %v", err)
-		}
-		defer func() {
-			if err := close(); err != nil {
-				base.Fatalf("failed to stop trace: %v", err)
-			}
-		}()
-	}
-
-	ctx, span := trace.StartSpan(ctx, fmt.Sprint("Running ", cmd.Name(), " command"))
-	defer span.Done()
 
 	work.BuildInit()
 	work.VetFlags = vetFlags
@@ -85,9 +66,7 @@ func runVet(ctx context.Context, cmd *base.Command, args []string) {
 		}
 	}
 
-	pkgOpts := load.PackageOpts{ModResolveTests: true}
-	pkgs := load.PackagesAndErrors(ctx, pkgOpts, pkgArgs)
-	load.CheckPackageErrors(pkgs)
+	pkgs := load.PackagesForBuild(pkgArgs)
 	if len(pkgs) == 0 {
 		base.Fatalf("no packages to vet")
 	}
@@ -97,13 +76,13 @@ func runVet(ctx context.Context, cmd *base.Command, args []string) {
 
 	root := &work.Action{Mode: "go vet"}
 	for _, p := range pkgs {
-		_, ptest, pxtest, err := load.TestPackagesFor(ctx, pkgOpts, p, nil)
+		_, ptest, pxtest, err := load.TestPackagesFor(p, nil)
 		if err != nil {
 			base.Errorf("%v", err)
 			continue
 		}
 		if len(ptest.GoFiles) == 0 && len(ptest.CgoFiles) == 0 && pxtest == nil {
-			base.Errorf("go: can't vet %s: no Go files in %s", p.ImportPath, p.Dir)
+			base.Errorf("go vet %s: no Go files in %s", p.ImportPath, p.Dir)
 			continue
 		}
 		if len(ptest.GoFiles) > 0 || len(ptest.CgoFiles) > 0 {
@@ -113,5 +92,5 @@ func runVet(ctx context.Context, cmd *base.Command, args []string) {
 			root.Deps = append(root.Deps, b.VetAction(work.ModeBuild, work.ModeBuild, pxtest))
 		}
 	}
-	b.Do(ctx, root)
+	b.Do(root)
 }

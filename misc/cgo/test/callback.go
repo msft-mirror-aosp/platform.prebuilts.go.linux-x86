@@ -181,8 +181,8 @@ func testCallbackCallers(t *testing.T) {
 	name := []string{
 		"runtime.cgocallbackg1",
 		"runtime.cgocallbackg",
-		"runtime.cgocallback",
-		"runtime.systemstack_switch",
+		"runtime.cgocallback_gofunc",
+		"runtime.asmcgocall",
 		"runtime.cgocall",
 		"test._Cfunc_callback",
 		"test.nestedCall.func1",

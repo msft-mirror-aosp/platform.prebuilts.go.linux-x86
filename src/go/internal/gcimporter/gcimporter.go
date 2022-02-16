@@ -12,6 +12,7 @@ import (
 	"go/token"
 	"go/types"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,14 +146,17 @@ func Import(fset *token.FileSet, packages map[string]*types.Package, path, srcDi
 		err = fmt.Errorf("import %q: old textual export format no longer supported (recompile library)", path)
 
 	case "$$B\n":
-		var exportFormat byte
-		exportFormat, err = buf.ReadByte()
+		var data []byte
+		data, err = ioutil.ReadAll(buf)
+		if err != nil {
+			break
+		}
 
 		// The indexed export format starts with an 'i'; the older
 		// binary export format starts with a 'c', 'd', or 'v'
 		// (from "version"). Select appropriate importer.
-		if err == nil && exportFormat == 'i' {
-			pkg, err = iImportData(fset, packages, buf, id)
+		if len(data) > 0 && data[0] == 'i' {
+			_, pkg, err = iImportData(fset, packages, data[1:], id)
 		} else {
 			err = fmt.Errorf("import %q: old binary export format no longer supported (recompile library)", path)
 		}

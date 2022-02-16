@@ -7,6 +7,7 @@ package httptest_test
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +23,7 @@ func ExampleResponseRecorder() {
 	handler(w, req)
 
 	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := ioutil.ReadAll(resp.Body)
 
 	fmt.Println(resp.StatusCode)
 	fmt.Println(resp.Header.Get("Content-Type"))
@@ -44,7 +45,7 @@ func ExampleServer() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	greeting, err := io.ReadAll(res.Body)
+	greeting, err := ioutil.ReadAll(res.Body)
 	res.Body.Close()
 	if err != nil {
 		log.Fatal(err)
@@ -66,7 +67,7 @@ func ExampleServer_hTTP2() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	greeting, err := io.ReadAll(res.Body)
+	greeting, err := ioutil.ReadAll(res.Body)
 	res.Body.Close()
 	if err != nil {
 		log.Fatal(err)
@@ -88,7 +89,7 @@ func ExampleNewTLSServer() {
 		log.Fatal(err)
 	}
 
-	greeting, err := io.ReadAll(res.Body)
+	greeting, err := ioutil.ReadAll(res.Body)
 	res.Body.Close()
 	if err != nil {
 		log.Fatal(err)

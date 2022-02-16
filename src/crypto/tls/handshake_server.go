@@ -5,7 +5,6 @@
 package tls
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -14,7 +13,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"sync/atomic"
 	"time"
@@ -24,7 +22,6 @@ import (
 // It's discarded once the handshake has completed.
 type serverHandshakeState struct {
 	c            *Conn
-	ctx          context.Context
 	clientHello  *clientHelloMsg
 	hello        *serverHelloMsg
 	suite        *cipherSuite
@@ -39,8 +36,8 @@ type serverHandshakeState struct {
 }
 
 // serverHandshake performs a TLS handshake as a server.
-func (c *Conn) serverHandshake(ctx context.Context) error {
-	clientHello, err := c.readClientHello(ctx)
+func (c *Conn) serverHandshake() error {
+	clientHello, err := c.readClientHello()
 	if err != nil {
 		return err
 	}
@@ -48,7 +45,6 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 	if c.vers == VersionTLS13 {
 		hs := serverHandshakeStateTLS13{
 			c:           c,
-			ctx:         ctx,
 			clientHello: clientHello,
 		}
 		return hs.handshake()
@@ -56,7 +52,6 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 
 	hs := serverHandshakeState{
 		c:           c,
-		ctx:         ctx,
 		clientHello: clientHello,
 	}
 	return hs.handshake()
@@ -128,7 +123,7 @@ func (hs *serverHandshakeState) handshake() error {
 }
 
 // readClientHello reads a ClientHello message and selects the protocol version.
-func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, error) {
+func (c *Conn) readClientHello() (*clientHelloMsg, error) {
 	msg, err := c.readHandshake()
 	if err != nil {
 		return nil, err
@@ -142,7 +137,7 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, error) {
 	var configForClient *Config
 	originalConfig := c.config
 	if c.config.GetConfigForClient != nil {
-		chi := clientHelloInfo(ctx, c, clientHello)
+		chi := clientHelloInfo(c, clientHello)
 		if configForClient, err = c.config.GetConfigForClient(chi); err != nil {
 			c.sendAlert(alertInternalError)
 			return nil, err
@@ -156,7 +151,7 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, error) {
 	if len(clientHello.supportedVersions) == 0 {
 		clientVersions = supportedVersionsFromMax(clientHello.vers)
 	}
-	c.vers, ok = c.config.mutualVersion(roleServer, clientVersions)
+	c.vers, ok = c.config.mutualVersion(clientVersions)
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
 		return nil, fmt.Errorf("tls: client offered only unsupported versions: %x", clientVersions)
@@ -191,7 +186,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 	hs.hello.random = make([]byte, 32)
 	serverRandom := hs.hello.random
 	// Downgrade protection canaries. See RFC 8446, Section 4.1.3.
-	maxVers := c.config.maxSupportedVersion(roleServer)
+	maxVers := c.config.maxSupportedVersion()
 	if maxVers >= VersionTLS12 && c.vers < maxVers || testingOnlyForceDowngradeCanary {
 		if c.vers == VersionTLS12 {
 			copy(serverRandom[24:], downgradeCanaryTLS12)
@@ -217,15 +212,14 @@ func (hs *serverHandshakeState) processClientHello() error {
 		c.serverName = hs.clientHello.serverName
 	}
 
-	selectedProto, err := negotiateALPN(c.config.NextProtos, hs.clientHello.alpnProtocols)
-	if err != nil {
-		c.sendAlert(alertNoApplicationProtocol)
-		return err
+	if len(hs.clientHello.alpnProtocols) > 0 {
+		if selectedProto, fallback := mutualProtocol(hs.clientHello.alpnProtocols, c.config.NextProtos); !fallback {
+			hs.hello.alpnProtocol = selectedProto
+			c.clientProtocol = selectedProto
+		}
 	}
-	hs.hello.alpnProtocol = selectedProto
-	c.clientProtocol = selectedProto
 
-	hs.cert, err = c.config.getCertificate(clientHelloInfo(hs.ctx, c, hs.clientHello))
+	hs.cert, err = c.config.getCertificate(clientHelloInfo(c, hs.clientHello))
 	if err != nil {
 		if err == errNoCertificates {
 			c.sendAlert(alertUnrecognizedName)
@@ -275,34 +269,6 @@ func (hs *serverHandshakeState) processClientHello() error {
 	return nil
 }
 
-// negotiateALPN picks a shared ALPN protocol that both sides support in server
-// preference order. If ALPN is not configured or the peer doesn't support it,
-// it returns "" and no error.
-func negotiateALPN(serverProtos, clientProtos []string) (string, error) {
-	if len(serverProtos) == 0 || len(clientProtos) == 0 {
-		return "", nil
-	}
-	var http11fallback bool
-	for _, s := range serverProtos {
-		for _, c := range clientProtos {
-			if s == c {
-				return s, nil
-			}
-			if s == "h2" && c == "http/1.1" {
-				http11fallback = true
-			}
-		}
-	}
-	// As a special case, let http/1.1 clients connect to h2 servers as if they
-	// didn't support ALPN. We used not to enforce protocol overlap, so over
-	// time a number of HTTP servers were configured with only "h2", but
-	// expected to accept connections from "http/1.1" clients. See Issue 46310.
-	if http11fallback {
-		return "", nil
-	}
-	return "", fmt.Errorf("tls: client requested unsupported application protocols (%s)", clientProtos)
-}
-
 // supportsECDHE returns whether ECDHE key exchanges can be used with this
 // pre-TLS 1.3 client.
 func supportsECDHE(c *Config, supportedCurves []CurveID, supportedPoints []uint8) bool {
@@ -328,23 +294,16 @@ func supportsECDHE(c *Config, supportedCurves []CurveID, supportedPoints []uint8
 func (hs *serverHandshakeState) pickCipherSuite() error {
 	c := hs.c
 
-	preferenceOrder := cipherSuitesPreferenceOrder
-	if !hasAESGCMHardwareSupport || !aesgcmPreferred(hs.clientHello.cipherSuites) {
-		preferenceOrder = cipherSuitesPreferenceOrderNoAES
+	var preferenceList, supportedList []uint16
+	if c.config.PreferServerCipherSuites {
+		preferenceList = c.config.cipherSuites()
+		supportedList = hs.clientHello.cipherSuites
+	} else {
+		preferenceList = hs.clientHello.cipherSuites
+		supportedList = c.config.cipherSuites()
 	}
 
-	configCipherSuites := c.config.cipherSuites()
-	preferenceList := make([]uint16, 0, len(configCipherSuites))
-	for _, suiteID := range preferenceOrder {
-		for _, id := range configCipherSuites {
-			if id == suiteID {
-				preferenceList = append(preferenceList, id)
-				break
-			}
-		}
-	}
-
-	hs.suite = selectCipherSuite(preferenceList, hs.clientHello.cipherSuites, hs.cipherSuiteOk)
+	hs.suite = selectCipherSuite(preferenceList, supportedList, hs.cipherSuiteOk)
 	if hs.suite == nil {
 		c.sendAlert(alertHandshakeFailure)
 		return errors.New("tls: no cipher suite supported by both client and server")
@@ -354,7 +313,7 @@ func (hs *serverHandshakeState) pickCipherSuite() error {
 	for _, id := range hs.clientHello.cipherSuites {
 		if id == TLS_FALLBACK_SCSV {
 			// The client is doing a fallback connection. See RFC 7507.
-			if hs.clientHello.vers < c.config.maxSupportedVersion(roleServer) {
+			if hs.clientHello.vers < c.config.maxSupportedVersion() {
 				c.sendAlert(alertInappropriateFallback)
 				return errors.New("tls: client using inappropriate protocol fallback")
 			}
@@ -681,14 +640,14 @@ func (hs *serverHandshakeState) establishKeys() error {
 	clientMAC, serverMAC, clientKey, serverKey, clientIV, serverIV :=
 		keysFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.clientHello.random, hs.hello.random, hs.suite.macLen, hs.suite.keyLen, hs.suite.ivLen)
 
-	var clientCipher, serverCipher any
-	var clientHash, serverHash hash.Hash
+	var clientCipher, serverCipher interface{}
+	var clientHash, serverHash macFunction
 
 	if hs.suite.aead == nil {
 		clientCipher = hs.suite.cipher(clientKey, clientIV, true /* for reading */)
-		clientHash = hs.suite.mac(clientMAC)
+		clientHash = hs.suite.mac(c.vers, clientMAC)
 		serverCipher = hs.suite.cipher(serverKey, serverIV, false /* not for reading */)
-		serverHash = hs.suite.mac(serverMAC)
+		serverHash = hs.suite.mac(c.vers, serverMAC)
 	} else {
 		clientCipher = hs.suite.aead(clientKey, clientIV)
 		serverCipher = hs.suite.aead(serverKey, serverIV)
@@ -854,7 +813,7 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 	return nil
 }
 
-func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) *ClientHelloInfo {
+func clientHelloInfo(c *Conn, clientHello *clientHelloMsg) *ClientHelloInfo {
 	supportedVersions := clientHello.supportedVersions
 	if len(clientHello.supportedVersions) == 0 {
 		supportedVersions = supportedVersionsFromMax(clientHello.vers)
@@ -870,6 +829,5 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) 
 		SupportedVersions: supportedVersions,
 		Conn:              c.conn,
 		config:            c.config,
-		ctx:               ctx,
 	}
 }

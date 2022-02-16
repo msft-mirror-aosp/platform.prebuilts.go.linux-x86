@@ -1,4 +1,4 @@
-// skip
+// compile
 
 // Copyright 2012 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -6,8 +6,6 @@
 
 // Issue 4348. After switch to 64-bit ints the compiler generates
 // illegal instructions when using large array bounds or indexes.
-
-// Skip. We reject symbols larger that 2GB (Issue #9862).
 
 package main
 

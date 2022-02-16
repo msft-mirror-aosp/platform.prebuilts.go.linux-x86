@@ -4,8 +4,6 @@
 
 package objabi
 
-import "internal/buildcfg"
-
 // For the linkers. Must match Go definitions.
 
 const (
@@ -13,6 +11,10 @@ const (
 	StackSystem = STACKSYSTEM
 	StackBig    = 4096
 	StackSmall  = 128
+)
+
+const (
+	StackPreempt = -1314 // 0xfff...fade
 )
 
 // Initialize StackGuard and StackLimit according to target system.
@@ -24,7 +26,7 @@ var StackLimit = StackGuard - StackSystem - StackSmall
 // builds that have larger stack frames or for specific targets.
 func stackGuardMultiplier() int {
 	// On AIX, a larger stack is needed for syscalls.
-	if buildcfg.GOOS == "aix" {
+	if GOOS == "aix" {
 		return 2
 	}
 	return stackGuardMultiplierDefault
