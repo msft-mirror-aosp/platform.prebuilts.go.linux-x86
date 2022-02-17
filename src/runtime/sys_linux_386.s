@@ -39,8 +39,6 @@
 #define SYS_socketcall		102
 #define SYS_setittimer		104
 #define SYS_clone		120
-#define SYS_uname		122
-#define SYS_mlock		150
 #define SYS_sched_yield 	158
 #define SYS_nanosleep		162
 #define SYS_rt_sigreturn	173
@@ -58,6 +56,9 @@
 #define SYS_epoll_create	254
 #define SYS_epoll_ctl		255
 #define SYS_epoll_wait		256
+#define SYS_timer_create	259
+#define SYS_timer_settime	260
+#define SYS_timer_delete	263
 #define SYS_clock_gettime	265
 #define SYS_tgkill		270
 #define SYS_epoll_create1	329
@@ -212,6 +213,32 @@ TEXT runtime·setitimer(SB),NOSPLIT,$0-12
 	INVOKE_SYSCALL
 	RET
 
+TEXT runtime·timer_create(SB),NOSPLIT,$0-16
+	MOVL	$SYS_timer_create, AX
+	MOVL	clockid+0(FP), BX
+	MOVL	sevp+4(FP), CX
+	MOVL	timerid+8(FP), DX
+	INVOKE_SYSCALL
+	MOVL	AX, ret+12(FP)
+	RET
+
+TEXT runtime·timer_settime(SB),NOSPLIT,$0-20
+	MOVL	$SYS_timer_settime, AX
+	MOVL	timerid+0(FP), BX
+	MOVL	flags+4(FP), CX
+	MOVL	new+8(FP), DX
+	MOVL	old+12(FP), SI
+	INVOKE_SYSCALL
+	MOVL	AX, ret+16(FP)
+	RET
+
+TEXT runtime·timer_delete(SB),NOSPLIT,$0-8
+	MOVL	$SYS_timer_delete, AX
+	MOVL	timerid+0(FP), BX
+	INVOKE_SYSCALL
+	MOVL	AX, ret+4(FP)
+	RET
+
 TEXT runtime·mincore(SB),NOSPLIT,$0-16
 	MOVL	$SYS_mincore, AX
 	MOVL	addr+0(FP), BX
@@ -221,8 +248,8 @@ TEXT runtime·mincore(SB),NOSPLIT,$0-16
 	MOVL	AX, ret+12(FP)
 	RET
 
-// func walltime1() (sec int64, nsec int32)
-TEXT runtime·walltime1(SB), NOSPLIT, $8-12
+// func walltime() (sec int64, nsec int32)
+TEXT runtime·walltime(SB), NOSPLIT, $8-12
 	// We don't know how much stack space the VDSO code will need,
 	// so switch to g0.
 
@@ -414,6 +441,7 @@ TEXT runtime·sigfwd(SB),NOSPLIT,$12-16
 	MOVL	AX, SP
 	RET
 
+// Called using C ABI.
 TEXT runtime·sigtramp(SB),NOSPLIT,$28
 	// Save callee-saved C registers, since the caller may be a C signal handler.
 	MOVL	BX, bx-4(SP)
@@ -423,11 +451,11 @@ TEXT runtime·sigtramp(SB),NOSPLIT,$28
 	// We don't save mxcsr or the x87 control word because sigtrampgo doesn't
 	// modify them.
 
-	MOVL	sig+0(FP), BX
+	MOVL	(28+4)(SP), BX
 	MOVL	BX, 0(SP)
-	MOVL	info+4(FP), BX
+	MOVL	(28+8)(SP), BX
 	MOVL	BX, 4(SP)
-	MOVL	ctx+8(FP), BX
+	MOVL	(28+12)(SP), BX
 	MOVL	BX, 8(SP)
 	CALL	runtime·sigtrampgo(SB)
 
@@ -807,21 +835,4 @@ TEXT runtime·sbrk0(SB),NOSPLIT,$0-4
 	MOVL	$0, BX  // NULL
 	INVOKE_SYSCALL
 	MOVL	AX, ret+0(FP)
-	RET
-
-// func uname(utsname *new_utsname) int
-TEXT ·uname(SB),NOSPLIT,$0-8
-	MOVL    $SYS_uname, AX
-	MOVL    utsname+0(FP), BX
-	INVOKE_SYSCALL
-	MOVL	AX, ret+4(FP)
-	RET
-
-// func mlock(addr, len uintptr) int
-TEXT ·mlock(SB),NOSPLIT,$0-12
-	MOVL    $SYS_mlock, AX
-	MOVL    addr+0(FP), BX
-	MOVL    len+4(FP), CX
-	INVOKE_SYSCALL
-	MOVL	AX, ret+8(FP)
 	RET
