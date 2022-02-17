@@ -9,55 +9,86 @@ package work
 import (
 	"cmd/go/internal/base"
 	"cmd/go/internal/cfg"
-	"cmd/go/internal/load"
-	"cmd/internal/objabi"
+	"cmd/go/internal/fsys"
+	"cmd/go/internal/modload"
+	"cmd/internal/quoted"
 	"cmd/internal/sys"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
 
 func BuildInit() {
-	load.ModInit()
+	modload.Init()
 	instrumentInit()
 	buildModeInit()
+	if err := fsys.Init(base.Cwd()); err != nil {
+		base.Fatalf("go: %v", err)
+	}
 
 	// Make sure -pkgdir is absolute, because we run commands
 	// in different directories.
 	if cfg.BuildPkgdir != "" && !filepath.IsAbs(cfg.BuildPkgdir) {
 		p, err := filepath.Abs(cfg.BuildPkgdir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "go %s: evaluating -pkgdir: %v\n", flag.Args()[0], err)
+			fmt.Fprintf(os.Stderr, "go: evaluating -pkgdir: %v\n", err)
 			base.SetExitStatus(2)
 			base.Exit()
 		}
 		cfg.BuildPkgdir = p
 	}
 
-	// For each experiment that has been enabled in the toolchain, define a
-	// build tag with the same name but prefixed by "goexperiment." which can be
-	// used for compiling alternative files for the experiment. This allows
-	// changes for the experiment, like extra struct fields in the runtime,
-	// without affecting the base non-experiment code at all. [2:] strips the
-	// leading "X:" from objabi.Expstring().
-	exp := objabi.Expstring()[2:]
-	if exp != "none" {
-		experiments := strings.Split(exp, ",")
-		for _, expt := range experiments {
-			cfg.BuildContext.BuildTags = append(cfg.BuildContext.BuildTags, "goexperiment."+expt)
+	if cfg.BuildP <= 0 {
+		base.Fatalf("go: -p must be a positive integer: %v\n", cfg.BuildP)
+	}
+
+	// Make sure CC, CXX, and FC are absolute paths.
+	for _, key := range []string{"CC", "CXX", "FC"} {
+		value := cfg.Getenv(key)
+		args, err := quoted.Split(value)
+		if err != nil {
+			base.Fatalf("go: %s environment variable could not be parsed: %v", key, err)
+		}
+		if len(args) == 0 {
+			continue
+		}
+		path := args[0]
+		if !filepath.IsAbs(path) && path != filepath.Base(path) {
+			base.Fatalf("go: %s environment variable is relative; must be absolute path: %s\n", key, path)
 		}
 	}
 }
 
+// fuzzInstrumentFlags returns compiler flags that enable fuzzing instrumation
+// on supported platforms.
+//
+// On unsupported platforms, fuzzInstrumentFlags returns nil, meaning no
+// instrumentation is added. 'go test -fuzz' still works without coverage,
+// but it generates random inputs without guidance, so it's much less effective.
+func fuzzInstrumentFlags() []string {
+	if !sys.FuzzInstrumented(cfg.Goos, cfg.Goarch) {
+		return nil
+	}
+	return []string{"-d=libfuzzer"}
+}
+
 func instrumentInit() {
-	if !cfg.BuildRace && !cfg.BuildMSan {
+	if !cfg.BuildRace && !cfg.BuildMSan && !cfg.BuildASan {
 		return
 	}
 	if cfg.BuildRace && cfg.BuildMSan {
-		fmt.Fprintf(os.Stderr, "go %s: may not use -race and -msan simultaneously\n", flag.Args()[0])
+		fmt.Fprintf(os.Stderr, "go: may not use -race and -msan simultaneously\n")
+		base.SetExitStatus(2)
+		base.Exit()
+	}
+	if cfg.BuildRace && cfg.BuildASan {
+		fmt.Fprintf(os.Stderr, "go: may not use -race and -asan simultaneously\n")
+		base.SetExitStatus(2)
+		base.Exit()
+	}
+	if cfg.BuildMSan && cfg.BuildASan {
+		fmt.Fprintf(os.Stderr, "go: may not use -msan and -asan simultaneously\n")
 		base.SetExitStatus(2)
 		base.Exit()
 	}
@@ -66,12 +97,15 @@ func instrumentInit() {
 		base.SetExitStatus(2)
 		base.Exit()
 	}
-	if cfg.BuildRace {
-		if !sys.RaceDetectorSupported(cfg.Goos, cfg.Goarch) {
-			fmt.Fprintf(os.Stderr, "go %s: -race is only supported on linux/amd64, linux/ppc64le, linux/arm64, freebsd/amd64, netbsd/amd64, darwin/amd64 and windows/amd64\n", flag.Args()[0])
-			base.SetExitStatus(2)
-			base.Exit()
-		}
+	if cfg.BuildRace && !sys.RaceDetectorSupported(cfg.Goos, cfg.Goarch) {
+		fmt.Fprintf(os.Stderr, "-race is not supported on %s/%s\n", cfg.Goos, cfg.Goarch)
+		base.SetExitStatus(2)
+		base.Exit()
+	}
+	if cfg.BuildASan && !sys.ASanSupported(cfg.Goos, cfg.Goarch) {
+		fmt.Fprintf(os.Stderr, "-asan is not supported on %s/%s\n", cfg.Goos, cfg.Goarch)
+		base.SetExitStatus(2)
+		base.Exit()
 	}
 	mode := "race"
 	if cfg.BuildMSan {
@@ -82,13 +116,16 @@ func instrumentInit() {
 			cfg.BuildBuildmode = "pie"
 		}
 	}
+	if cfg.BuildASan {
+		mode = "asan"
+	}
 	modeFlag := "-" + mode
 
 	if !cfg.BuildContext.CgoEnabled {
 		if runtime.GOOS != cfg.Goos || runtime.GOARCH != cfg.Goarch {
-			fmt.Fprintf(os.Stderr, "go %s: %s requires cgo\n", flag.Args()[0], modeFlag)
+			fmt.Fprintf(os.Stderr, "go: %s requires cgo\n", modeFlag)
 		} else {
-			fmt.Fprintf(os.Stderr, "go %s: %s requires cgo; enable cgo by setting CGO_ENABLED=1\n", flag.Args()[0], modeFlag)
+			fmt.Fprintf(os.Stderr, "go: %s requires cgo; enable cgo by setting CGO_ENABLED=1\n", modeFlag)
 		}
 
 		base.SetExitStatus(2)
@@ -101,7 +138,7 @@ func instrumentInit() {
 		cfg.BuildContext.InstallSuffix += "_"
 	}
 	cfg.BuildContext.InstallSuffix += mode
-	cfg.BuildContext.BuildTags = append(cfg.BuildContext.BuildTags, mode)
+	cfg.BuildContext.ToolTags = append(cfg.BuildContext.ToolTags, mode)
 }
 
 func buildModeInit() {
@@ -121,7 +158,7 @@ func buildModeInit() {
 			codegenArg = "-fPIC"
 		} else {
 			switch cfg.Goos {
-			case "darwin":
+			case "darwin", "ios":
 				switch cfg.Goarch {
 				case "arm64":
 					codegenArg = "-shared"
@@ -156,6 +193,9 @@ func buildModeInit() {
 			codegenArg = "-shared"
 			ldBuildmode = "pie"
 		case "windows":
+			ldBuildmode = "pie"
+		case "ios":
+			codegenArg = "-shared"
 			ldBuildmode = "pie"
 		case "darwin":
 			switch cfg.Goarch {
@@ -227,7 +267,8 @@ func buildModeInit() {
 		if gccgo {
 			codegenArg = "-fPIC"
 		} else {
-			forcedAsmflags = append(forcedAsmflags, "-D=GOBUILDMODE_shared=1")
+			forcedAsmflags = append(forcedAsmflags, "-D=GOBUILDMODE_shared=1",
+				"-linkshared")
 			codegenArg = "-dynlink"
 			forcedGcflags = append(forcedGcflags, "-linkshared")
 			// TODO(mwhudson): remove -w when that gets fixed in linker.
@@ -252,7 +293,7 @@ func buildModeInit() {
 
 	switch cfg.BuildMod {
 	case "":
-		// ok
+		// Behavior will be determined automatically, as if no flag were passed.
 	case "readonly", "vendor", "mod":
 		if !cfg.ModulesEnabled && !base.InGOFLAGS("-mod") {
 			base.Fatalf("build flag -mod=%s only valid when using modules", cfg.BuildMod)
