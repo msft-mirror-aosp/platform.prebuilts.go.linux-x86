@@ -53,8 +53,8 @@ func BenchmarkIfaceCmpNil100(b *testing.B) {
 	}
 }
 
-var efaceCmp1 interface{}
-var efaceCmp2 interface{}
+var efaceCmp1 any
+var efaceCmp2 any
 
 func BenchmarkEfaceCmpDiff(b *testing.B) {
 	x := 5
@@ -266,8 +266,8 @@ func TestTrailingZero(t *testing.T) {
 		n int64
 		z struct{}
 	}
-	if unsafe.Sizeof(T2{}) != 8+unsafe.Sizeof(Uintreg(0)) {
-		t.Errorf("sizeof(%#v)==%d, want %d", T2{}, unsafe.Sizeof(T2{}), 8+unsafe.Sizeof(Uintreg(0)))
+	if unsafe.Sizeof(T2{}) != 8+unsafe.Sizeof(uintptr(0)) {
+		t.Errorf("sizeof(%#v)==%d, want %d", T2{}, unsafe.Sizeof(T2{}), 8+unsafe.Sizeof(uintptr(0)))
 	}
 	type T3 struct {
 		n byte
