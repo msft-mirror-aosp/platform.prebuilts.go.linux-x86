@@ -7,6 +7,7 @@ package atomic_test
 import (
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	. "sync/atomic"
 	"testing"
@@ -31,7 +32,7 @@ const (
 )
 
 // Do the 64-bit functions panic? If so, don't bother testing.
-var test64err = func() (err interface{}) {
+var test64err = func() (err any) {
 	defer func() {
 		err = recover()
 	}()
@@ -1196,6 +1197,11 @@ func TestHammerStoreLoad(t *testing.T) {
 	}
 	const procs = 8
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(procs))
+	// Disable the GC because hammerStoreLoadPointer invokes
+	// write barriers on values that aren't real pointers.
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	// Ensure any in-progress GC is finished.
+	runtime.GC()
 	for _, tt := range tests {
 		c := make(chan int)
 		var val uint64
@@ -1397,8 +1403,15 @@ func TestStoreLoadRelAcq64(t *testing.T) {
 
 func shouldPanic(t *testing.T, name string, f func()) {
 	defer func() {
-		if recover() == nil {
+		// Check that all GC maps are sane.
+		runtime.GC()
+
+		err := recover()
+		want := "unaligned 64-bit atomic operation"
+		if err == nil {
 			t.Errorf("%s did not panic", name)
+		} else if s, _ := err.(string); s != want {
+			t.Errorf("%s: wanted panic %q, got %q", name, want, err)
 		}
 	}()
 	f()
