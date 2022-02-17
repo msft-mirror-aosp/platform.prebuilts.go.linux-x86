@@ -29,7 +29,6 @@ Scripts also have access to these other environment variables:
 	GOARCH=<target GOARCH>
 	GOCACHE=<actual GOCACHE being used outside the test>
 	GOEXE=<executable file suffix: .exe on Windows, empty on other systems>
-	GOEXPSTRING=<value of objabi.Expstring(), from GOEXPERIMENT when toolchain built>
 	GOOS=<target GOOS>
 	GOPATH=$WORK/gopath
 	GOPROXY=<local module proxy serving from cmd/go/testdata/mod>
@@ -80,11 +79,14 @@ should only run when the condition is satisfied. The available conditions are:
  - Compiler names, like [gccgo], [gc].
  - Test environment details:
    - [short] for testing.Short()
-   - [cgo], [msan], [race] for whether cgo, msan, and the race detector can be used
+   - [cgo], [msan], [asan], [race] for whether cgo, msan, asan, and the race detector can be used
+   - [fuzz] for whether 'go test -fuzz' can be used at all
+   - [fuzz-instrumented] for whether 'go test -fuzz' uses coverage-instrumented binaries
    - [net] for whether the external network can be used
    - [link] for testenv.HasLink()
    - [root] for os.Geteuid() == 0
    - [symlink] for testenv.HasSymlink()
+   - [case-sensitive] for whether the file system is case-sensitive
    - [exec:prog] for whether prog is available for execution (found by exec.LookPath)
    - [GODEBUG:value] for whether value is one of the comma-separated entries in the GODEBUG variable
    - [buildmode:value] for whether -buildmode=value is supported
@@ -102,6 +104,7 @@ The commands are:
 
 - cd dir
   Change to the given directory for future commands.
+  The directory must use slashes as path separator.
 
 - chmod perm path...
   Change the permissions of the files or directories named by the path arguments

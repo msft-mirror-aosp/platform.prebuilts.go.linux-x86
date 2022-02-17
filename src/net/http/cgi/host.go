@@ -37,15 +37,15 @@ var trailingPort = regexp.MustCompile(`:([0-9]+)$`)
 
 var osDefaultInheritEnv = func() []string {
 	switch runtime.GOOS {
-	case "darwin":
+	case "darwin", "ios":
 		return []string{"DYLD_LIBRARY_PATH"}
-	case "linux", "freebsd", "openbsd":
+	case "linux", "freebsd", "netbsd", "openbsd":
 		return []string{"LD_LIBRARY_PATH"}
 	case "hpux":
 		return []string{"LD_LIBRARY_PATH", "SHLIB_PATH"}
 	case "irix":
 		return []string{"LD_LIBRARY_PATH", "LD_LIBRARYN32_PATH", "LD_LIBRARY64_PATH"}
-	case "solaris":
+	case "illumos", "solaris":
 		return []string{"LD_LIBRARY_PATH", "LD_LIBRARY_PATH_32", "LD_LIBRARY_PATH_64"}
 	case "windows":
 		return []string{"SystemRoot", "COMSPEC", "PATHEXT", "WINDIR"}
@@ -273,12 +273,11 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			break
 		}
 		headerLines++
-		parts := strings.SplitN(string(line), ":", 2)
-		if len(parts) < 2 {
+		header, val, ok := strings.Cut(string(line), ":")
+		if !ok {
 			h.printf("cgi: bogus header line: %s", string(line))
 			continue
 		}
-		header, val := parts[0], parts[1]
 		if !httpguts.ValidHeaderFieldName(header) {
 			h.printf("cgi: invalid header name: %q", header)
 			continue
@@ -351,7 +350,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (h *Handler) printf(format string, v ...interface{}) {
+func (h *Handler) printf(format string, v ...any) {
 	if h.Logger != nil {
 		h.Logger.Printf(format, v...)
 	} else {
