@@ -81,6 +81,7 @@ package net
 import (
 	"context"
 	"errors"
+	"internal/poll"
 	"io"
 	"os"
 	"sync"
@@ -124,10 +125,10 @@ type Conn interface {
 	// Any blocked Read or Write operations will be unblocked and return errors.
 	Close() error
 
-	// LocalAddr returns the local network address.
+	// LocalAddr returns the local network address, if known.
 	LocalAddr() Addr
 
-	// RemoteAddr returns the remote network address.
+	// RemoteAddr returns the remote network address, if known.
 	RemoteAddr() Addr
 
 	// SetDeadline sets the read and write deadlines associated
@@ -327,7 +328,7 @@ type PacketConn interface {
 	// Any blocked ReadFrom or WriteTo operations will be unblocked and return errors.
 	Close() error
 
-	// LocalAddr returns the local network address.
+	// LocalAddr returns the local network address, if known.
 	LocalAddr() Addr
 
 	// SetDeadline sets the read and write deadlines associated
@@ -395,8 +396,12 @@ type Listener interface {
 // An Error represents a network error.
 type Error interface {
 	error
-	Timeout() bool   // Is the error a timeout?
-	Temporary() bool // Is the error temporary?
+	Timeout() bool // Is the error a timeout?
+
+	// Deprecated: Temporary errors are not well-defined.
+	// Most "temporary" errors are timeouts, and the few exceptions are surprising.
+	// Do not use this method.
+	Temporary() bool
 }
 
 // Various errors contained in OpError.
@@ -538,6 +543,9 @@ type ParseError struct {
 
 func (e *ParseError) Error() string { return "invalid " + e.Type + ": " + e.Text }
 
+func (e *ParseError) Timeout() bool   { return false }
+func (e *ParseError) Temporary() bool { return false }
+
 type AddrError struct {
 	Err  string
 	Addr string
@@ -632,6 +640,17 @@ func (e *DNSError) Timeout() bool { return e.IsTimeout }
 // error and return a DNSError for which Temporary returns false.
 func (e *DNSError) Temporary() bool { return e.IsTimeout || e.IsTemporary }
 
+// errClosed exists just so that the docs for ErrClosed don't mention
+// the internal package poll.
+var errClosed = poll.ErrNetClosing
+
+// ErrClosed is the error returned by an I/O call on a network
+// connection that has already been closed, or that is closed by
+// another goroutine before the I/O is completed. This may be wrapped
+// in another error, and should normally be tested using
+// errors.Is(err, net.ErrClosed).
+var ErrClosed error = errClosed
+
 type writerOnly struct {
 	io.Writer
 }
@@ -721,6 +740,7 @@ func (v *Buffers) consume(n int64) {
 			return
 		}
 		n -= ln0
+		(*v)[0] = nil
 		*v = (*v)[1:]
 	}
 }
