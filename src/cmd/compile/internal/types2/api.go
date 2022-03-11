@@ -202,12 +202,6 @@ type Info struct {
 	// identifier z in a variable declaration 'var z int' is found
 	// only in the Defs map, and identifiers denoting packages in
 	// qualified identifiers are collected in the Uses map.
-	//
-	// For binary expressions representing unions in constraint
-	// position or type elements in interfaces, a union type is
-	// recorded for the top-level expression only. For instance,
-	// given the constraint a|b|c, the union type for (a|b)|c
-	// is recorded, but not the union type for a|b.
 	Types map[syntax.Expr]TypeAndValue
 
 	// Instances maps identifiers denoting parameterized types or functions to
@@ -271,6 +265,7 @@ type Info struct {
 	//
 	//     *syntax.File
 	//     *syntax.FuncType
+	//     *syntax.TypeDecl
 	//     *syntax.BlockStmt
 	//     *syntax.IfStmt
 	//     *syntax.SwitchStmt
@@ -426,9 +421,15 @@ func (conf *Config) Check(path string, files []*syntax.File, info *Info) (*Packa
 }
 
 // AssertableTo reports whether a value of type V can be asserted to have type T.
+// The behavior of AssertableTo is undefined if V is a generalized interface; i.e.,
+// an interface that may only be used as a type constraint in Go code.
 func AssertableTo(V *Interface, T Type) bool {
-	m, _ := (*Checker)(nil).assertableTo(V, T)
-	return m == nil
+	// Checker.newAssertableTo suppresses errors for invalid types, so we need special
+	// handling here.
+	if T.Underlying() == Typ[Invalid] {
+		return false
+	}
+	return (*Checker)(nil).newAssertableTo(V, T) == nil
 }
 
 // AssignableTo reports whether a value of type V is assignable to a variable of type T.
@@ -455,7 +456,7 @@ func Implements(V Type, T *Interface) bool {
 	if V.Underlying() == Typ[Invalid] {
 		return false
 	}
-	return (*Checker)(nil).implements(V, T, nil) == nil
+	return (*Checker)(nil).implements(V, T) == nil
 }
 
 // Identical reports whether x and y are identical types.
