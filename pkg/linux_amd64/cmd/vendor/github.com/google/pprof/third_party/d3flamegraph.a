@@ -1,7 +1,7 @@
 !<arch>
-__.PKGDEF       0           0     0     644     24298     `
-go object linux amd64 go1.18beta1 X:regabiwrappers,regabireflect,regabiargs,pacerredesign
-build id "JkXIwOyazighFOQCMbtv/okMN9kquFyuawwIiruyy"
+__.PKGDEF       0           0     0     644     24296     `
+go object linux amd64 go1.18rc1 X:regabiwrappers,regabireflect,regabiargs,pacerredesign
+build id "0lYejBJqv3UumhmsWc0u/Ri6BqV6bb6ZldtIhsJDv"
 
 
 $$B
@@ -1004,9 +1004,9 @@ Object.defineProperty(exports, '__esModule', { value: true });
 }
  d3flamegraph	CSSSourceJSSourceC& ZC“ –ØˇªÄº çºóº  Ø=l4CµÜ
 $$
-_go_.o          0           0     0     644     642       `
-go object linux amd64 go1.18beta1 X:regabiwrappers,regabireflect,regabiargs,pacerredesign
-build id "JkXIwOyazighFOQCMbtv/okMN9kquFyuawwIiruyy"
+_go_.o          0           0     0     644     640       `
+go object linux amd64 go1.18rc1 X:regabiwrappers,regabireflect,regabiargs,pacerredesign
+build id "0lYejBJqv3UumhmsWc0u/Ri6BqV6bb6ZldtIhsJDv"
 
 
 !

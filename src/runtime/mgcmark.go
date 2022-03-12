@@ -401,7 +401,7 @@ func markrootSpans(gcw *gcWork, shard int) {
 }
 
 // gcAssistAlloc performs GC work to make gp's assist debt positive.
-// gp must be the calling user gorountine.
+// gp must be the calling user goroutine.
 //
 // This must be called with preemption enabled.
 func gcAssistAlloc(gp *g) {
@@ -1561,7 +1561,7 @@ func gcmarknewobject(span *mspan, obj, size, scanSize uintptr) {
 	if !goexperiment.PacerRedesign {
 		// The old pacer counts newly allocated memory toward
 		// heapScanWork because heapScan is continuously updated
-		// throughout the GC cyle with newly allocated memory. However,
+		// throughout the GC cycle with newly allocated memory. However,
 		// these objects are never actually scanned, so we need
 		// to account for them in heapScanWork here, "faking" their work.
 		// Otherwise the pacer will think it's always behind, potentially
