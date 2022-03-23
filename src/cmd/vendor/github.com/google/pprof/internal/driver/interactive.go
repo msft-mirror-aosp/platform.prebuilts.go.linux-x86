@@ -34,13 +34,16 @@ var tailDigitsRE = regexp.MustCompile("[0-9]+$")
 func interactive(p *profile.Profile, o *plugin.Options) error {
 	// Enter command processing loop.
 	o.UI.SetAutoComplete(newCompleter(functionNames(p)))
-	configure("compact_labels", "true")
-	configHelp["sample_index"] += fmt.Sprintf("Or use sample_index=name, with name in %v.\n", sampleTypes(p))
+	pprofVariables.set("compact_labels", "true")
+	pprofVariables["sample_index"].help += fmt.Sprintf("Or use sample_index=name, with name in %v.\n", sampleTypes(p))
 
 	// Do not wait for the visualizer to complete, to allow multiple
 	// graphs to be visualized simultaneously.
 	interactiveMode = true
 	shortcuts := profileShortcuts(p)
+
+	// Get all groups in pprofVariables to allow for clearer error messages.
+	groups := groupOptions(pprofVariables)
 
 	greetings(p, o.UI)
 	for {
@@ -66,12 +69,7 @@ func interactive(p *profile.Profile, o *plugin.Options) error {
 					}
 					value = strings.TrimSpace(value)
 				}
-				if isConfigurable(name) {
-					// All non-bool options require inputs
-					if len(s) == 1 && !isBoolConfig(name) {
-						o.UI.PrintErr(fmt.Errorf("please specify a value, e.g. %s=<val>", name))
-						continue
-					}
+				if v := pprofVariables[name]; v != nil {
 					if name == "sample_index" {
 						// Error check sample_index=xxx to ensure xxx is a valid sample type.
 						index, err := p.SampleIndexByName(value)
@@ -79,15 +77,21 @@ func interactive(p *profile.Profile, o *plugin.Options) error {
 							o.UI.PrintErr(err)
 							continue
 						}
-						if index < 0 || index >= len(p.SampleType) {
-							o.UI.PrintErr(fmt.Errorf("invalid sample_index %q", value))
-							continue
-						}
 						value = p.SampleType[index].Type
 					}
-					if err := configure(name, value); err != nil {
+					if err := pprofVariables.set(name, value); err != nil {
 						o.UI.PrintErr(err)
 					}
+					continue
+				}
+				// Allow group=variable syntax by converting into variable="".
+				if v := pprofVariables[value]; v != nil && v.group == name {
+					if err := pprofVariables.set(value, ""); err != nil {
+						o.UI.PrintErr(err)
+					}
+					continue
+				} else if okValues := groups[name]; okValues != nil {
+					o.UI.PrintErr(fmt.Errorf("unrecognized value for %s: %q. Use one of %s", name, value, strings.Join(okValues, ", ")))
 					continue
 				}
 			}
@@ -101,16 +105,16 @@ func interactive(p *profile.Profile, o *plugin.Options) error {
 			case "o", "options":
 				printCurrentOptions(p, o.UI)
 				continue
-			case "exit", "quit", "q":
+			case "exit", "quit":
 				return nil
 			case "help":
 				commandHelp(strings.Join(tokens[1:], " "), o.UI)
 				continue
 			}
 
-			args, cfg, err := parseCommandLine(tokens)
+			args, vars, err := parseCommandLine(tokens)
 			if err == nil {
-				err = generateReportWrapper(p, args, cfg, o)
+				err = generateReportWrapper(p, args, vars, o)
 			}
 
 			if err != nil {
@@ -120,13 +124,30 @@ func interactive(p *profile.Profile, o *plugin.Options) error {
 	}
 }
 
+// groupOptions returns a map containing all non-empty groups
+// mapped to an array of the option names in that group in
+// sorted order.
+func groupOptions(vars variables) map[string][]string {
+	groups := make(map[string][]string)
+	for name, option := range vars {
+		group := option.group
+		if group != "" {
+			groups[group] = append(groups[group], name)
+		}
+	}
+	for _, names := range groups {
+		sort.Strings(names)
+	}
+	return groups
+}
+
 var generateReportWrapper = generateReport // For testing purposes.
 
 // greetings prints a brief welcome and some overall profile
 // information before accepting interactive commands.
 func greetings(p *profile.Profile, ui plugin.UI) {
 	numLabelUnits := identifyNumLabelUnits(p, ui)
-	ropt, err := reportOptions(p, numLabelUnits, currentConfig())
+	ropt, err := reportOptions(p, numLabelUnits, pprofVariables)
 	if err == nil {
 		rpt := report.New(p, ropt)
 		ui.Print(strings.Join(report.ProfileLabels(rpt), "\n"))
@@ -179,16 +200,27 @@ func sampleTypes(p *profile.Profile) []string {
 
 func printCurrentOptions(p *profile.Profile, ui plugin.UI) {
 	var args []string
-	current := currentConfig()
-	for _, f := range configFields {
-		n := f.name
-		v := current.get(f)
+	type groupInfo struct {
+		set    string
+		values []string
+	}
+	groups := make(map[string]*groupInfo)
+	for n, o := range pprofVariables {
+		v := o.stringValue()
 		comment := ""
+		if g := o.group; g != "" {
+			gi, ok := groups[g]
+			if !ok {
+				gi = &groupInfo{}
+				groups[g] = gi
+			}
+			if o.boolValue() {
+				gi.set = n
+			}
+			gi.values = append(gi.values, n)
+			continue
+		}
 		switch {
-		case len(f.choices) > 0:
-			values := append([]string{}, f.choices...)
-			sort.Strings(values)
-			comment = "[" + strings.Join(values, " | ") + "]"
 		case n == "sample_index":
 			st := sampleTypes(p)
 			if v == "" {
@@ -210,13 +242,18 @@ func printCurrentOptions(p *profile.Profile, ui plugin.UI) {
 		}
 		args = append(args, fmt.Sprintf("  %-25s = %-20s %s", n, v, comment))
 	}
+	for g, vars := range groups {
+		sort.Strings(vars.values)
+		comment := commentStart + " [" + strings.Join(vars.values, " | ") + "]"
+		args = append(args, fmt.Sprintf("  %-25s = %-20s %s", g, vars.set, comment))
+	}
 	sort.Strings(args)
 	ui.Print(strings.Join(args, "\n"))
 }
 
 // parseCommandLine parses a command and returns the pprof command to
-// execute and the configuration to use for the report.
-func parseCommandLine(input []string) ([]string, config, error) {
+// execute and a set of variables for the report.
+func parseCommandLine(input []string) ([]string, variables, error) {
 	cmd, args := input[:1], input[1:]
 	name := cmd[0]
 
@@ -230,32 +267,25 @@ func parseCommandLine(input []string) ([]string, config, error) {
 		}
 	}
 	if c == nil {
-		if _, ok := configHelp[name]; ok {
-			value := "<val>"
-			if len(args) > 0 {
-				value = args[0]
-			}
-			return nil, config{}, fmt.Errorf("did you mean: %s=%s", name, value)
-		}
-		return nil, config{}, fmt.Errorf("unrecognized command: %q", name)
+		return nil, nil, fmt.Errorf("unrecognized command: %q", name)
 	}
 
 	if c.hasParam {
 		if len(args) == 0 {
-			return nil, config{}, fmt.Errorf("command %s requires an argument", name)
+			return nil, nil, fmt.Errorf("command %s requires an argument", name)
 		}
 		cmd = append(cmd, args[0])
 		args = args[1:]
 	}
 
-	// Copy config since options set in the command line should not persist.
-	vcopy := currentConfig()
+	// Copy the variables as options set in the command line are not persistent.
+	vcopy := pprofVariables.makeCopy()
 
 	var focus, ignore string
 	for i := 0; i < len(args); i++ {
 		t := args[i]
-		if n, err := strconv.ParseInt(t, 10, 32); err == nil {
-			vcopy.NodeCount = int(n)
+		if _, err := strconv.ParseInt(t, 10, 32); err == nil {
+			vcopy.set("nodecount", t)
 			continue
 		}
 		switch t[0] {
@@ -264,14 +294,14 @@ func parseCommandLine(input []string) ([]string, config, error) {
 			if outputFile == "" {
 				i++
 				if i >= len(args) {
-					return nil, config{}, fmt.Errorf("unexpected end of line after >")
+					return nil, nil, fmt.Errorf("unexpected end of line after >")
 				}
 				outputFile = args[i]
 			}
-			vcopy.Output = outputFile
+			vcopy.set("output", outputFile)
 		case '-':
 			if t == "--cum" || t == "-cum" {
-				vcopy.Sort = "cum"
+				vcopy.set("cum", "t")
 				continue
 			}
 			ignore = catRegex(ignore, t[1:])
@@ -281,25 +311,28 @@ func parseCommandLine(input []string) ([]string, config, error) {
 	}
 
 	if name == "tags" {
-		if focus != "" {
-			vcopy.TagFocus = focus
-		}
-		if ignore != "" {
-			vcopy.TagIgnore = ignore
-		}
+		updateFocusIgnore(vcopy, "tag", focus, ignore)
 	} else {
-		if focus != "" {
-			vcopy.Focus = focus
-		}
-		if ignore != "" {
-			vcopy.Ignore = ignore
-		}
+		updateFocusIgnore(vcopy, "", focus, ignore)
 	}
-	if vcopy.NodeCount == -1 && (name == "text" || name == "top") {
-		vcopy.NodeCount = 10
+
+	if vcopy["nodecount"].intValue() == -1 && (name == "text" || name == "top") {
+		vcopy.set("nodecount", "10")
 	}
 
 	return cmd, vcopy, nil
+}
+
+func updateFocusIgnore(v variables, prefix, f, i string) {
+	if f != "" {
+		focus := prefix + "focus"
+		v.set(focus, catRegex(v[focus].value, f))
+	}
+
+	if i != "" {
+		ignore := prefix + "ignore"
+		v.set(ignore, catRegex(v[ignore].value, i))
+	}
 }
 
 func catRegex(a, b string) string {
@@ -329,8 +362,8 @@ func commandHelp(args string, ui plugin.UI) {
 		return
 	}
 
-	if help, ok := configHelp[args]; ok {
-		ui.Print(help + "\n")
+	if v := pprofVariables[args]; v != nil {
+		ui.Print(v.help + "\n")
 		return
 	}
 
@@ -340,17 +373,18 @@ func commandHelp(args string, ui plugin.UI) {
 // newCompleter creates an autocompletion function for a set of commands.
 func newCompleter(fns []string) func(string) string {
 	return func(line string) string {
+		v := pprofVariables
 		switch tokens := strings.Fields(line); len(tokens) {
 		case 0:
 			// Nothing to complete
 		case 1:
 			// Single token -- complete command name
-			if match := matchVariableOrCommand(tokens[0]); match != "" {
+			if match := matchVariableOrCommand(v, tokens[0]); match != "" {
 				return match
 			}
 		case 2:
 			if tokens[0] == "help" {
-				if match := matchVariableOrCommand(tokens[1]); match != "" {
+				if match := matchVariableOrCommand(v, tokens[1]); match != "" {
 					return tokens[0] + " " + match
 				}
 				return line
@@ -374,19 +408,26 @@ func newCompleter(fns []string) func(string) string {
 }
 
 // matchVariableOrCommand attempts to match a string token to the prefix of a Command.
-func matchVariableOrCommand(token string) string {
+func matchVariableOrCommand(v variables, token string) string {
 	token = strings.ToLower(token)
-	var matches []string
+	found := ""
 	for cmd := range pprofCommands {
 		if strings.HasPrefix(cmd, token) {
-			matches = append(matches, cmd)
+			if found != "" {
+				return ""
+			}
+			found = cmd
 		}
 	}
-	matches = append(matches, completeConfig(token)...)
-	if len(matches) == 1 {
-		return matches[0]
+	for variable := range v {
+		if strings.HasPrefix(variable, token) {
+			if found != "" {
+				return ""
+			}
+			found = variable
+		}
 	}
-	return ""
+	return found
 }
 
 // functionCompleter replaces provided substring with a function

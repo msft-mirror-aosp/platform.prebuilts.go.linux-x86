@@ -6,7 +6,6 @@
 package objfile
 
 import (
-	"cmd/internal/archive"
 	"debug/dwarf"
 	"debug/gosym"
 	"fmt"
@@ -74,8 +73,6 @@ func Open(name string) (*File, error) {
 	}
 	if f, err := openGoFile(r); err == nil {
 		return f, nil
-	} else if _, ok := err.(archive.ErrGoObjOtherVersion); ok {
-		return nil, fmt.Errorf("open %s: %v", name, err)
 	}
 	for _, try := range openers {
 		if raw, err := try(r); err == nil {
@@ -151,15 +148,6 @@ func (e *Entry) PCLineTable() (Liner, error) {
 	textStart, symtab, pclntab, err := e.raw.pcln()
 	if err != nil {
 		return nil, err
-	}
-	syms, err := e.raw.symbols()
-	if err == nil {
-		for _, s := range syms {
-			if s.Name == "runtime.text" {
-				textStart = s.Addr
-				break
-			}
-		}
 	}
 	return gosym.NewTable(symtab, gosym.NewLineTable(pclntab, textStart))
 }

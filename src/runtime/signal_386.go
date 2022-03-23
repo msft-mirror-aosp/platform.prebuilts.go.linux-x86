@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build dragonfly || freebsd || linux || netbsd || openbsd
+// +build dragonfly freebsd linux netbsd openbsd
 
 package runtime
 
 import (
-	"internal/abi"
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -42,17 +41,17 @@ func (c *sigctxt) preparePanic(sig uint32, gp *g) {
 	sp := uintptr(c.esp())
 
 	if shouldPushSigpanic(gp, pc, *(*uintptr)(unsafe.Pointer(sp))) {
-		c.pushCall(abi.FuncPCABIInternal(sigpanic), pc)
+		c.pushCall(funcPC(sigpanic), pc)
 	} else {
 		// Not safe to push the call. Just clobber the frame.
-		c.set_eip(uint32(abi.FuncPCABIInternal(sigpanic)))
+		c.set_eip(uint32(funcPC(sigpanic)))
 	}
 }
 
 func (c *sigctxt) pushCall(targetPC, resumePC uintptr) {
 	// Make it look like we called target at resumePC.
 	sp := uintptr(c.esp())
-	sp -= goarch.PtrSize
+	sp -= sys.PtrSize
 	*(*uintptr)(unsafe.Pointer(sp)) = resumePC
 	c.set_esp(uint32(sp))
 	c.set_eip(uint32(targetPC))

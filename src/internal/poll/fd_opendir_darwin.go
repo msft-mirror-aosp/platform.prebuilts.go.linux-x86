@@ -19,13 +19,7 @@ func (fd *FD) OpenDir() (uintptr, string, error) {
 	if err != nil {
 		return 0, call, err
 	}
-	var dir uintptr
-	for {
-		dir, err = fdopendir(fd2)
-		if err != syscall.EINTR {
-			break
-		}
-	}
+	dir, err := fdopendir(fd2)
 	if err != nil {
 		syscall.Close(fd2)
 		return 0, "fdopendir", err

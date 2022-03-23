@@ -92,12 +92,7 @@ func satan(x float64) float64 {
 // Special cases are:
 //      Atan(±0) = ±0
 //      Atan(±Inf) = ±Pi/2
-func Atan(x float64) float64 {
-	if haveArchAtan {
-		return archAtan(x)
-	}
-	return atan(x)
-}
+func Atan(x float64) float64
 
 func atan(x float64) float64 {
 	if x == 0 {

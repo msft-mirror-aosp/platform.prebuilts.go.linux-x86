@@ -5,8 +5,7 @@
 package runtime
 
 import (
-	"internal/abi"
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -52,20 +51,16 @@ func sys_umtx_wakeup(addr *uint32, val int32) int32
 
 func osyield()
 
-//go:nosplit
-func osyield_no_g() {
-	osyield()
-}
-
 func kqueue() int32
 
 //go:noescape
 func kevent(kq int32, ch *keventt, nch int32, ev *keventt, nev int32, ts *timespec) int32
-
-func pipe() (r, w int32, errno int32)
-func pipe2(flags int32) (r, w int32, errno int32)
 func closeonexec(fd int32)
 func setNonblock(fd int32)
+
+func pipe() (r, w int32, errno int32)
+
+const stackSystem = 0
 
 // From DragonFly's <sys/sysctl.h>
 const (
@@ -148,14 +143,14 @@ func lwp_start(uintptr)
 func newosproc(mp *m) {
 	stk := unsafe.Pointer(mp.g0.stack.hi)
 	if false {
-		print("newosproc stk=", stk, " m=", mp, " g=", mp.g0, " lwp_start=", abi.FuncPCABI0(lwp_start), " id=", mp.id, " ostk=", &mp, "\n")
+		print("newosproc stk=", stk, " m=", mp, " g=", mp.g0, " lwp_start=", funcPC(lwp_start), " id=", mp.id, " ostk=", &mp, "\n")
 	}
 
 	var oset sigset
 	sigprocmask(_SIG_SETMASK, &sigset_all, &oset)
 
 	params := lwpparams{
-		start_func: abi.FuncPCABI0(lwp_start),
+		start_func: funcPC(lwp_start),
 		arg:        unsafe.Pointer(mp),
 		stack:      uintptr(stk),
 		tid1:       nil, // minit will record tid
@@ -208,11 +203,6 @@ func unminit() {
 	unminitSignals()
 }
 
-// Called from exitm, but not from drop, to undo the effect of thread-owned
-// resources in minit, semacreate, or elsewhere. Do not take locks after calling this.
-func mdestroy(mp *m) {
-}
-
 func sigtramp()
 
 type sigactiont struct {
@@ -227,8 +217,8 @@ func setsig(i uint32, fn uintptr) {
 	var sa sigactiont
 	sa.sa_flags = _SA_SIGINFO | _SA_ONSTACK | _SA_RESTART
 	sa.sa_mask = sigset_all
-	if fn == abi.FuncPCABIInternal(sighandler) { // abi.FuncPCABIInternal(sighandler) matches the callers in signal_unix.go
-		fn = abi.FuncPCABI0(sigtramp)
+	if fn == funcPC(sighandler) {
+		fn = funcPC(sigtramp)
 	}
 	sa.sa_sigaction = fn
 	sigaction(i, &sa, nil)
@@ -268,19 +258,6 @@ func sigdelset(mask *sigset, i int) {
 func (c *sigctxt) fixsigcode(sig uint32) {
 }
 
-func setProcessCPUProfiler(hz int32) {
-	setProcessCPUProfilerTimer(hz)
-}
-
-func setThreadCPUProfiler(hz int32) {
-	setThreadCPUProfilerHz(hz)
-}
-
-//go:nosplit
-func validSIGPROF(mp *m, c *sigctxt) bool {
-	return true
-}
-
 func sysargs(argc int32, argv **byte) {
 	n := argc + 1
 
@@ -292,7 +269,7 @@ func sysargs(argc int32, argv **byte) {
 	// skip NULL separator
 	n++
 
-	auxv := (*[1 << 28]uintptr)(add(unsafe.Pointer(argv), uintptr(n)*goarch.PtrSize))
+	auxv := (*[1 << 28]uintptr)(add(unsafe.Pointer(argv), uintptr(n)*sys.PtrSize))
 	sysauxv(auxv[:])
 }
 
@@ -323,13 +300,4 @@ func raise(sig uint32) {
 
 func signalM(mp *m, sig int) {
 	lwp_kill(-1, int32(mp.procid), sig)
-}
-
-// sigPerThreadSyscall is only used on linux, so we assign a bogus signal
-// number.
-const sigPerThreadSyscall = 1 << 31
-
-//go:nosplit
-func runPerThreadSyscall() {
-	throw("runPerThreadSyscall only valid on linux")
 }

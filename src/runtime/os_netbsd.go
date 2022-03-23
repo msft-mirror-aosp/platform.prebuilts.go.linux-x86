@@ -5,9 +5,8 @@
 package runtime
 
 import (
-	"internal/abi"
-	"internal/goarch"
 	"runtime/internal/atomic"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -68,11 +67,6 @@ func lwp_self() int32
 
 func osyield()
 
-//go:nosplit
-func osyield_no_g() {
-	osyield()
-}
-
 func kqueue() int32
 
 //go:noescape
@@ -101,31 +95,18 @@ var sigset_all = sigset{[4]uint32{^uint32(0), ^uint32(0), ^uint32(0), ^uint32(0)
 
 // From NetBSD's <sys/sysctl.h>
 const (
-	_CTL_KERN   = 1
-	_KERN_OSREV = 3
-
-	_CTL_HW        = 6
-	_HW_NCPU       = 3
-	_HW_PAGESIZE   = 7
-	_HW_NCPUONLINE = 16
+	_CTL_HW      = 6
+	_HW_NCPU     = 3
+	_HW_PAGESIZE = 7
 )
 
-func sysctlInt(mib []uint32) (int32, bool) {
-	var out int32
-	nout := unsafe.Sizeof(out)
-	ret := sysctl(&mib[0], uint32(len(mib)), (*byte)(unsafe.Pointer(&out)), &nout, nil, 0)
-	if ret < 0 {
-		return 0, false
-	}
-	return out, true
-}
-
 func getncpu() int32 {
-	if n, ok := sysctlInt([]uint32{_CTL_HW, _HW_NCPUONLINE}); ok {
-		return int32(n)
-	}
-	if n, ok := sysctlInt([]uint32{_CTL_HW, _HW_NCPU}); ok {
-		return int32(n)
+	mib := [2]uint32{_CTL_HW, _HW_NCPU}
+	out := uint32(0)
+	nout := unsafe.Sizeof(out)
+	ret := sysctl(&mib[0], 2, (*byte)(unsafe.Pointer(&out)), &nout, nil, 0)
+	if ret >= 0 {
+		return int32(out)
 	}
 	return 1
 }
@@ -137,13 +118,6 @@ func getPageSize() uintptr {
 	ret := sysctl(&mib[0], 2, (*byte)(unsafe.Pointer(&out)), &nout, nil, 0)
 	if ret >= 0 {
 		return uintptr(out)
-	}
-	return 0
-}
-
-func getOSRev() int {
-	if osrev, ok := sysctlInt([]uint32{_CTL_KERN, _KERN_OSREV}); ok {
-		return int(osrev)
 	}
 	return 0
 }
@@ -226,7 +200,7 @@ func newosproc(mp *m) {
 	var oset sigset
 	sigprocmask(_SIG_SETMASK, &sigset_all, &oset)
 
-	lwp_mcontext_init(&uc.uc_mcontext, stk, mp, mp.g0, abi.FuncPCABI0(netbsdMstart))
+	lwp_mcontext_init(&uc.uc_mcontext, stk, mp, mp.g0, funcPC(netbsdMstart))
 
 	ret := lwp_create(unsafe.Pointer(&uc), _LWP_DETACHED, unsafe.Pointer(&mp.procid))
 	sigprocmask(_SIG_SETMASK, &oset, nil)
@@ -239,11 +213,7 @@ func newosproc(mp *m) {
 	}
 }
 
-// mstart is the entry-point for new Ms.
-// It is written in assembly, uses ABI0, is marked TOPFRAME, and calls netbsdMstart0.
-func netbsdMstart()
-
-// netbsdMStart0 is the function call that starts executing a newly
+// netbsdMStart is the function call that starts executing a newly
 // created thread. On NetBSD, a new thread inherits the signal stack
 // of the creating thread. That confuses minit, so we remove that
 // signal stack here before calling the regular mstart. It's a bit
@@ -251,10 +221,10 @@ func netbsdMstart()
 // it's a simple change that keeps NetBSD working like other OS's.
 // At this point all signals are blocked, so there is no race.
 //go:nosplit
-func netbsdMstart0() {
+func netbsdMstart() {
 	st := stackt{ss_flags: _SS_DISABLE}
 	sigaltstack(&st, nil)
-	mstart0()
+	mstart()
 }
 
 func osinit() {
@@ -262,7 +232,6 @@ func osinit() {
 	if physPageSize == 0 {
 		physPageSize = getPageSize()
 	}
-	needSysmonWorkaround = getOSRev() < 902000000 // NetBSD 9.2
 }
 
 var urandom_dev = []byte("/dev/urandom\x00")
@@ -311,11 +280,6 @@ func unminit() {
 	unminitSignals()
 }
 
-// Called from exitm, but not from drop, to undo the effect of thread-owned
-// resources in minit, semacreate, or elsewhere. Do not take locks after calling this.
-func mdestroy(mp *m) {
-}
-
 func sigtramp()
 
 type sigactiont struct {
@@ -330,8 +294,8 @@ func setsig(i uint32, fn uintptr) {
 	var sa sigactiont
 	sa.sa_flags = _SA_SIGINFO | _SA_ONSTACK | _SA_RESTART
 	sa.sa_mask = sigset_all
-	if fn == abi.FuncPCABIInternal(sighandler) { // abi.FuncPCABIInternal(sighandler) matches the callers in signal_unix.go
-		fn = abi.FuncPCABI0(sigtramp)
+	if fn == funcPC(sighandler) {
+		fn = funcPC(sigtramp)
 	}
 	sa.sa_sigaction = fn
 	sigaction(i, &sa, nil)
@@ -371,19 +335,6 @@ func sigdelset(mask *sigset, i int) {
 func (c *sigctxt) fixsigcode(sig uint32) {
 }
 
-func setProcessCPUProfiler(hz int32) {
-	setProcessCPUProfilerTimer(hz)
-}
-
-func setThreadCPUProfiler(hz int32) {
-	setThreadCPUProfilerHz(hz)
-}
-
-//go:nosplit
-func validSIGPROF(mp *m, c *sigctxt) bool {
-	return true
-}
-
 func sysargs(argc int32, argv **byte) {
 	n := argc + 1
 
@@ -396,7 +347,7 @@ func sysargs(argc int32, argv **byte) {
 	n++
 
 	// now argv+n is auxv
-	auxv := (*[1 << 28]uintptr)(add(unsafe.Pointer(argv), uintptr(n)*goarch.PtrSize))
+	auxv := (*[1 << 28]uintptr)(add(unsafe.Pointer(argv), uintptr(n)*sys.PtrSize))
 	sysauxv(auxv[:])
 }
 
@@ -427,13 +378,4 @@ func raise(sig uint32) {
 
 func signalM(mp *m, sig int) {
 	lwp_kill(int32(mp.procid), sig)
-}
-
-// sigPerThreadSyscall is only used on linux, so we assign a bogus signal
-// number.
-const sigPerThreadSyscall = 1 << 31
-
-//go:nosplit
-func runPerThreadSyscall() {
-	throw("runPerThreadSyscall only valid on linux")
 }

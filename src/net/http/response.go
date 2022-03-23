@@ -165,14 +165,16 @@ func ReadResponse(r *bufio.Reader, req *Request) (*Response, error) {
 		}
 		return nil, err
 	}
-	proto, status, ok := strings.Cut(line, " ")
-	if !ok {
+	if i := strings.IndexByte(line, ' '); i == -1 {
 		return nil, badStringError("malformed HTTP response", line)
+	} else {
+		resp.Proto = line[:i]
+		resp.Status = strings.TrimLeft(line[i+1:], " ")
 	}
-	resp.Proto = proto
-	resp.Status = strings.TrimLeft(status, " ")
-
-	statusCode, _, _ := strings.Cut(resp.Status, " ")
+	statusCode := resp.Status
+	if i := strings.IndexByte(resp.Status, ' '); i != -1 {
+		statusCode = resp.Status[:i]
+	}
 	if len(statusCode) != 3 {
 		return nil, badStringError("malformed HTTP status code", statusCode)
 	}
@@ -180,6 +182,7 @@ func ReadResponse(r *bufio.Reader, req *Request) (*Response, error) {
 	if err != nil || resp.StatusCode < 0 {
 		return nil, badStringError("malformed HTTP status code", statusCode)
 	}
+	var ok bool
 	if resp.ProtoMajor, resp.ProtoMinor, ok = ParseHTTPVersion(resp.Proto); !ok {
 		return nil, badStringError("malformed HTTP version", resp.Proto)
 	}
@@ -349,21 +352,10 @@ func (r *Response) bodyIsWritable() bool {
 	return ok
 }
 
-// isProtocolSwitch reports whether the response code and header
-// indicate a successful protocol upgrade response.
+// isProtocolSwitch reports whether r is a response to a successful
+// protocol upgrade.
 func (r *Response) isProtocolSwitch() bool {
-	return isProtocolSwitchResponse(r.StatusCode, r.Header)
-}
-
-// isProtocolSwitchResponse reports whether the response code and
-// response header indicate a successful protocol upgrade response.
-func isProtocolSwitchResponse(code int, h Header) bool {
-	return code == StatusSwitchingProtocols && isProtocolSwitchHeader(h)
-}
-
-// isProtocolSwitchHeader reports whether the request or response header
-// is for a protocol switch.
-func isProtocolSwitchHeader(h Header) bool {
-	return h.Get("Upgrade") != "" &&
-		httpguts.HeaderValuesContainsToken(h["Connection"], "Upgrade")
+	return r.StatusCode == StatusSwitchingProtocols &&
+		r.Header.Get("Upgrade") != "" &&
+		httpguts.HeaderValuesContainsToken(r.Header["Connection"], "Upgrade")
 }

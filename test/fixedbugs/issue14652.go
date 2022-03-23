@@ -1,4 +1,4 @@
-// compile -G=3
+// errorcheck
 
 // Copyright 2016 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -6,5 +6,4 @@
 
 package p
 
-// any is now permitted instead of interface{}
-var x any
+var x any // ERROR "undefined: any"

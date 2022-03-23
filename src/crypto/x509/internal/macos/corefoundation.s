@@ -2,12 +2,9 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build darwin
+// +build darwin,amd64
 
 #include "textflag.h"
-
-// The trampolines are ABIInternal as they are address-taken in
-// Go code.
 
 TEXT ·x509_CFArrayGetCount_trampoline(SB),NOSPLIT,$0-0
 	JMP	x509_CFArrayGetCount(SB)
@@ -27,15 +24,3 @@ TEXT ·x509_CFNumberGetValue_trampoline(SB),NOSPLIT,$0-0
 	JMP	x509_CFNumberGetValue(SB)
 TEXT ·x509_CFEqual_trampoline(SB),NOSPLIT,$0-0
 	JMP	x509_CFEqual(SB)
-TEXT ·x509_CFArrayCreateMutable_trampoline(SB),NOSPLIT,$0-0
-	JMP x509_CFArrayCreateMutable(SB)
-TEXT ·x509_CFArrayAppendValue_trampoline(SB),NOSPLIT,$0-0
-	JMP x509_CFArrayAppendValue(SB)
-TEXT ·x509_CFDateCreate_trampoline(SB),NOSPLIT,$0-0
-	JMP x509_CFDateCreate(SB)
-TEXT ·x509_CFDataCreate_trampoline(SB),NOSPLIT,$0-0
-	JMP x509_CFDataCreate(SB)
-TEXT ·x509_CFErrorCopyDescription_trampoline(SB),NOSPLIT,$0-0
-	JMP x509_CFErrorCopyDescription(SB)
-TEXT ·x509_CFStringCreateExternalRepresentation_trampoline(SB),NOSPLIT,$0-0
-	JMP x509_CFStringCreateExternalRepresentation(SB)

@@ -425,42 +425,56 @@ func (u *Userinfo) String() string {
 	return s
 }
 
-// Maybe rawURL is of the form scheme:path.
+// Maybe rawurl is of the form scheme:path.
 // (Scheme must be [a-zA-Z][a-zA-Z0-9+-.]*)
-// If so, return scheme, path; else return "", rawURL.
-func getScheme(rawURL string) (scheme, path string, err error) {
-	for i := 0; i < len(rawURL); i++ {
-		c := rawURL[i]
+// If so, return scheme, path; else return "", rawurl.
+func getscheme(rawurl string) (scheme, path string, err error) {
+	for i := 0; i < len(rawurl); i++ {
+		c := rawurl[i]
 		switch {
 		case 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z':
 		// do nothing
 		case '0' <= c && c <= '9' || c == '+' || c == '-' || c == '.':
 			if i == 0 {
-				return "", rawURL, nil
+				return "", rawurl, nil
 			}
 		case c == ':':
 			if i == 0 {
 				return "", "", errors.New("missing protocol scheme")
 			}
-			return rawURL[:i], rawURL[i+1:], nil
+			return rawurl[:i], rawurl[i+1:], nil
 		default:
 			// we have encountered an invalid character,
 			// so there is no valid scheme
-			return "", rawURL, nil
+			return "", rawurl, nil
 		}
 	}
-	return "", rawURL, nil
+	return "", rawurl, nil
 }
 
-// Parse parses a raw url into a URL structure.
+// split slices s into two substrings separated by the first occurrence of
+// sep. If cutc is true then sep is excluded from the second substring.
+// If sep does not occur in s then s and the empty string is returned.
+func split(s string, sep byte, cutc bool) (string, string) {
+	i := strings.IndexByte(s, sep)
+	if i < 0 {
+		return s, ""
+	}
+	if cutc {
+		return s[:i], s[i+1:]
+	}
+	return s[:i], s[i:]
+}
+
+// Parse parses rawurl into a URL structure.
 //
-// The url may be relative (a path, without a host) or absolute
+// The rawurl may be relative (a path, without a host) or absolute
 // (starting with a scheme). Trying to parse a hostname and path
 // without a scheme is invalid but may not necessarily return an
 // error, due to parsing ambiguities.
-func Parse(rawURL string) (*URL, error) {
+func Parse(rawurl string) (*URL, error) {
 	// Cut off #frag
-	u, frag, _ := strings.Cut(rawURL, "#")
+	u, frag := split(rawurl, '#', true)
 	url, err := parse(u, false)
 	if err != nil {
 		return nil, &Error{"parse", u, err}
@@ -469,20 +483,20 @@ func Parse(rawURL string) (*URL, error) {
 		return url, nil
 	}
 	if err = url.setFragment(frag); err != nil {
-		return nil, &Error{"parse", rawURL, err}
+		return nil, &Error{"parse", rawurl, err}
 	}
 	return url, nil
 }
 
-// ParseRequestURI parses a raw url into a URL structure. It assumes that
-// url was received in an HTTP request, so the url is interpreted
+// ParseRequestURI parses rawurl into a URL structure. It assumes that
+// rawurl was received in an HTTP request, so the rawurl is interpreted
 // only as an absolute URI or an absolute path.
-// The string url is assumed not to have a #fragment suffix.
+// The string rawurl is assumed not to have a #fragment suffix.
 // (Web browsers strip #fragment before sending the URL to a web server.)
-func ParseRequestURI(rawURL string) (*URL, error) {
-	url, err := parse(rawURL, true)
+func ParseRequestURI(rawurl string) (*URL, error) {
+	url, err := parse(rawurl, true)
 	if err != nil {
-		return nil, &Error{"parse", rawURL, err}
+		return nil, &Error{"parse", rawurl, err}
 	}
 	return url, nil
 }
@@ -491,27 +505,27 @@ func ParseRequestURI(rawURL string) (*URL, error) {
 // viaRequest is true, the URL is assumed to have arrived via an HTTP request,
 // in which case only absolute URLs or path-absolute relative URLs are allowed.
 // If viaRequest is false, all forms of relative URLs are allowed.
-func parse(rawURL string, viaRequest bool) (*URL, error) {
+func parse(rawurl string, viaRequest bool) (*URL, error) {
 	var rest string
 	var err error
 
-	if stringContainsCTLByte(rawURL) {
+	if stringContainsCTLByte(rawurl) {
 		return nil, errors.New("net/url: invalid control character in URL")
 	}
 
-	if rawURL == "" && viaRequest {
+	if rawurl == "" && viaRequest {
 		return nil, errors.New("empty url")
 	}
 	url := new(URL)
 
-	if rawURL == "*" {
+	if rawurl == "*" {
 		url.Path = "*"
 		return url, nil
 	}
 
 	// Split off possible leading "http:", "mailto:", etc.
 	// Cannot contain escaped characters.
-	if url.Scheme, rest, err = getScheme(rawURL); err != nil {
+	if url.Scheme, rest, err = getscheme(rawurl); err != nil {
 		return nil, err
 	}
 	url.Scheme = strings.ToLower(url.Scheme)
@@ -520,7 +534,7 @@ func parse(rawURL string, viaRequest bool) (*URL, error) {
 		url.ForceQuery = true
 		rest = rest[:len(rest)-1]
 	} else {
-		rest, url.RawQuery, _ = strings.Cut(rest, "?")
+		rest, url.RawQuery = split(rest, '?', true)
 	}
 
 	if !strings.HasPrefix(rest, "/") {
@@ -539,7 +553,9 @@ func parse(rawURL string, viaRequest bool) (*URL, error) {
 		// RFC 3986, §3.3:
 		// In addition, a URI reference (Section 4.1) may be a relative-path reference,
 		// in which case the first path segment cannot contain a colon (":") character.
-		if segment, _, _ := strings.Cut(rest, "/"); strings.Contains(segment, ":") {
+		colon := strings.Index(rest, ":")
+		slash := strings.Index(rest, "/")
+		if colon >= 0 && (slash < 0 || colon < slash) {
 			// First path segment has colon. Not allowed in relative URL.
 			return nil, errors.New("first path segment in URL cannot contain colon")
 		}
@@ -547,10 +563,7 @@ func parse(rawURL string, viaRequest bool) (*URL, error) {
 
 	if (url.Scheme != "" || !viaRequest && !strings.HasPrefix(rest, "///")) && strings.HasPrefix(rest, "//") {
 		var authority string
-		authority, rest = rest[2:], ""
-		if i := strings.Index(authority, "/"); i >= 0 {
-			authority, rest = authority[:i], authority[i:]
-		}
+		authority, rest = split(rest[2:], '/', false)
 		url.User, url.Host, err = parseAuthority(authority)
 		if err != nil {
 			return nil, err
@@ -589,7 +602,7 @@ func parseAuthority(authority string) (user *Userinfo, host string, err error) {
 		}
 		user = User(userinfo)
 	} else {
-		username, password, _ := strings.Cut(userinfo, ":")
+		username, password := split(userinfo, ':', true)
 		if username, err = unescape(username, encodeUserPassword); err != nil {
 			return nil, "", err
 		}
@@ -827,7 +840,7 @@ func (u *URL) String() string {
 			// it would be mistaken for a scheme name. Such a segment must be
 			// preceded by a dot-segment (e.g., "./this:that") to make a relative-
 			// path reference.
-			if segment, _, _ := strings.Cut(path, "/"); strings.Contains(segment, ":") {
+			if i := strings.IndexByte(path, ':'); i > -1 && strings.IndexByte(path[:i], '/') == -1 {
 				buf.WriteString("./")
 			}
 		}
@@ -896,22 +909,15 @@ func (v Values) Del(key string) {
 	delete(v, key)
 }
 
-// Has checks whether a given key is set.
-func (v Values) Has(key string) bool {
-	_, ok := v[key]
-	return ok
-}
-
 // ParseQuery parses the URL-encoded query string and returns
 // a map listing the values specified for each key.
 // ParseQuery always returns a non-nil map containing all the
 // valid query parameters found; err describes the first decoding error
 // encountered, if any.
 //
-// Query is expected to be a list of key=value settings separated by ampersands.
-// A setting without an equals sign is interpreted as a key set to an empty
-// value.
-// Settings containing a non-URL-encoded semicolon are considered invalid.
+// Query is expected to be a list of key=value settings separated by
+// ampersands or semicolons. A setting without an equals sign is
+// interpreted as a key set to an empty value.
 func ParseQuery(query string) (Values, error) {
 	m := make(Values)
 	err := parseQuery(m, query)
@@ -920,16 +926,19 @@ func ParseQuery(query string) (Values, error) {
 
 func parseQuery(m Values, query string) (err error) {
 	for query != "" {
-		var key string
-		key, query, _ = strings.Cut(query, "&")
-		if strings.Contains(key, ";") {
-			err = fmt.Errorf("invalid semicolon separator in query")
-			continue
+		key := query
+		if i := strings.IndexAny(key, "&;"); i >= 0 {
+			key, query = key[:i], key[i+1:]
+		} else {
+			query = ""
 		}
 		if key == "" {
 			continue
 		}
-		key, value, _ := strings.Cut(key, "=")
+		value := ""
+		if i := strings.Index(key, "="); i >= 0 {
+			key, value = key[:i], key[i+1:]
+		}
 		key, err1 := QueryUnescape(key)
 		if err1 != nil {
 			if err == nil {
@@ -991,55 +1000,25 @@ func resolvePath(base, ref string) string {
 	if full == "" {
 		return ""
 	}
-
-	var (
-		elem string
-		dst  strings.Builder
-	)
-	first := true
-	remaining := full
-	// We want to return a leading '/', so write it now.
-	dst.WriteByte('/')
-	found := true
-	for found {
-		elem, remaining, found = strings.Cut(remaining, "/")
-		if elem == "." {
-			first = false
+	src := strings.Split(full, "/")
+	dst := make([]string, 0, len(src))
+	for _, elem := range src {
+		switch elem {
+		case ".":
 			// drop
-			continue
-		}
-
-		if elem == ".." {
-			// Ignore the leading '/' we already wrote.
-			str := dst.String()[1:]
-			index := strings.LastIndexByte(str, '/')
-
-			dst.Reset()
-			dst.WriteByte('/')
-			if index == -1 {
-				first = true
-			} else {
-				dst.WriteString(str[:index])
+		case "..":
+			if len(dst) > 0 {
+				dst = dst[:len(dst)-1]
 			}
-		} else {
-			if !first {
-				dst.WriteByte('/')
-			}
-			dst.WriteString(elem)
-			first = false
+		default:
+			dst = append(dst, elem)
 		}
 	}
-
-	if elem == "." || elem == ".." {
-		dst.WriteByte('/')
+	if last := src[len(src)-1]; last == "." || last == ".." {
+		// Add final slash to the joined path.
+		dst = append(dst, "")
 	}
-
-	// We wrote an initial '/', but we don't want two.
-	r := dst.String()
-	if len(r) > 1 && r[1] == '/' {
-		r = r[1:]
-	}
-	return r
+	return "/" + strings.TrimPrefix(strings.Join(dst, "/"), "/")
 }
 
 // IsAbs reports whether the URL is absolute.
@@ -1052,11 +1031,11 @@ func (u *URL) IsAbs() bool {
 // may be relative or absolute. Parse returns nil, err on parse
 // failure, otherwise its return value is the same as ResolveReference.
 func (u *URL) Parse(ref string) (*URL, error) {
-	refURL, err := Parse(ref)
+	refurl, err := Parse(ref)
 	if err != nil {
 		return nil, err
 	}
-	return u.ResolveReference(refURL), nil
+	return u.ResolveReference(refurl), nil
 }
 
 // ResolveReference resolves a URI reference to an absolute URI from
@@ -1083,7 +1062,7 @@ func (u *URL) ResolveReference(ref *URL) *URL {
 		url.Path = ""
 		return &url
 	}
-	if ref.Path == "" && !ref.ForceQuery && ref.RawQuery == "" {
+	if ref.Path == "" && ref.RawQuery == "" {
 		url.RawQuery = u.RawQuery
 		if ref.Fragment == "" {
 			url.Fragment = u.Fragment
@@ -1145,8 +1124,8 @@ func (u *URL) Port() string {
 // splitHostPort separates host and port. If the port is not valid, it returns
 // the entire input as host, and it doesn't check the validity of the host.
 // Unlike net.SplitHostPort, but per RFC 3986, it requires ports to be numeric.
-func splitHostPort(hostPort string) (host, port string) {
-	host = hostPort
+func splitHostPort(hostport string) (host, port string) {
+	host = hostport
 
 	colon := strings.LastIndexByte(host, ':')
 	if colon != -1 && validOptionalPort(host[colon:]) {

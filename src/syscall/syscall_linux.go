@@ -11,10 +11,7 @@
 
 package syscall
 
-import (
-	"internal/itoa"
-	"unsafe"
-)
+import "unsafe"
 
 func rawSyscallNoError(trap, a1, a2, a3 uintptr) (r1, r2 uintptr)
 
@@ -161,25 +158,6 @@ func Openat(dirfd int, path string, flags int, mode uint32) (fd int, err error) 
 	return openat(dirfd, path, flags|O_LARGEFILE, mode)
 }
 
-func Pipe(p []int) error {
-	return Pipe2(p, 0)
-}
-
-//sysnb pipe2(p *[2]_C_int, flags int) (err error)
-
-func Pipe2(p []int, flags int) error {
-	if len(p) != 2 {
-		return EINVAL
-	}
-	var pp [2]_C_int
-	err := pipe2(&pp, flags)
-	if err == nil {
-		p[0] = int(pp[0])
-		p[1] = int(pp[1])
-	}
-	return err
-}
-
 //sys	readlinkat(dirfd int, path string, buf []byte) (n int, err error)
 
 func Readlink(path string, buf []byte) (n int, err error) {
@@ -223,7 +201,18 @@ func UtimesNano(path string, ts []Timespec) (err error) {
 	if len(ts) != 2 {
 		return EINVAL
 	}
-	return utimensat(_AT_FDCWD, path, (*[2]Timespec)(unsafe.Pointer(&ts[0])), 0)
+	err = utimensat(_AT_FDCWD, path, (*[2]Timespec)(unsafe.Pointer(&ts[0])), 0)
+	if err != ENOSYS {
+		return err
+	}
+	// If the utimensat syscall isn't available (utimensat was added to Linux
+	// in 2.6.22, Released, 8 July 2007) then fall back to utimes
+	var tv [2]Timeval
+	for i := 0; i < 2; i++ {
+		tv[i].Sec = ts[i].Sec
+		tv[i].Usec = ts[i].Nsec / 1000
+	}
+	return utimes(path, (*[2]Timeval)(unsafe.Pointer(&tv[0])))
 }
 
 func Futimesat(dirfd int, path string, tv []Timeval) (err error) {
@@ -236,7 +225,7 @@ func Futimesat(dirfd int, path string, tv []Timeval) (err error) {
 func Futimes(fd int, tv []Timeval) (err error) {
 	// Believe it or not, this is the best we can do on Linux
 	// (and is what glibc does).
-	return Utimes("/proc/self/fd/"+itoa.Itoa(fd), tv)
+	return Utimes("/proc/self/fd/"+itoa(fd), tv)
 }
 
 const ImplementsGetwd = true
@@ -282,37 +271,16 @@ func Getgroups() (gids []int, err error) {
 	return
 }
 
-var cgo_libc_setgroups unsafe.Pointer // non-nil if cgo linked.
-
 func Setgroups(gids []int) (err error) {
-	n := uintptr(len(gids))
-	if n == 0 {
-		if cgo_libc_setgroups == nil {
-			if _, _, e1 := AllThreadsSyscall(_SYS_setgroups, 0, 0, 0); e1 != 0 {
-				err = errnoErr(e1)
-			}
-			return
-		}
-		if ret := cgocaller(cgo_libc_setgroups, 0, 0); ret != 0 {
-			err = errnoErr(Errno(ret))
-		}
-		return
+	if len(gids) == 0 {
+		return setgroups(0, nil)
 	}
 
 	a := make([]_Gid_t, len(gids))
 	for i, v := range gids {
 		a[i] = _Gid_t(v)
 	}
-	if cgo_libc_setgroups == nil {
-		if _, _, e1 := AllThreadsSyscall(_SYS_setgroups, n, uintptr(unsafe.Pointer(&a[0])), 0); e1 != 0 {
-			err = errnoErr(e1)
-		}
-		return
-	}
-	if ret := cgocaller(cgo_libc_setgroups, n, uintptr(unsafe.Pointer(&a[0]))); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
+	return setgroups(len(a), &a[0])
 }
 
 type WaitStatus uint32
@@ -395,7 +363,9 @@ func (sa *SockaddrInet4) sockaddr() (unsafe.Pointer, _Socklen, error) {
 	p := (*[2]byte)(unsafe.Pointer(&sa.raw.Port))
 	p[0] = byte(sa.Port >> 8)
 	p[1] = byte(sa.Port)
-	sa.raw.Addr = sa.Addr
+	for i := 0; i < len(sa.Addr); i++ {
+		sa.raw.Addr[i] = sa.Addr[i]
+	}
 	return unsafe.Pointer(&sa.raw), SizeofSockaddrInet4, nil
 }
 
@@ -408,7 +378,9 @@ func (sa *SockaddrInet6) sockaddr() (unsafe.Pointer, _Socklen, error) {
 	p[0] = byte(sa.Port >> 8)
 	p[1] = byte(sa.Port)
 	sa.raw.Scope_id = sa.ZoneId
-	sa.raw.Addr = sa.Addr
+	for i := 0; i < len(sa.Addr); i++ {
+		sa.raw.Addr[i] = sa.Addr[i]
+	}
 	return unsafe.Pointer(&sa.raw), SizeofSockaddrInet6, nil
 }
 
@@ -459,7 +431,9 @@ func (sa *SockaddrLinklayer) sockaddr() (unsafe.Pointer, _Socklen, error) {
 	sa.raw.Hatype = sa.Hatype
 	sa.raw.Pkttype = sa.Pkttype
 	sa.raw.Halen = sa.Halen
-	sa.raw.Addr = sa.Addr
+	for i := 0; i < len(sa.Addr); i++ {
+		sa.raw.Addr[i] = sa.Addr[i]
+	}
 	return unsafe.Pointer(&sa.raw), SizeofSockaddrLinklayer, nil
 }
 
@@ -498,7 +472,9 @@ func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
 		sa.Hatype = pp.Hatype
 		sa.Pkttype = pp.Pkttype
 		sa.Halen = pp.Halen
-		sa.Addr = pp.Addr
+		for i := 0; i < len(sa.Addr); i++ {
+			sa.Addr[i] = pp.Addr[i]
+		}
 		return sa, nil
 
 	case AF_UNIX:
@@ -531,7 +507,9 @@ func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
 		sa := new(SockaddrInet4)
 		p := (*[2]byte)(unsafe.Pointer(&pp.Port))
 		sa.Port = int(p[0])<<8 + int(p[1])
-		sa.Addr = pp.Addr
+		for i := 0; i < len(sa.Addr); i++ {
+			sa.Addr[i] = pp.Addr[i]
+		}
 		return sa, nil
 
 	case AF_INET6:
@@ -540,7 +518,9 @@ func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
 		p := (*[2]byte)(unsafe.Pointer(&pp.Port))
 		sa.Port = int(p[0])<<8 + int(p[1])
 		sa.ZoneId = pp.Scope_id
-		sa.Addr = pp.Addr
+		for i := 0; i < len(sa.Addr); i++ {
+			sa.Addr[i] = pp.Addr[i]
+		}
 		return sa, nil
 	}
 	return nil, EAFNOSUPPORT
@@ -549,7 +529,7 @@ func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
 func Accept(fd int) (nfd int, sa Sockaddr, err error) {
 	var rsa RawSockaddrAny
 	var len _Socklen = SizeofSockaddrAny
-	nfd, err = accept4(fd, &rsa, &len, 0)
+	nfd, err = accept(fd, &rsa, &len)
 	if err != nil {
 		return
 	}
@@ -640,9 +620,10 @@ func SetsockoptIPMreqn(fd, level, opt int, mreq *IPMreqn) (err error) {
 	return setsockopt(fd, level, opt, unsafe.Pointer(mreq), unsafe.Sizeof(*mreq))
 }
 
-func recvmsgRaw(fd int, p, oob []byte, flags int, rsa *RawSockaddrAny) (n, oobn int, recvflags int, err error) {
+func Recvmsg(fd int, p, oob []byte, flags int) (n, oobn int, recvflags int, from Sockaddr, err error) {
 	var msg Msghdr
-	msg.Name = (*byte)(unsafe.Pointer(rsa))
+	var rsa RawSockaddrAny
+	msg.Name = (*byte)(unsafe.Pointer(&rsa))
 	msg.Namelen = uint32(SizeofSockaddrAny)
 	var iov Iovec
 	if len(p) > 0 {
@@ -673,10 +654,28 @@ func recvmsgRaw(fd int, p, oob []byte, flags int, rsa *RawSockaddrAny) (n, oobn 
 	}
 	oobn = int(msg.Controllen)
 	recvflags = int(msg.Flags)
+	// source address is only specified if the socket is unconnected
+	if rsa.Addr.Family != AF_UNSPEC {
+		from, err = anyToSockaddr(&rsa)
+	}
 	return
 }
 
-func sendmsgN(fd int, p, oob []byte, ptr unsafe.Pointer, salen _Socklen, flags int) (n int, err error) {
+func Sendmsg(fd int, p, oob []byte, to Sockaddr, flags int) (err error) {
+	_, err = SendmsgN(fd, p, oob, to, flags)
+	return
+}
+
+func SendmsgN(fd int, p, oob []byte, to Sockaddr, flags int) (n int, err error) {
+	var ptr unsafe.Pointer
+	var salen _Socklen
+	if to != nil {
+		var err error
+		ptr, salen, err = to.sockaddr()
+		if err != nil {
+			return 0, err
+		}
+	}
 	var msg Msghdr
 	msg.Name = (*byte)(ptr)
 	msg.Namelen = uint32(salen)
@@ -958,155 +957,17 @@ func Getpgrp() (pid int) {
 //sysnb	Setsid() (pid int, err error)
 //sysnb	Settimeofday(tv *Timeval) (err error)
 
-// Provided by runtime.syscall_runtime_doAllThreadsSyscall which stops the
-// world and invokes the syscall on each OS thread. Once this function returns,
-// all threads are in sync.
-//go:uintptrescapes
-func runtime_doAllThreadsSyscall(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr)
-
-// AllThreadsSyscall performs a syscall on each OS thread of the Go
-// runtime. It first invokes the syscall on one thread. Should that
-// invocation fail, it returns immediately with the error status.
-// Otherwise, it invokes the syscall on all of the remaining threads
-// in parallel. It will terminate the program if it observes any
-// invoked syscall's return value differs from that of the first
-// invocation.
-//
-// AllThreadsSyscall is intended for emulating simultaneous
-// process-wide state changes that require consistently modifying
-// per-thread state of the Go runtime.
-//
-// AllThreadsSyscall is unaware of any threads that are launched
-// explicitly by cgo linked code, so the function always returns
-// ENOTSUP in binaries that use cgo.
-//go:uintptrescapes
-func AllThreadsSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
-	if cgo_libc_setegid != nil {
-		return minus1, minus1, ENOTSUP
-	}
-	r1, r2, errno := runtime_doAllThreadsSyscall(trap, a1, a2, a3, 0, 0, 0)
-	return r1, r2, Errno(errno)
-}
-
-// AllThreadsSyscall6 is like AllThreadsSyscall, but extended to six
-// arguments.
-//go:uintptrescapes
-func AllThreadsSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno) {
-	if cgo_libc_setegid != nil {
-		return minus1, minus1, ENOTSUP
-	}
-	r1, r2, errno := runtime_doAllThreadsSyscall(trap, a1, a2, a3, a4, a5, a6)
-	return r1, r2, Errno(errno)
-}
-
-// linked by runtime.cgocall.go
-//go:uintptrescapes
-func cgocaller(unsafe.Pointer, ...uintptr) uintptr
-
-var cgo_libc_setegid unsafe.Pointer // non-nil if cgo linked.
-
-const minus1 = ^uintptr(0)
-
-func Setegid(egid int) (err error) {
-	if cgo_libc_setegid == nil {
-		if _, _, e1 := AllThreadsSyscall(SYS_SETRESGID, minus1, uintptr(egid), minus1); e1 != 0 {
-			err = errnoErr(e1)
-		}
-	} else if ret := cgocaller(cgo_libc_setegid, uintptr(egid)); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
-}
-
-var cgo_libc_seteuid unsafe.Pointer // non-nil if cgo linked.
-
-func Seteuid(euid int) (err error) {
-	if cgo_libc_seteuid == nil {
-		if _, _, e1 := AllThreadsSyscall(SYS_SETRESUID, minus1, uintptr(euid), minus1); e1 != 0 {
-			err = errnoErr(e1)
-		}
-	} else if ret := cgocaller(cgo_libc_seteuid, uintptr(euid)); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
-}
-
-var cgo_libc_setgid unsafe.Pointer // non-nil if cgo linked.
-
-func Setgid(gid int) (err error) {
-	if cgo_libc_setgid == nil {
-		if _, _, e1 := AllThreadsSyscall(sys_SETGID, uintptr(gid), 0, 0); e1 != 0 {
-			err = errnoErr(e1)
-		}
-	} else if ret := cgocaller(cgo_libc_setgid, uintptr(gid)); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
-}
-
-var cgo_libc_setregid unsafe.Pointer // non-nil if cgo linked.
-
-func Setregid(rgid, egid int) (err error) {
-	if cgo_libc_setregid == nil {
-		if _, _, e1 := AllThreadsSyscall(sys_SETREGID, uintptr(rgid), uintptr(egid), 0); e1 != 0 {
-			err = errnoErr(e1)
-		}
-	} else if ret := cgocaller(cgo_libc_setregid, uintptr(rgid), uintptr(egid)); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
-}
-
-var cgo_libc_setresgid unsafe.Pointer // non-nil if cgo linked.
-
-func Setresgid(rgid, egid, sgid int) (err error) {
-	if cgo_libc_setresgid == nil {
-		if _, _, e1 := AllThreadsSyscall(sys_SETRESGID, uintptr(rgid), uintptr(egid), uintptr(sgid)); e1 != 0 {
-			err = errnoErr(e1)
-		}
-	} else if ret := cgocaller(cgo_libc_setresgid, uintptr(rgid), uintptr(egid), uintptr(sgid)); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
-}
-
-var cgo_libc_setresuid unsafe.Pointer // non-nil if cgo linked.
-
-func Setresuid(ruid, euid, suid int) (err error) {
-	if cgo_libc_setresuid == nil {
-		if _, _, e1 := AllThreadsSyscall(sys_SETRESUID, uintptr(ruid), uintptr(euid), uintptr(suid)); e1 != 0 {
-			err = errnoErr(e1)
-		}
-	} else if ret := cgocaller(cgo_libc_setresuid, uintptr(ruid), uintptr(euid), uintptr(suid)); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
-}
-
-var cgo_libc_setreuid unsafe.Pointer // non-nil if cgo linked.
-
-func Setreuid(ruid, euid int) (err error) {
-	if cgo_libc_setreuid == nil {
-		if _, _, e1 := AllThreadsSyscall(sys_SETREUID, uintptr(ruid), uintptr(euid), 0); e1 != 0 {
-			err = errnoErr(e1)
-		}
-	} else if ret := cgocaller(cgo_libc_setreuid, uintptr(ruid), uintptr(euid)); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
-}
-
-var cgo_libc_setuid unsafe.Pointer // non-nil if cgo linked.
+// issue 1435.
+// On linux Setuid and Setgid only affects the current thread, not the process.
+// This does not match what most callers expect so we must return an error
+// here rather than letting the caller think that the call succeeded.
 
 func Setuid(uid int) (err error) {
-	if cgo_libc_setuid == nil {
-		if _, _, e1 := AllThreadsSyscall(sys_SETUID, uintptr(uid), 0, 0); e1 != 0 {
-			err = errnoErr(e1)
-		}
-	} else if ret := cgocaller(cgo_libc_setuid, uintptr(uid)); ret != 0 {
-		err = errnoErr(Errno(ret))
-	}
-	return
+	return EOPNOTSUPP
+}
+
+func Setgid(gid int) (err error) {
+	return EOPNOTSUPP
 }
 
 //sys	Setpriority(which int, who int, prio int) (err error)
