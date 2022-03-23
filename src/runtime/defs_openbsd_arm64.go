@@ -1,7 +1,3 @@
-// Copyright 2019 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package runtime
 
 import "unsafe"
@@ -30,13 +26,6 @@ const (
 	_SA_SIGINFO = 0x40
 	_SA_RESTART = 0x2
 	_SA_ONSTACK = 0x1
-
-	_PTHREAD_CREATE_DETACHED = 0x1
-
-	_F_SETFD    = 0x2
-	_F_GETFL    = 0x3
-	_F_SETFL    = 0x4
-	_FD_CLOEXEC = 0x1
 
 	_SIGHUP    = 0x1
 	_SIGINT    = 0x2
@@ -164,10 +153,3 @@ type keventt struct {
 	data   int64
 	udata  *byte
 }
-
-type pthread uintptr
-type pthreadattr uintptr
-type pthreadcond uintptr
-type pthreadcondattr uintptr
-type pthreadmutex uintptr
-type pthreadmutexattr uintptr

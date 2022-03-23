@@ -79,15 +79,18 @@ func hasExportedName(list []*ast.Ident) bool {
 	return false
 }
 
-// removeAnonymousField removes anonymous fields named name from an interface.
-func removeAnonymousField(name string, ityp *ast.InterfaceType) {
+// removeErrorField removes anonymous fields named "error" from an interface.
+// This is called when "error" has been determined to be a local name,
+// not the predeclared type.
+//
+func removeErrorField(ityp *ast.InterfaceType) {
 	list := ityp.Methods.List // we know that ityp.Methods != nil
 	j := 0
 	for _, field := range list {
 		keepField := true
 		if n := len(field.Names); n == 0 {
 			// anonymous field
-			if fname, _ := baseTypeName(field.Type); fname == name {
+			if fname, _ := baseTypeName(field.Type); fname == "error" {
 				keepField = false
 			}
 		}
@@ -116,25 +119,16 @@ func (r *reader) filterFieldList(parent *namedType, fields *ast.FieldList, ityp 
 	for _, field := range list {
 		keepField := false
 		if n := len(field.Names); n == 0 {
-			// anonymous field or embedded type or union element
+			// anonymous field
 			fname := r.recordAnonymousField(parent, field.Type)
-			if fname != "" {
-				if token.IsExported(fname) {
-					keepField = true
-				} else if ityp != nil && predeclaredTypes[fname] {
-					// possibly an embedded predeclared type; keep it for now but
-					// remember this interface so that it can be fixed if name is also
-					// defined locally
-					keepField = true
-					r.remember(fname, ityp)
-				}
-			} else {
-				// If we're operating on an interface, assume that this is an embedded
-				// type or union element.
-				//
-				// TODO(rfindley): consider traversing into approximation/unions
-				// elements to see if they are entirely unexported.
-				keepField = ityp != nil
+			if token.IsExported(fname) {
+				keepField = true
+			} else if ityp != nil && fname == "error" {
+				// possibly the predeclared error interface; keep
+				// it for now but remember this interface so that
+				// it can be fixed if error is also defined locally
+				keepField = true
+				r.remember(ityp)
 			}
 		} else {
 			field.Names = filterIdentList(field.Names)
@@ -178,17 +172,6 @@ func (r *reader) filterType(parent *namedType, typ ast.Expr) {
 		// nothing to do
 	case *ast.ParenExpr:
 		r.filterType(nil, t.X)
-	case *ast.StarExpr: // possibly an embedded type literal
-		r.filterType(nil, t.X)
-	case *ast.UnaryExpr:
-		if t.Op == token.TILDE { // approximation element
-			r.filterType(nil, t.X)
-		}
-	case *ast.BinaryExpr:
-		if t.Op == token.OR { // union
-			r.filterType(nil, t.X)
-			r.filterType(nil, t.Y)
-		}
 	case *ast.ArrayType:
 		r.filterType(nil, t.Elt)
 	case *ast.StructType:
@@ -196,7 +179,6 @@ func (r *reader) filterType(parent *namedType, typ ast.Expr) {
 			t.Incomplete = true
 		}
 	case *ast.FuncType:
-		r.filterParamList(t.TypeParams)
 		r.filterParamList(t.Params)
 		r.filterParamList(t.Results)
 	case *ast.InterfaceType:
@@ -237,16 +219,12 @@ func (r *reader) filterSpec(spec ast.Spec) bool {
 			}
 		}
 	case *ast.TypeSpec:
-		// Don't filter type parameters here, by analogy with function parameters
-		// which are not filtered for top-level function declarations.
 		if name := s.Name.Name; token.IsExported(name) {
 			r.filterType(r.lookupType(s.Name.Name), s.Type)
 			return true
-		} else if IsPredeclared(name) {
-			if r.shadowedPredecl == nil {
-				r.shadowedPredecl = make(map[string]bool)
-			}
-			r.shadowedPredecl[name] = true
+		} else if name == "error" {
+			// special case: remember that error is declared locally
+			r.errorDecl = true
 		}
 	}
 	return false

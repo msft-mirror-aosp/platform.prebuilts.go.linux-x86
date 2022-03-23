@@ -23,8 +23,6 @@ func rewriteValuedec(v *Value) bool {
 		return rewriteValuedec_OpSliceLen(v)
 	case OpSlicePtr:
 		return rewriteValuedec_OpSlicePtr(v)
-	case OpSlicePtrUnchecked:
-		return rewriteValuedec_OpSlicePtrUnchecked(v)
 	case OpStore:
 		return rewriteValuedec_OpStore(v)
 	case OpStringLen:
@@ -250,20 +248,6 @@ func rewriteValuedec_OpSlicePtr(v *Value) bool {
 	}
 	return false
 }
-func rewriteValuedec_OpSlicePtrUnchecked(v *Value) bool {
-	v_0 := v.Args[0]
-	// match: (SlicePtrUnchecked (SliceMake ptr _ _ ))
-	// result: ptr
-	for {
-		if v_0.Op != OpSliceMake {
-			break
-		}
-		ptr := v_0.Args[0]
-		v.copyOf(ptr)
-		return true
-	}
-	return false
-}
 func rewriteValuedec_OpStore(v *Value) bool {
 	v_2 := v.Args[2]
 	v_1 := v.Args[1]
@@ -425,5 +409,7 @@ func rewriteValuedec_OpStringPtr(v *Value) bool {
 	return false
 }
 func rewriteBlockdec(b *Block) bool {
+	switch b.Kind {
+	}
 	return false
 }

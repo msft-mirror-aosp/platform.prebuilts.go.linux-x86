@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !plan9 && !windows
 // +build !plan9,!windows
 
 package main
@@ -33,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -242,5 +242,5 @@ func testExec(wg *sync.WaitGroup) {
 
 // Block blocks until stdin is closed.
 func Block() {
-	io.Copy(io.Discard, os.Stdin)
+	io.Copy(ioutil.Discard, os.Stdin)
 }

@@ -6,15 +6,13 @@ package ssa
 
 import (
 	"bytes"
+	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"fmt"
 	"hash/crc32"
-	"internal/buildcfg"
-	"io"
 	"log"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -49,9 +47,6 @@ func Compile(f *Func) {
 			stack := make([]byte, 16384)
 			n := runtime.Stack(stack, false)
 			stack = stack[:n]
-			if f.HTMLWriter != nil {
-				f.HTMLWriter.flushPhases()
-			}
 			f.Fatalf("panic during %s while compiling %s:\n\n%v\n\n%s\n", phaseName, f.Name, err, stack)
 		}
 	}()
@@ -61,7 +56,7 @@ func Compile(f *Func) {
 		printFunc(f)
 	}
 	f.HTMLWriter.WritePhase("start", "start")
-	if BuildDump[f.Name] {
+	if BuildDump != "" && BuildDump == f.Name {
 		f.dumpFile("build")
 	}
 	if checkEnabled {
@@ -165,37 +160,28 @@ func Compile(f *Func) {
 	phaseName = ""
 }
 
-// DumpFileForPhase creates a file from the function name and phase name,
-// warning and returning nil if this is not possible.
-func (f *Func) DumpFileForPhase(phaseName string) io.WriteCloser {
-	f.dumpFileSeq++
-	fname := fmt.Sprintf("%s_%02d__%s.dump", f.Name, int(f.dumpFileSeq), phaseName)
-	fname = strings.Replace(fname, " ", "_", -1)
-	fname = strings.Replace(fname, "/", "_", -1)
-	fname = strings.Replace(fname, ":", "_", -1)
-
-	if ssaDir := os.Getenv("GOSSADIR"); ssaDir != "" {
-		fname = filepath.Join(ssaDir, fname)
-	}
-
-	fi, err := os.Create(fname)
-	if err != nil {
-		f.Warnl(src.NoXPos, "Unable to create after-phase dump file %s", fname)
-		return nil
-	}
-	return fi
-}
+// TODO: should be a config field
+var dumpFileSeq int
 
 // dumpFile creates a file from the phase name and function name
 // Dumping is done to files to avoid buffering huge strings before
 // output.
 func (f *Func) dumpFile(phaseName string) {
-	fi := f.DumpFileForPhase(phaseName)
-	if fi != nil {
-		p := stringFuncPrinter{w: fi}
-		fprintFunc(p, f)
-		fi.Close()
+	dumpFileSeq++
+	fname := fmt.Sprintf("%s_%02d__%s.dump", f.Name, dumpFileSeq, phaseName)
+	fname = strings.Replace(fname, " ", "_", -1)
+	fname = strings.Replace(fname, "/", "_", -1)
+	fname = strings.Replace(fname, ":", "_", -1)
+
+	fi, err := os.Create(fname)
+	if err != nil {
+		f.Warnl(src.NoXPos, "Unable to create after-phase dump file %s", fname)
+		return
 	}
+
+	p := stringFuncPrinter{w: fi}
+	fprintFunc(p, f)
+	fi.Close()
 }
 
 type pass struct {
@@ -218,13 +204,6 @@ func (p *pass) addDump(s string) {
 	p.dump[s] = true
 }
 
-func (p *pass) String() string {
-	if p == nil {
-		return "nil pass"
-	}
-	return p.name
-}
-
 // Run consistency checker between each phase
 var (
 	checkEnabled  = false
@@ -238,9 +217,7 @@ var IntrinsicsDisable bool
 var BuildDebug int
 var BuildTest int
 var BuildStats int
-var BuildDump map[string]bool = make(map[string]bool) // names of functions to dump after initial build of ssa
-
-var GenssaDump map[string]bool = make(map[string]bool) // names of functions to dump after ssa has been converted to asm
+var BuildDump string // name of function to dump after initial build of ssa
 
 // PhaseOption sets the specified flag in the specified ssa phase,
 // returning empty string if this was successful or a string explaining
@@ -264,7 +241,7 @@ func PhaseOption(phase, flag string, val int, valString string) string {
 	switch phase {
 	case "", "help":
 		lastcr := 0
-		phasenames := "    check, all, build, intrinsics, genssa"
+		phasenames := "    check, all, build, intrinsics"
 		for _, p := range passes {
 			pn := strings.Replace(p.name, " ", "_", -1)
 			if len(pn)+len(phasenames)-lastcr > 70 {
@@ -294,7 +271,6 @@ where:
 
 Phase "all" supports flags "time", "mem", and "dump".
 Phase "intrinsics" supports flags "on", "off", and "debug".
-Phase "genssa" (assembly generation) supports the flag "dump".
 
 If the "dump" flag is specified, the output is written on a file named
 <phase>__<function_name>_<seq>.dump; otherwise it is directed to stdout.
@@ -314,11 +290,6 @@ enables time reporting for all phases
     -d=ssa/prove/debug=2
 sets debugging level to 2 in the prove pass
 
-Be aware that when "/debug=X" is applied to a pass, some passes
-will emit debug output for all functions, and other passes will
-only emit debug output for functions that match the current
-GOSSAFUNC value.
-
 Multiple flags can be passed at once, by separating them with
 commas. For example:
 
@@ -326,41 +297,38 @@ commas. For example:
 `
 	}
 
-	if phase == "check" {
-		switch flag {
-		case "on":
-			checkEnabled = val != 0
-			debugPoset = checkEnabled // also turn on advanced self-checking in prove's datastructure
-			return ""
-		case "off":
-			checkEnabled = val == 0
-			debugPoset = checkEnabled
-			return ""
-		case "seed":
-			checkEnabled = true
-			checkRandSeed = val
-			debugPoset = checkEnabled
-			return ""
-		}
+	if phase == "check" && flag == "on" {
+		checkEnabled = val != 0
+		debugPoset = checkEnabled // also turn on advanced self-checking in prove's datastructure
+		return ""
+	}
+	if phase == "check" && flag == "off" {
+		checkEnabled = val == 0
+		debugPoset = checkEnabled
+		return ""
+	}
+	if phase == "check" && flag == "seed" {
+		checkEnabled = true
+		checkRandSeed = val
+		debugPoset = checkEnabled
+		return ""
 	}
 
 	alltime := false
 	allmem := false
 	alldump := false
 	if phase == "all" {
-		switch flag {
-		case "time":
+		if flag == "time" {
 			alltime = val != 0
-		case "mem":
+		} else if flag == "mem" {
 			allmem = val != 0
-		case "dump":
+		} else if flag == "dump" {
 			alldump = val != 0
 			if alldump {
-				BuildDump[valString] = true
-				GenssaDump[valString] = true
+				BuildDump = valString
 			}
-		default:
-			return fmt.Sprintf("Did not find a flag matching %s in -d=ssa/%s debug option (expected ssa/all/{time,mem,dump=function_name})", flag, phase)
+		} else {
+			return fmt.Sprintf("Did not find a flag matching %s in -d=ssa/%s debug option", flag, phase)
 		}
 	}
 
@@ -373,7 +341,7 @@ commas. For example:
 		case "debug":
 			IntrinsicsDebug = val
 		default:
-			return fmt.Sprintf("Did not find a flag matching %s in -d=ssa/%s debug option (expected ssa/intrinsics/{on,off,debug})", flag, phase)
+			return fmt.Sprintf("Did not find a flag matching %s in -d=ssa/%s debug option", flag, phase)
 		}
 		return ""
 	}
@@ -386,18 +354,9 @@ commas. For example:
 		case "stats":
 			BuildStats = val
 		case "dump":
-			BuildDump[valString] = true
+			BuildDump = valString
 		default:
-			return fmt.Sprintf("Did not find a flag matching %s in -d=ssa/%s debug option (expected ssa/build/{debug,test,stats,dump=function_name})", flag, phase)
-		}
-		return ""
-	}
-	if phase == "genssa" {
-		switch flag {
-		case "dump":
-			GenssaDump[valString] = true
-		default:
-			return fmt.Sprintf("Did not find a flag matching %s in -d=ssa/%s debug option (expected ssa/genssa/dump=function_name)", flag, phase)
+			return fmt.Sprintf("Did not find a flag matching %s in -d=ssa/%s debug option", flag, phase)
 		}
 		return ""
 	}
@@ -463,6 +422,7 @@ var passes = [...]pass{
 	{name: "early copyelim", fn: copyelim},
 	{name: "early deadcode", fn: deadcode}, // remove generated dead code to avoid doing pointless work during opt
 	{name: "short circuit", fn: shortcircuit},
+	{name: "decompose args", fn: decomposeArgs, required: true},
 	{name: "decompose user", fn: decomposeUser, required: true},
 	{name: "pre-opt deadcode", fn: deadcode},
 	{name: "opt", fn: opt, required: true},               // NB: some generic rules know the name of the opt pass. TODO: split required rules and optimizing rules
@@ -475,7 +435,6 @@ var passes = [...]pass{
 	{name: "prove", fn: prove},
 	{name: "early fuse", fn: fuseEarly},
 	{name: "decompose builtin", fn: decomposeBuiltIn, required: true},
-	{name: "expand calls", fn: expandCalls, required: true},
 	{name: "softfloat", fn: softfloat, required: true},
 	{name: "late opt", fn: opt, required: true}, // TODO: split required rules and optimizing rules
 	{name: "dead auto elim", fn: elimDeadAutosGeneric},
@@ -486,7 +445,7 @@ var passes = [...]pass{
 	{name: "dse", fn: dse},
 	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
-		disabled: !buildcfg.Experiment.PreemptibleLoops}, // insert resched checks in loops.
+		disabled: objabi.Preemptibleloops_enabled == 0}, // insert resched checks in loops.
 	{name: "lower", fn: lower, required: true},
 	{name: "addressing modes", fn: addressingModes, required: false},
 	{name: "lowered deadcode for cse", fn: deadcode}, // deadcode immediately before CSE avoids CSE making dead values live again

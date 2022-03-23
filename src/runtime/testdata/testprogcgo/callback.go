@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !plan9 && !windows
 // +build !plan9,!windows
 
 package main
@@ -66,7 +65,7 @@ func grow1(x, sum *int) int {
 
 func CgoCallbackGC() {
 	P := 100
-	if os.Getenv("RUNTIME_TEST_SHORT") != "" {
+	if os.Getenv("RUNTIME_TESTING_SHORT") != "" {
 		P = 10
 	}
 	done := make(chan bool)

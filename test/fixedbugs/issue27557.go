@@ -8,19 +8,19 @@ package p
 
 var sink interface{}
 
-func f1() {
+func _() {
 	var t T
 	f := t.noescape // ERROR "t.noescape does not escape"
 	f()
 }
 
-func f2() {
+func _() {
 	var t T       // ERROR "moved to heap"
 	f := t.escape // ERROR "t.escape does not escape"
 	f()
 }
 
-func f3() {
+func _() {
 	var t T        // ERROR "moved to heap"
 	f := t.returns // ERROR "t.returns does not escape"
 	sink = f()

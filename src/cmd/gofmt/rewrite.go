@@ -28,9 +28,7 @@ func initRewrite() {
 	}
 	pattern := parseExpr(f[0], "pattern")
 	replace := parseExpr(f[1], "replacement")
-	rewrite = func(fset *token.FileSet, p *ast.File) *ast.File {
-		return rewriteFile(fset, pattern, replace, p)
-	}
+	rewrite = func(p *ast.File) *ast.File { return rewriteFile(pattern, replace, p) }
 }
 
 // parseExpr parses s as an expression.
@@ -56,7 +54,7 @@ func dump(msg string, val reflect.Value) {
 */
 
 // rewriteFile applies the rewrite rule 'pattern -> replace' to an entire file.
-func rewriteFile(fileSet *token.FileSet, pattern, replace ast.Expr, p *ast.File) *ast.File {
+func rewriteFile(pattern, replace ast.Expr, p *ast.File) *ast.File {
 	cmap := ast.NewCommentMap(fileSet, p, p.Comments)
 	m := make(map[string]reflect.Value)
 	pat := reflect.ValueOf(pattern)
@@ -292,7 +290,7 @@ func subst(m map[string]reflect.Value, pattern reflect.Value, pos reflect.Value)
 		}
 		return v
 
-	case reflect.Pointer:
+	case reflect.Ptr:
 		v := reflect.New(p.Type()).Elem()
 		if elem := p.Elem(); elem.IsValid() {
 			v.Set(subst(m, elem, pos).Addr())

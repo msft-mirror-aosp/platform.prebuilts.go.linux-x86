@@ -34,6 +34,5 @@ import "\xFFFD"   // ERROR "import path"
 import `\xFFFD`   // ERROR "import path"
 
 // Invalid local imports.
-// types2 adds extra "not used" error.
-import "/foo"  // ERROR "import path cannot be absolute path|not used"
-import "c:/foo"  // ERROR "import path contains invalid character|invalid character"
+import "/foo"  // ERROR "import path cannot be absolute path"
+import "c:/foo"  // ERROR "import path contains invalid character"

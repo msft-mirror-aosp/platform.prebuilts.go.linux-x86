@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build amd64 || arm64 || ppc64le
+// +build amd64 arm64 ppc64le
 
 package elliptic
 
@@ -13,6 +13,7 @@ import (
 )
 
 func TestFuzz(t *testing.T) {
+
 	p256 := P256()
 	p256Generic := p256.Params()
 

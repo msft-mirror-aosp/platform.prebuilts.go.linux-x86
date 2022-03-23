@@ -821,17 +821,9 @@ func (d *decoder) mergePassInto(dst image.Image, src image.Image, pass int) {
 		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
 		bytesPerPixel = 8
 	case *image.Paletted:
-		source := src.(*image.Paletted)
-		srcPix = source.Pix
+		srcPix = src.(*image.Paletted).Pix
 		dstPix, stride, rect = target.Pix, target.Stride, target.Rect
 		bytesPerPixel = 1
-		if len(target.Palette) < len(source.Palette) {
-			// readImagePass can return a paletted image whose implicit palette
-			// length (one more than the maximum Pix value) is larger than the
-			// explicit palette length (what's in the PLTE chunk). Make the
-			// same adjustment here.
-			target.Palette = source.Palette
-		}
 	case *image.RGBA:
 		srcPix = src.(*image.RGBA).Pix
 		dstPix, stride, rect = target.Pix, target.Stride, target.Rect

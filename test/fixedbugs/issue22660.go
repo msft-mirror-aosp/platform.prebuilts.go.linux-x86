@@ -1,4 +1,3 @@
-// +build !js,gc
 // run
 
 // Copyright 2017 The Go Authors. All rights reserved.
@@ -15,10 +14,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
 func main() {
+	if runtime.GOOS == "nacl" || runtime.GOOS == "js" {
+		return // no file system available on builders
+	}
+
 	f, err := ioutil.TempFile("", "issue22660.go")
 	if err != nil {
 		log.Fatal(err)

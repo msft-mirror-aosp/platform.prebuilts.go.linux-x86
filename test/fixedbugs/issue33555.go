@@ -1,4 +1,4 @@
-// +build !nacl,!js,!gccgo
+// +build !nacl,!js
 // run
 
 // Copyright 2019 The Go Authors. All rights reserved.

@@ -7,15 +7,16 @@ package runtime_test
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"reflect"
 	"regexp"
 	. "runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-	_ "unsafe" // for go:linkname
 )
 
 // TestStackMem measures per-thread stack segment cache behavior.
@@ -81,7 +82,12 @@ func TestStackGrowth(t *testing.T) {
 		t.Skip("-quick")
 	}
 
-	t.Parallel()
+	if GOARCH == "wasm" {
+		t.Skip("fails on wasm (too slow?)")
+	}
+
+	// Don't make this test parallel as this makes the 20 second
+	// timeout unreliable on slow builders. (See issue #19381.)
 
 	var wg sync.WaitGroup
 
@@ -95,7 +101,6 @@ func TestStackGrowth(t *testing.T) {
 		growDuration = time.Since(start)
 	}()
 	wg.Wait()
-	t.Log("first growStack took", growDuration)
 
 	// in locked goroutine
 	wg.Add(1)
@@ -108,38 +113,48 @@ func TestStackGrowth(t *testing.T) {
 	wg.Wait()
 
 	// in finalizer
-	var finalizerStart time.Time
-	var started, progress uint32
 	wg.Add(1)
-	s := new(string) // Must be of a type that avoids the tiny allocator, or else the finalizer might not run.
-	SetFinalizer(s, func(ss *string) {
+	go func() {
 		defer wg.Done()
-		finalizerStart = time.Now()
-		atomic.StoreUint32(&started, 1)
-		growStack(&progress)
-	})
-	setFinalizerTime := time.Now()
-	s = nil
+		done := make(chan bool)
+		var startTime time.Time
+		var started, progress uint32
+		go func() {
+			s := new(string)
+			SetFinalizer(s, func(ss *string) {
+				startTime = time.Now()
+				atomic.StoreUint32(&started, 1)
+				growStack(&progress)
+				done <- true
+			})
+			s = nil
+			done <- true
+		}()
+		<-done
+		GC()
 
-	if d, ok := t.Deadline(); ok {
-		// Pad the timeout by an arbitrary 5% to give the AfterFunc time to run.
-		timeout := time.Until(d) * 19 / 20
-		timer := time.AfterFunc(timeout, func() {
-			// Panic — instead of calling t.Error and returning from the test — so
-			// that we get a useful goroutine dump if the test times out, especially
-			// if GOTRACEBACK=system or GOTRACEBACK=crash is set.
-			if atomic.LoadUint32(&started) == 0 {
-				panic("finalizer did not start")
-			} else {
-				panic(fmt.Sprintf("finalizer started %s ago (%s after registration) and ran %d iterations, but did not return", time.Since(finalizerStart), finalizerStart.Sub(setFinalizerTime), atomic.LoadUint32(&progress)))
+		timeout := 20 * time.Second
+		if s := os.Getenv("GO_TEST_TIMEOUT_SCALE"); s != "" {
+			scale, err := strconv.Atoi(s)
+			if err == nil {
+				timeout *= time.Duration(scale)
 			}
-		})
-		defer timer.Stop()
-	}
+		}
 
-	GC()
+		select {
+		case <-done:
+		case <-time.After(timeout):
+			if atomic.LoadUint32(&started) == 0 {
+				t.Log("finalizer did not start")
+			} else {
+				t.Logf("finalizer started %s ago and finished %d iterations", time.Since(startTime), atomic.LoadUint32(&progress))
+			}
+			t.Log("first growStack took", growDuration)
+			t.Error("finalizer did not run")
+			return
+		}
+	}()
 	wg.Wait()
-	t.Logf("finalizer started after %s and ran %d iterations in %v", finalizerStart.Sub(setFinalizerTime), atomic.LoadUint32(&progress), time.Since(finalizerStart))
 }
 
 // ... and in init
@@ -569,34 +584,6 @@ func count21(n int) int { return 1 + count22(n-1) }
 func count22(n int) int { return 1 + count23(n-1) }
 func count23(n int) int { return 1 + count1(n-1) }
 
-type stkobjT struct {
-	p *stkobjT
-	x int64
-	y [20]int // consume some stack
-}
-
-// Sum creates a linked list of stkobjTs.
-func Sum(n int64, p *stkobjT) {
-	if n == 0 {
-		return
-	}
-	s := stkobjT{p: p, x: n}
-	Sum(n-1, &s)
-	p.x += s.x
-}
-
-func BenchmarkStackCopyWithStkobj(b *testing.B) {
-	c := make(chan bool)
-	for i := 0; i < b.N; i++ {
-		go func() {
-			var s stkobjT
-			Sum(100000, &s)
-			c <- true
-		}()
-		<-c
-	}
-}
-
 type structWithMethod struct{}
 
 func (s structWithMethod) caller() string {
@@ -863,44 +850,4 @@ func deferHeapAndStack(n int) (r int) {
 }
 
 // Pass a value to escapeMe to force it to escape.
-var escapeMe = func(x any) {}
-
-// Test that when F -> G is inlined and F is excluded from stack
-// traces, G still appears.
-func TestTracebackInlineExcluded(t *testing.T) {
-	defer func() {
-		recover()
-		buf := make([]byte, 4<<10)
-		stk := string(buf[:Stack(buf, false)])
-
-		t.Log(stk)
-
-		if not := "tracebackExcluded"; strings.Contains(stk, not) {
-			t.Errorf("found but did not expect %q", not)
-		}
-		if want := "tracebackNotExcluded"; !strings.Contains(stk, want) {
-			t.Errorf("expected %q in stack", want)
-		}
-	}()
-	tracebackExcluded()
-}
-
-// tracebackExcluded should be excluded from tracebacks. There are
-// various ways this could come up. Linking it to a "runtime." name is
-// rather synthetic, but it's easy and reliable. See issue #42754 for
-// one way this happened in real code.
-//
-//go:linkname tracebackExcluded runtime.tracebackExcluded
-//go:noinline
-func tracebackExcluded() {
-	// Call an inlined function that should not itself be excluded
-	// from tracebacks.
-	tracebackNotExcluded()
-}
-
-// tracebackNotExcluded should be inlined into tracebackExcluded, but
-// should not itself be excluded from the traceback.
-func tracebackNotExcluded() {
-	var x *int
-	*x = 0
-}
+var escapeMe = func(x interface{}) {}
