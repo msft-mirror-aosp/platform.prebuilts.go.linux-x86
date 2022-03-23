@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build darwin || freebsd || linux || netbsd || openbsd
+// +build darwin freebsd linux netbsd openbsd
 
 package runtime
 
 import (
-	"internal/abi"
 	"runtime/internal/sys"
 	"unsafe"
 )
@@ -64,7 +63,7 @@ func (c *sigctxt) preparePanic(sig uint32, gp *g) {
 	// functions are correctly handled. This smashes
 	// the stack frame but we're not going back there
 	// anyway.
-	sp := c.sp() - sys.StackAlign // needs only sizeof uint64, but must align the stack
+	sp := c.sp() - sys.SpAlign // needs only sizeof uint64, but must align the stack
 	c.set_sp(sp)
 	*(*uint64)(unsafe.Pointer(uintptr(sp))) = c.lr()
 
@@ -77,7 +76,7 @@ func (c *sigctxt) preparePanic(sig uint32, gp *g) {
 
 	// In case we are panicking from external C code
 	c.set_r28(uint64(uintptr(unsafe.Pointer(gp))))
-	c.set_pc(uint64(abi.FuncPCABIInternal(sigpanic)))
+	c.set_pc(uint64(funcPC(sigpanic)))
 }
 
 func (c *sigctxt) pushCall(targetPC, resumePC uintptr) {

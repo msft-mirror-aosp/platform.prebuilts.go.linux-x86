@@ -7,6 +7,7 @@ package tls
 import (
 	"bytes"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,19 @@ func main() {}
 `,
 			bad: []string{
 				"tls.(*Conn)",
+				"type.crypto/tls.clientHandshakeState",
+				"type.crypto/tls.serverHandshakeState",
+			},
+		},
+		{
+			name: "only_conn",
+			program: `package main
+import "crypto/tls"
+var c = new(tls.Conn)
+func main() {}
+`,
+			want: []string{"tls.(*Conn)"},
+			bad: []string{
 				"type.crypto/tls.clientHandshakeState",
 				"type.crypto/tls.serverHandshakeState",
 			},
@@ -76,7 +90,7 @@ func main() { tls.Dial("", "", nil) }
 	exeFile := filepath.Join(tmpDir, "x.exe")
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := os.WriteFile(goFile, []byte(tt.program), 0644); err != nil {
+			if err := ioutil.WriteFile(goFile, []byte(tt.program), 0644); err != nil {
 				t.Fatal(err)
 			}
 			os.Remove(exeFile)

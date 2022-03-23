@@ -6,6 +6,7 @@ package trace
 
 import (
 	"bytes"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,20 +34,20 @@ func TestCorruptedInputs(t *testing.T) {
 }
 
 func TestParseCanned(t *testing.T) {
-	files, err := os.ReadDir("./testdata")
+	files, err := ioutil.ReadDir("./testdata")
 	if err != nil {
 		t.Fatalf("failed to read ./testdata: %v", err)
 	}
 	for _, f := range files {
-		info, err := f.Info()
+		name := filepath.Join("./testdata", f.Name())
+		info, err := os.Stat(name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if testing.Short() && info.Size() > 10000 {
 			continue
 		}
-		name := filepath.Join("./testdata", f.Name())
-		data, err := os.ReadFile(name)
+		data, err := ioutil.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}

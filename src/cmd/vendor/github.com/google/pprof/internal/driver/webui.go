@@ -35,28 +35,22 @@ import (
 
 // webInterface holds the state needed for serving a browser based interface.
 type webInterface struct {
-	prof         *profile.Profile
-	options      *plugin.Options
-	help         map[string]string
-	templates    *template.Template
-	settingsFile string
+	prof      *profile.Profile
+	options   *plugin.Options
+	help      map[string]string
+	templates *template.Template
 }
 
-func makeWebInterface(p *profile.Profile, opt *plugin.Options) (*webInterface, error) {
-	settingsFile, err := settingsFileName()
-	if err != nil {
-		return nil, err
-	}
+func makeWebInterface(p *profile.Profile, opt *plugin.Options) *webInterface {
 	templates := template.New("templategroup")
 	addTemplates(templates)
 	report.AddSourceTemplates(templates)
 	return &webInterface{
-		prof:         p,
-		options:      opt,
-		help:         make(map[string]string),
-		templates:    templates,
-		settingsFile: settingsFile,
-	}, nil
+		prof:      p,
+		options:   opt,
+		help:      make(map[string]string),
+		templates: templates,
+	}
 }
 
 // maxEntries is the maximum number of entries to print for text interfaces.
@@ -86,7 +80,6 @@ type webArgs struct {
 	TextBody    string
 	Top         []report.TextItem
 	FlameGraph  template.JS
-	Configs     []configMenuEntry
 }
 
 func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, disableBrowser bool) error {
@@ -95,20 +88,16 @@ func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, d
 		return err
 	}
 	interactiveMode = true
-	ui, err := makeWebInterface(p, o)
-	if err != nil {
-		return err
-	}
+	ui := makeWebInterface(p, o)
 	for n, c := range pprofCommands {
 		ui.help[n] = c.description
 	}
-	for n, help := range configHelp {
-		ui.help[n] = help
+	for n, v := range pprofVariables {
+		ui.help[n] = v.help
 	}
 	ui.help["details"] = "Show information about the profile and this view"
 	ui.help["graph"] = "Display profile as a directed graph"
 	ui.help["reset"] = "Show the entire profile"
-	ui.help["save_config"] = "Save current settings"
 
 	server := o.HTTPServer
 	if server == nil {
@@ -119,19 +108,12 @@ func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, d
 		Host:     host,
 		Port:     port,
 		Handlers: map[string]http.Handler{
-			"/":             http.HandlerFunc(ui.dot),
-			"/top":          http.HandlerFunc(ui.top),
-			"/disasm":       http.HandlerFunc(ui.disasm),
-			"/source":       http.HandlerFunc(ui.source),
-			"/peek":         http.HandlerFunc(ui.peek),
-			"/flamegraph":   http.HandlerFunc(ui.flamegraph),
-			"/saveconfig":   http.HandlerFunc(ui.saveConfig),
-			"/deleteconfig": http.HandlerFunc(ui.deleteConfig),
-			"/download": http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				w.Header().Set("Content-Type", "application/vnd.google.protobuf+gzip")
-				w.Header().Set("Content-Disposition", "attachment;filename=profile.pb.gz")
-				p.Write(w)
-			}),
+			"/":           http.HandlerFunc(ui.dot),
+			"/top":        http.HandlerFunc(ui.top),
+			"/disasm":     http.HandlerFunc(ui.disasm),
+			"/source":     http.HandlerFunc(ui.source),
+			"/peek":       http.HandlerFunc(ui.peek),
+			"/flamegraph": http.HandlerFunc(ui.flamegraph),
 		},
 	}
 
@@ -224,9 +206,21 @@ func isLocalhost(host string) bool {
 
 func openBrowser(url string, o *plugin.Options) {
 	// Construct URL.
-	baseURL, _ := gourl.Parse(url)
-	current := currentConfig()
-	u, _ := current.makeURL(*baseURL)
+	u, _ := gourl.Parse(url)
+	q := u.Query()
+	for _, p := range []struct{ param, key string }{
+		{"f", "focus"},
+		{"s", "show"},
+		{"sf", "show_from"},
+		{"i", "ignore"},
+		{"h", "hide"},
+		{"si", "sample_index"},
+	} {
+		if v := pprofVariables[p.key].value; v != "" {
+			q.Set(p.param, v)
+		}
+	}
+	u.RawQuery = q.Encode()
 
 	// Give server a little time to get ready.
 	time.Sleep(time.Millisecond * 500)
@@ -246,23 +240,28 @@ func openBrowser(url string, o *plugin.Options) {
 	o.UI.PrintErr(u.String())
 }
 
+func varsFromURL(u *gourl.URL) variables {
+	vars := pprofVariables.makeCopy()
+	vars["focus"].value = u.Query().Get("f")
+	vars["show"].value = u.Query().Get("s")
+	vars["show_from"].value = u.Query().Get("sf")
+	vars["ignore"].value = u.Query().Get("i")
+	vars["hide"].value = u.Query().Get("h")
+	vars["sample_index"].value = u.Query().Get("si")
+	return vars
+}
+
 // makeReport generates a report for the specified command.
-// If configEditor is not null, it is used to edit the config used for the report.
 func (ui *webInterface) makeReport(w http.ResponseWriter, req *http.Request,
-	cmd []string, configEditor func(*config)) (*report.Report, []string) {
-	cfg := currentConfig()
-	if err := cfg.applyURL(req.URL.Query()); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		ui.options.UI.PrintErr(err)
-		return nil, nil
-	}
-	if configEditor != nil {
-		configEditor(&cfg)
+	cmd []string, vars ...string) (*report.Report, []string) {
+	v := varsFromURL(req.URL)
+	for i := 0; i+1 < len(vars); i += 2 {
+		v[vars[i]].value = vars[i+1]
 	}
 	catcher := &errorCatcher{UI: ui.options.UI}
 	options := *ui.options
 	options.UI = catcher
-	_, rpt, err := generateRawReport(ui.prof, cmd, cfg, &options)
+	_, rpt, err := generateRawReport(ui.prof, cmd, v, &options)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		ui.options.UI.PrintErr(err)
@@ -272,7 +271,7 @@ func (ui *webInterface) makeReport(w http.ResponseWriter, req *http.Request,
 }
 
 // render generates html using the named template based on the contents of data.
-func (ui *webInterface) render(w http.ResponseWriter, req *http.Request, tmpl string,
+func (ui *webInterface) render(w http.ResponseWriter, tmpl string,
 	rpt *report.Report, errList, legend []string, data webArgs) {
 	file := getFromLegend(legend, "File: ", "unknown")
 	profile := getFromLegend(legend, "Type: ", "unknown")
@@ -282,8 +281,6 @@ func (ui *webInterface) render(w http.ResponseWriter, req *http.Request, tmpl st
 	data.SampleTypes = sampleTypes(ui.prof)
 	data.Legend = legend
 	data.Help = ui.help
-	data.Configs = configMenu(ui.settingsFile, *req.URL)
-
 	html := &bytes.Buffer{}
 	if err := ui.templates.ExecuteTemplate(html, tmpl, data); err != nil {
 		http.Error(w, "internal template error", http.StatusInternalServerError)
@@ -296,7 +293,7 @@ func (ui *webInterface) render(w http.ResponseWriter, req *http.Request, tmpl st
 
 // dot generates a web page containing an svg diagram.
 func (ui *webInterface) dot(w http.ResponseWriter, req *http.Request) {
-	rpt, errList := ui.makeReport(w, req, []string{"svg"}, nil)
+	rpt, errList := ui.makeReport(w, req, []string{"svg"})
 	if rpt == nil {
 		return // error already reported
 	}
@@ -323,7 +320,7 @@ func (ui *webInterface) dot(w http.ResponseWriter, req *http.Request) {
 		nodes = append(nodes, n.Info.Name)
 	}
 
-	ui.render(w, req, "graph", rpt, errList, legend, webArgs{
+	ui.render(w, "graph", rpt, errList, legend, webArgs{
 		HTMLBody: template.HTML(string(svg)),
 		Nodes:    nodes,
 	})
@@ -348,9 +345,7 @@ func dotToSvg(dot []byte) ([]byte, error) {
 }
 
 func (ui *webInterface) top(w http.ResponseWriter, req *http.Request) {
-	rpt, errList := ui.makeReport(w, req, []string{"top"}, func(cfg *config) {
-		cfg.NodeCount = 500
-	})
+	rpt, errList := ui.makeReport(w, req, []string{"top"}, "nodecount", "500")
 	if rpt == nil {
 		return // error already reported
 	}
@@ -360,7 +355,7 @@ func (ui *webInterface) top(w http.ResponseWriter, req *http.Request) {
 		nodes = append(nodes, item.Name)
 	}
 
-	ui.render(w, req, "top", rpt, errList, legend, webArgs{
+	ui.render(w, "top", rpt, errList, legend, webArgs{
 		Top:   top,
 		Nodes: nodes,
 	})
@@ -369,7 +364,7 @@ func (ui *webInterface) top(w http.ResponseWriter, req *http.Request) {
 // disasm generates a web page containing disassembly.
 func (ui *webInterface) disasm(w http.ResponseWriter, req *http.Request) {
 	args := []string{"disasm", req.URL.Query().Get("f")}
-	rpt, errList := ui.makeReport(w, req, args, nil)
+	rpt, errList := ui.makeReport(w, req, args)
 	if rpt == nil {
 		return // error already reported
 	}
@@ -382,7 +377,7 @@ func (ui *webInterface) disasm(w http.ResponseWriter, req *http.Request) {
 	}
 
 	legend := report.ProfileLabels(rpt)
-	ui.render(w, req, "plaintext", rpt, errList, legend, webArgs{
+	ui.render(w, "plaintext", rpt, errList, legend, webArgs{
 		TextBody: out.String(),
 	})
 
@@ -392,7 +387,7 @@ func (ui *webInterface) disasm(w http.ResponseWriter, req *http.Request) {
 // data.
 func (ui *webInterface) source(w http.ResponseWriter, req *http.Request) {
 	args := []string{"weblist", req.URL.Query().Get("f")}
-	rpt, errList := ui.makeReport(w, req, args, nil)
+	rpt, errList := ui.makeReport(w, req, args)
 	if rpt == nil {
 		return // error already reported
 	}
@@ -406,7 +401,7 @@ func (ui *webInterface) source(w http.ResponseWriter, req *http.Request) {
 	}
 
 	legend := report.ProfileLabels(rpt)
-	ui.render(w, req, "sourcelisting", rpt, errList, legend, webArgs{
+	ui.render(w, "sourcelisting", rpt, errList, legend, webArgs{
 		HTMLBody: template.HTML(body.String()),
 	})
 }
@@ -414,9 +409,7 @@ func (ui *webInterface) source(w http.ResponseWriter, req *http.Request) {
 // peek generates a web page listing callers/callers.
 func (ui *webInterface) peek(w http.ResponseWriter, req *http.Request) {
 	args := []string{"peek", req.URL.Query().Get("f")}
-	rpt, errList := ui.makeReport(w, req, args, func(cfg *config) {
-		cfg.Granularity = "lines"
-	})
+	rpt, errList := ui.makeReport(w, req, args, "lines", "t")
 	if rpt == nil {
 		return // error already reported
 	}
@@ -429,28 +422,9 @@ func (ui *webInterface) peek(w http.ResponseWriter, req *http.Request) {
 	}
 
 	legend := report.ProfileLabels(rpt)
-	ui.render(w, req, "plaintext", rpt, errList, legend, webArgs{
+	ui.render(w, "plaintext", rpt, errList, legend, webArgs{
 		TextBody: out.String(),
 	})
-}
-
-// saveConfig saves URL configuration.
-func (ui *webInterface) saveConfig(w http.ResponseWriter, req *http.Request) {
-	if err := setConfig(ui.settingsFile, *req.URL); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		ui.options.UI.PrintErr(err)
-		return
-	}
-}
-
-// deleteConfig deletes a configuration.
-func (ui *webInterface) deleteConfig(w http.ResponseWriter, req *http.Request) {
-	name := req.URL.Query().Get("config")
-	if err := removeConfig(ui.settingsFile, name); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		ui.options.UI.PrintErr(err)
-		return
-	}
 }
 
 // getFromLegend returns the suffix of an entry in legend that starts

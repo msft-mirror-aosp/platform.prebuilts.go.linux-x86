@@ -480,10 +480,9 @@ func TestTRun(t *T) {
 			buf := &bytes.Buffer{}
 			root := &T{
 				common: common{
-					signal:  make(chan bool),
-					barrier: make(chan bool),
-					name:    "Test",
-					w:       buf,
+					signal: make(chan bool),
+					name:   "Test",
+					w:      buf,
 				},
 				context: ctx,
 			}
@@ -670,7 +669,7 @@ func TestBRun(t *T) {
 					w:      buf,
 				},
 				benchFunc: func(b *B) { ok = b.Run("test", tc.f) }, // Use Run to catch failure.
-				benchTime: durationOrCountFlag{d: 1 * time.Microsecond},
+				benchTime: benchTimeFlag{d: 1 * time.Microsecond},
 			}
 			if tc.chatty {
 				root.chatty = newChattyPrinter(root.w)
@@ -823,7 +822,7 @@ func TestLogAfterComplete(t *T) {
 						c2 <- fmt.Sprintf("subtest panic with unexpected value %v", p)
 						return
 					}
-					const want = "Log in goroutine after TestLateLog has completed: log after test"
+					const want = "Log in goroutine after TestLateLog has completed"
 					if !strings.Contains(s, want) {
 						c2 <- fmt.Sprintf("subtest panic %q does not contain %q", s, want)
 					}
@@ -936,32 +935,5 @@ func TestCleanupParallelSubtests(t *T) {
 	})
 	if ranCleanup != 1 {
 		t.Errorf("unexpected cleanup count; got %d want 1", ranCleanup)
-	}
-}
-
-func TestNestedCleanup(t *T) {
-	ranCleanup := 0
-	t.Run("test", func(t *T) {
-		t.Cleanup(func() {
-			if ranCleanup != 2 {
-				t.Errorf("unexpected cleanup count in first cleanup: got %d want 2", ranCleanup)
-			}
-			ranCleanup++
-		})
-		t.Cleanup(func() {
-			if ranCleanup != 0 {
-				t.Errorf("unexpected cleanup count in second cleanup: got %d want 0", ranCleanup)
-			}
-			ranCleanup++
-			t.Cleanup(func() {
-				if ranCleanup != 1 {
-					t.Errorf("unexpected cleanup count in nested cleanup: got %d want 1", ranCleanup)
-				}
-				ranCleanup++
-			})
-		})
-	})
-	if ranCleanup != 3 {
-		t.Errorf("unexpected cleanup count: got %d want 3", ranCleanup)
 	}
 }

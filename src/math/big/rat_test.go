@@ -726,21 +726,3 @@ func TestIssue34919(t *testing.T) {
 		}
 	}
 }
-
-func TestDenomRace(t *testing.T) {
-	x := NewRat(1, 2)
-	const N = 3
-	c := make(chan bool, N)
-	for i := 0; i < N; i++ {
-		go func() {
-			// Denom (also used by Float.SetRat) used to mutate x unnecessarily,
-			// provoking race reports when run in the race detector.
-			x.Denom()
-			new(Float).SetRat(x)
-			c <- true
-		}()
-	}
-	for i := 0; i < N; i++ {
-		<-c
-	}
-}

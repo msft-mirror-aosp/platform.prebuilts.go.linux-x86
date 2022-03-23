@@ -5,35 +5,33 @@
 package x86
 
 import (
-	"cmd/compile/internal/base"
-	"cmd/compile/internal/ssagen"
+	"cmd/compile/internal/gc"
 	"cmd/internal/obj/x86"
+	"cmd/internal/objabi"
 	"fmt"
-	"internal/buildcfg"
 	"os"
 )
 
-func Init(arch *ssagen.ArchInfo) {
+func Init(arch *gc.Arch) {
 	arch.LinkArch = &x86.Link386
 	arch.REGSP = x86.REGSP
-	arch.SSAGenValue = ssaGenValue
-	arch.SSAGenBlock = ssaGenBlock
-	arch.MAXWIDTH = (1 << 32) - 1
-	switch v := buildcfg.GO386; v {
-	case "sse2":
-	case "softfloat":
-		arch.SoftFloat = true
+	switch v := objabi.GO386; v {
 	case "387":
-		fmt.Fprintf(os.Stderr, "unsupported setting GO386=387. Consider using GO386=softfloat instead.\n")
-		base.Exit(1)
+		arch.Use387 = true
+		arch.SSAGenValue = ssaGenValue387
+		arch.SSAGenBlock = ssaGenBlock387
+	case "sse2":
+		arch.SSAGenValue = ssaGenValue
+		arch.SSAGenBlock = ssaGenBlock
 	default:
 		fmt.Fprintf(os.Stderr, "unsupported setting GO386=%s\n", v)
-		base.Exit(1)
-
+		gc.Exit(1)
 	}
+	arch.MAXWIDTH = (1 << 32) - 1
 
 	arch.ZeroRange = zerorange
 	arch.Ginsnop = ginsnop
+	arch.Ginsnopdefer = ginsnop
 
 	arch.SSAMarkMoves = ssaMarkMoves
 }

@@ -39,7 +39,7 @@ func valueToString(val Value) string {
 		} else {
 			return "false"
 		}
-	case Pointer:
+	case Ptr:
 		v := val
 		str = typ.String() + "("
 		if v.IsNil() {

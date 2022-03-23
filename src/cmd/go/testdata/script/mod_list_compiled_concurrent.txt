@@ -1,7 +1,6 @@
 env GO111MODULE=on
 
 [short] skip
-[!cgo] skip
 
 # Regression test for golang.org/issue/29667:
 # spurious 'failed to cache compiled Go files' errors.

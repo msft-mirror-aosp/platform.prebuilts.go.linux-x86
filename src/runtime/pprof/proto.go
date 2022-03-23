@@ -8,12 +8,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
-	"internal/abi"
 	"io"
-	"os"
+	"io/ioutil"
 	"runtime"
 	"strconv"
-	"strings"
 	"time"
 	"unsafe"
 )
@@ -22,6 +20,11 @@ import (
 // events are attributed.
 // (The name shows up in the pprof graphs.)
 func lostProfileEvent() { lostProfileEvent() }
+
+// funcPC returns the PC for the func value f.
+func funcPC(f interface{}) uintptr {
+	return *(*[2]*uintptr)(unsafe.Pointer(&f))[1]
+}
 
 // A profileBuilder writes a profile incrementally from a
 // stream of profile samples delivered by the runtime.
@@ -266,9 +269,8 @@ func newProfileBuilder(w io.Writer) *profileBuilder {
 }
 
 // addCPUData adds the CPU profiling data to the profile.
-//
-// The data must be a whole number of records, as delivered by the runtime.
-// len(tags) must be equal to the number of records in data.
+// The data must be a whole number of records,
+// as delivered by the runtime.
 func (b *profileBuilder) addCPUData(data []uint64, tags []unsafe.Pointer) error {
 	if !b.havePeriod {
 		// first record is period
@@ -283,9 +285,6 @@ func (b *profileBuilder) addCPUData(data []uint64, tags []unsafe.Pointer) error 
 		b.period = 1e9 / int64(data[2])
 		b.havePeriod = true
 		data = data[3:]
-		// Consume tag slot. Note that there isn't a meaningful tag
-		// value for this record.
-		tags = tags[1:]
 	}
 
 	// Parse CPU samples from the profile.
@@ -310,14 +309,14 @@ func (b *profileBuilder) addCPUData(data []uint64, tags []unsafe.Pointer) error 
 		if data[0] < 3 || tags != nil && len(tags) < 1 {
 			return fmt.Errorf("malformed profile")
 		}
-		if len(tags) < 1 {
-			return fmt.Errorf("mismatched profile records and tags")
-		}
 		count := data[2]
 		stk := data[3:data[0]]
 		data = data[data[0]:]
-		tag := tags[0]
-		tags = tags[1:]
+		var tag unsafe.Pointer
+		if tags != nil {
+			tag = tags[0]
+			tags = tags[1:]
+		}
 
 		if count == 0 && len(stk) == 1 {
 			// overflow record
@@ -326,14 +325,10 @@ func (b *profileBuilder) addCPUData(data []uint64, tags []unsafe.Pointer) error 
 				// gentraceback guarantees that PCs in the
 				// stack can be unconditionally decremented and
 				// still be valid, so we must do the same.
-				uint64(abi.FuncPCABIInternal(lostProfileEvent) + 1),
+				uint64(funcPC(lostProfileEvent) + 1),
 			}
 		}
 		b.m.lookup(stk, tag).count += int64(count)
-	}
-
-	if len(tags) != 0 {
-		return fmt.Errorf("mismatched profile records and tags")
 	}
 	return nil
 }
@@ -580,7 +575,7 @@ func (b *profileBuilder) emitLocation() uint64 {
 // It saves the address ranges of the mappings in b.mem for use
 // when emitting locations.
 func (b *profileBuilder) readMapping() {
-	data, _ := os.ReadFile("/proc/self/maps")
+	data, _ := ioutil.ReadFile("/proc/self/maps")
 	parseProcSelfMaps(data, b.addMapping)
 	if len(b.mem) == 0 { // pprof expects a map entry, so fake one.
 		b.addMappingEntry(0, 0, 0, "", "", true)
@@ -589,9 +584,6 @@ func (b *profileBuilder) readMapping() {
 		// that takes a bunch of positional arguments.
 	}
 }
-
-var space = []byte(" ")
-var newline = []byte("\n")
 
 func parseProcSelfMaps(data []byte, addMapping func(lo, hi, offset uint64, file, buildID string)) {
 	// $ cat /proc/self/maps
@@ -619,24 +611,37 @@ func parseProcSelfMaps(data []byte, addMapping func(lo, hi, offset uint64, file,
 	// next removes and returns the next field in the line.
 	// It also removes from line any spaces following the field.
 	next := func() []byte {
-		var f []byte
-		f, line, _ = bytes.Cut(line, space)
-		line = bytes.TrimLeft(line, " ")
+		j := bytes.IndexByte(line, ' ')
+		if j < 0 {
+			f := line
+			line = nil
+			return f
+		}
+		f := line[:j]
+		line = line[j+1:]
+		for len(line) > 0 && line[0] == ' ' {
+			line = line[1:]
+		}
 		return f
 	}
 
 	for len(data) > 0 {
-		line, data, _ = bytes.Cut(data, newline)
+		i := bytes.IndexByte(data, '\n')
+		if i < 0 {
+			line, data = data, nil
+		} else {
+			line, data = data[:i], data[i+1:]
+		}
 		addr := next()
-		loStr, hiStr, ok := strings.Cut(string(addr), "-")
-		if !ok {
+		i = bytes.IndexByte(addr, '-')
+		if i < 0 {
 			continue
 		}
-		lo, err := strconv.ParseUint(loStr, 16, 64)
+		lo, err := strconv.ParseUint(string(addr[:i]), 16, 64)
 		if err != nil {
 			continue
 		}
-		hi, err := strconv.ParseUint(hiStr, 16, 64)
+		hi, err := strconv.ParseUint(string(addr[i+1:]), 16, 64)
 		if err != nil {
 			continue
 		}

@@ -10,8 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
-	"strconv"
+	"io/ioutil"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -148,7 +147,7 @@ func TestReader(t *testing.T) {
 	for i := 0; i < len(texts)-1; i++ {
 		texts[i] = str + "\n"
 		all += texts[i]
-		str += string(rune(i%26 + 'a'))
+		str += string(rune(i)%26 + 'a')
 	}
 	texts[len(texts)-1] = all
 
@@ -301,40 +300,6 @@ func TestNoUnreadByteAfterPeek(t *testing.T) {
 	br.Peek(1)
 	if err := br.UnreadByte(); err == nil {
 		t.Error("UnreadByte didn't fail after Peek")
-	}
-}
-
-func TestNoUnreadRuneAfterDiscard(t *testing.T) {
-	br := NewReader(strings.NewReader("example"))
-	br.ReadRune()
-	br.Discard(1)
-	if err := br.UnreadRune(); err == nil {
-		t.Error("UnreadRune didn't fail after Discard")
-	}
-}
-
-func TestNoUnreadByteAfterDiscard(t *testing.T) {
-	br := NewReader(strings.NewReader("example"))
-	br.ReadByte()
-	br.Discard(1)
-	if err := br.UnreadByte(); err == nil {
-		t.Error("UnreadByte didn't fail after Discard")
-	}
-}
-
-func TestNoUnreadRuneAfterWriteTo(t *testing.T) {
-	br := NewReader(strings.NewReader("example"))
-	br.WriteTo(io.Discard)
-	if err := br.UnreadRune(); err == nil {
-		t.Error("UnreadRune didn't fail after WriteTo")
-	}
-}
-
-func TestNoUnreadByteAfterWriteTo(t *testing.T) {
-	br := NewReader(strings.NewReader("example"))
-	br.WriteTo(io.Discard)
-	if err := br.UnreadByte(); err == nil {
-		t.Error("UnreadByte didn't fail after WriteTo")
 	}
 }
 
@@ -570,20 +535,6 @@ func TestReadWriteRune(t *testing.T) {
 	}
 }
 
-func TestWriteInvalidRune(t *testing.T) {
-	// Invalid runes, including negative ones, should be written as the
-	// replacement character.
-	for _, r := range []rune{-1, utf8.MaxRune + 1} {
-		var buf bytes.Buffer
-		w := NewWriter(&buf)
-		w.WriteRune(r)
-		w.Flush()
-		if s := buf.String(); s != "\uFFFD" {
-			t.Errorf("WriteRune(%d) wrote %q, not replacement character", r, s)
-		}
-	}
-}
-
 func TestReadStringAllocs(t *testing.T) {
 	r := strings.NewReader("       foo       foo        42        42        42        42        42        42        42        42       4.2       4.2       4.2       4.2\n")
 	buf := NewReader(r)
@@ -641,37 +592,6 @@ func TestWriter(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-func TestWriterAppend(t *testing.T) {
-	got := new(bytes.Buffer)
-	var want []byte
-	rn := rand.New(rand.NewSource(0))
-	w := NewWriterSize(got, 64)
-	for i := 0; i < 100; i++ {
-		// Obtain a buffer to append to.
-		b := w.AvailableBuffer()
-		if w.Available() != cap(b) {
-			t.Fatalf("Available() = %v, want %v", w.Available(), cap(b))
-		}
-
-		// While not recommended, it is valid to append to a shifted buffer.
-		// This forces Write to copy the input.
-		if rn.Intn(8) == 0 && cap(b) > 0 {
-			b = b[1:1:cap(b)]
-		}
-
-		// Append a random integer of varying width.
-		n := int64(rn.Intn(1 << rn.Intn(30)))
-		want = append(strconv.AppendInt(want, n, 10), ' ')
-		b = append(strconv.AppendInt(b, n, 10), ' ')
-		w.Write(b)
-	}
-	w.Flush()
-
-	if !bytes.Equal(got.Bytes(), want) {
-		t.Errorf("output mismatch:\ngot  %s\nwant %s", got.Bytes(), want)
 	}
 }
 
@@ -966,7 +886,7 @@ func TestReadEmptyBuffer(t *testing.T) {
 
 func TestLinesAfterRead(t *testing.T) {
 	l := NewReaderSize(bytes.NewReader([]byte("foo")), minReadBufferSize)
-	_, err := io.ReadAll(l)
+	_, err := ioutil.ReadAll(l)
 	if err != nil {
 		t.Error(err)
 		return
@@ -1210,7 +1130,7 @@ func TestWriterReadFromCounts(t *testing.T) {
 	}
 }
 
-// A writeCountingDiscard is like io.Discard and counts the number of times
+// A writeCountingDiscard is like ioutil.Discard and counts the number of times
 // Write is called on it.
 type writeCountingDiscard int
 
@@ -1351,54 +1271,6 @@ func TestWriterReadFromErrNoProgress(t *testing.T) {
 	}
 }
 
-type readFromWriter struct {
-	buf           []byte
-	writeBytes    int
-	readFromBytes int
-}
-
-func (w *readFromWriter) Write(p []byte) (int, error) {
-	w.buf = append(w.buf, p...)
-	w.writeBytes += len(p)
-	return len(p), nil
-}
-
-func (w *readFromWriter) ReadFrom(r io.Reader) (int64, error) {
-	b, err := io.ReadAll(r)
-	w.buf = append(w.buf, b...)
-	w.readFromBytes += len(b)
-	return int64(len(b)), err
-}
-
-// Test that calling (*Writer).ReadFrom with a partially-filled buffer
-// fills the buffer before switching over to ReadFrom.
-func TestWriterReadFromWithBufferedData(t *testing.T) {
-	const bufsize = 16
-
-	input := createTestInput(64)
-	rfw := &readFromWriter{}
-	w := NewWriterSize(rfw, bufsize)
-
-	const writeSize = 8
-	if n, err := w.Write(input[:writeSize]); n != writeSize || err != nil {
-		t.Errorf("w.Write(%v bytes) = %v, %v; want %v, nil", writeSize, n, err, writeSize)
-	}
-	n, err := w.ReadFrom(bytes.NewReader(input[writeSize:]))
-	if wantn := len(input[writeSize:]); int(n) != wantn || err != nil {
-		t.Errorf("io.Copy(w, %v bytes) = %v, %v; want %v, nil", wantn, n, err, wantn)
-	}
-	if err := w.Flush(); err != nil {
-		t.Errorf("w.Flush() = %v, want nil", err)
-	}
-
-	if got, want := rfw.writeBytes, bufsize; got != want {
-		t.Errorf("wrote %v bytes with Write, want %v", got, want)
-	}
-	if got, want := rfw.readFromBytes, len(input)-bufsize; got != want {
-		t.Errorf("wrote %v bytes with ReadFrom, want %v", got, want)
-	}
-}
-
 func TestReadZero(t *testing.T) {
 	for _, size := range []int{100, 2} {
 		t.Run(fmt.Sprintf("bufsize=%d", size), func(t *testing.T) {
@@ -1427,19 +1299,8 @@ func TestReaderReset(t *testing.T) {
 	if string(buf) != "foo" {
 		t.Errorf("buf = %q; want foo", buf)
 	}
-
 	r.Reset(strings.NewReader("bar bar"))
-	all, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(all) != "bar bar" {
-		t.Errorf("ReadAll = %q; want bar bar", all)
-	}
-
-	*r = Reader{} // zero out the Reader
-	r.Reset(strings.NewReader("bar bar"))
-	all, err = io.ReadAll(r)
+	all, err := ioutil.ReadAll(r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1449,10 +1310,9 @@ func TestReaderReset(t *testing.T) {
 }
 
 func TestWriterReset(t *testing.T) {
-	var buf1, buf2, buf3 bytes.Buffer
+	var buf1, buf2 bytes.Buffer
 	w := NewWriter(&buf1)
 	w.WriteString("foo")
-
 	w.Reset(&buf2) // and not flushed
 	w.WriteString("bar")
 	w.Flush()
@@ -1461,17 +1321,6 @@ func TestWriterReset(t *testing.T) {
 	}
 	if buf2.String() != "bar" {
 		t.Errorf("buf2 = %q; want bar", buf2.String())
-	}
-
-	*w = Writer{}  // zero out the Writer
-	w.Reset(&buf3) // and not flushed
-	w.WriteString("bar")
-	w.Flush()
-	if buf1.String() != "" {
-		t.Errorf("buf1 = %q; want empty", buf1.String())
-	}
-	if buf3.String() != "bar" {
-		t.Errorf("buf3 = %q; want bar", buf3.String())
 	}
 }
 
@@ -1520,7 +1369,7 @@ func TestReaderDiscard(t *testing.T) {
 			wantBuffered: 0,
 		},
 		// Any error from filling shouldn't show up until we
-		// get past the valid bytes. Here we return 5 valid bytes at the same time
+		// get past the valid bytes. Here we return we return 5 valid bytes at the same time
 		// as an error, but test that we don't see the error from Discard.
 		{
 			name: "fill error, discard less",
@@ -1796,13 +1645,13 @@ func BenchmarkReaderWriteToOptimal(b *testing.B) {
 	buf := make([]byte, bufSize)
 	r := bytes.NewReader(buf)
 	srcReader := NewReaderSize(onlyReader{r}, 1<<10)
-	if _, ok := io.Discard.(io.ReaderFrom); !ok {
-		b.Fatal("io.Discard doesn't support ReaderFrom")
+	if _, ok := ioutil.Discard.(io.ReaderFrom); !ok {
+		b.Fatal("ioutil.Discard doesn't support ReaderFrom")
 	}
 	for i := 0; i < b.N; i++ {
 		r.Seek(0, io.SeekStart)
 		srcReader.Reset(onlyReader{r})
-		n, err := srcReader.WriteTo(io.Discard)
+		n, err := srcReader.WriteTo(ioutil.Discard)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1873,7 +1722,7 @@ func BenchmarkReaderEmpty(b *testing.B) {
 	str := strings.Repeat("x", 16<<10)
 	for i := 0; i < b.N; i++ {
 		br := NewReader(strings.NewReader(str))
-		n, err := io.Copy(io.Discard, br)
+		n, err := io.Copy(ioutil.Discard, br)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1888,7 +1737,7 @@ func BenchmarkWriterEmpty(b *testing.B) {
 	str := strings.Repeat("x", 1<<10)
 	bs := []byte(str)
 	for i := 0; i < b.N; i++ {
-		bw := NewWriter(io.Discard)
+		bw := NewWriter(ioutil.Discard)
 		bw.Flush()
 		bw.WriteByte('a')
 		bw.Flush()
@@ -1903,7 +1752,7 @@ func BenchmarkWriterEmpty(b *testing.B) {
 
 func BenchmarkWriterFlush(b *testing.B) {
 	b.ReportAllocs()
-	bw := NewWriter(io.Discard)
+	bw := NewWriter(ioutil.Discard)
 	str := strings.Repeat("x", 50)
 	for i := 0; i < b.N; i++ {
 		bw.WriteString(str)

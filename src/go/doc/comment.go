@@ -236,24 +236,26 @@ func heading(line string) string {
 
 	// allow "'" for possessive "'s" only
 	for b := line; ; {
-		var ok bool
-		if _, b, ok = strings.Cut(b, "'"); !ok {
+		i := strings.IndexRune(b, '\'')
+		if i < 0 {
 			break
 		}
-		if b != "s" && !strings.HasPrefix(b, "s ") {
-			return "" // ' not followed by s and then end-of-word
+		if i+1 >= len(b) || b[i+1] != 's' || (i+2 < len(b) && b[i+2] != ' ') {
+			return "" // not followed by "s "
 		}
+		b = b[i+2:]
 	}
 
 	// allow "." when followed by non-space
 	for b := line; ; {
-		var ok bool
-		if _, b, ok = strings.Cut(b, "."); !ok {
+		i := strings.IndexRune(b, '.')
+		if i < 0 {
 			break
 		}
-		if b == "" || strings.HasPrefix(b, " ") {
+		if i+1 >= len(b) || b[i+1] == ' ' {
 			return "" // not followed by non-space
 		}
+		b = b[i+1:]
 	}
 
 	return line
@@ -485,7 +487,7 @@ func (l *lineWrapper) write(text string) {
 			l.out.Write(nl)
 			l.n = 0
 			l.pendSpace = 0
-			needsPrefix = isComment && !strings.HasPrefix(f, "//")
+			needsPrefix = isComment
 		}
 		if l.n == 0 {
 			l.out.Write([]byte(l.indent))

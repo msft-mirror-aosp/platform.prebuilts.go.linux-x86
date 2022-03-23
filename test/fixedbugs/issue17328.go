@@ -8,6 +8,6 @@ package main
 
 func main() {
 	i := 0
-	for ; ; i++) { // ERROR "unexpected \), expecting { after for clause|expected .*{.*|expected .*;.*"
+	for ; ; i++) { // ERROR "unexpected \), expecting { after for clause"
 	}
-} // GCCGO_ERROR "expected declaration"
+}

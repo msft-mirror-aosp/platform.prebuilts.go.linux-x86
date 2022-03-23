@@ -36,7 +36,6 @@ import (
 	"cmd/internal/sys"
 	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
-	"internal/buildcfg"
 	"log"
 	"runtime"
 )
@@ -45,22 +44,21 @@ func linknew(arch *sys.Arch) *Link {
 	ler := loader.ErrorReporter{AfterErrorAction: afterErrorAction}
 	ctxt := &Link{
 		Target:        Target{Arch: arch},
-		version:       sym.SymVerStatic,
+		Syms:          sym.NewSymbols(),
 		outSem:        make(chan int, 2*runtime.GOMAXPROCS(0)),
 		Out:           NewOutBuf(arch),
 		LibraryByPkg:  make(map[string]*sym.Library),
 		numelfsym:     1,
 		ErrorReporter: ErrorReporter{ErrorReporter: ler},
-		generatorSyms: make(map[loader.Sym]generatorFunc),
 	}
 
-	if buildcfg.GOARCH != arch.Name {
-		log.Fatalf("invalid buildcfg.GOARCH %s (want %s)", buildcfg.GOARCH, arch.Name)
+	if objabi.GOARCH != arch.Name {
+		log.Fatalf("invalid objabi.GOARCH %s (want %s)", objabi.GOARCH, arch.Name)
 	}
 
 	AtExit(func() {
 		if nerrors > 0 {
-			ctxt.Out.ErrorClose()
+			ctxt.Out.Close()
 			mayberemoveoutfile()
 		}
 	})

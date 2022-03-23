@@ -184,7 +184,7 @@ type Symbol struct {
 type FormatError struct {
 	off int64
 	msg string
-	val any
+	val interface{}
 }
 
 func (e *FormatError) Error() string {
@@ -344,15 +344,6 @@ func NewFile(r io.ReaderAt) (*File, error) {
 			b := bytes.NewReader(cmddat)
 			if err := binary.Read(b, bo, &hdr); err != nil {
 				return nil, err
-			}
-			if hdr.Iundefsym > uint32(len(f.Symtab.Syms)) {
-				return nil, &FormatError{offset, fmt.Sprintf(
-					"undefined symbols index in dynamic symbol table command is greater than symbol table length (%d > %d)",
-					hdr.Iundefsym, len(f.Symtab.Syms)), nil}
-			} else if hdr.Iundefsym+hdr.Nundefsym > uint32(len(f.Symtab.Syms)) {
-				return nil, &FormatError{offset, fmt.Sprintf(
-					"number of undefined symbols after index in dynamic symbol table command is greater than symbol table length (%d > %d)",
-					hdr.Iundefsym+hdr.Nundefsym, len(f.Symtab.Syms)), nil}
 			}
 			dat := make([]byte, hdr.Nindirectsyms*4)
 			if _, err := r.ReadAt(dat, int64(hdr.Indirectsymoff)); err != nil {
@@ -650,14 +641,10 @@ func (f *File) DWARF() (*dwarf.Data, error) {
 		return nil, err
 	}
 
-	// Look for DWARF4 .debug_types sections and DWARF5 sections.
+	// Look for DWARF4 .debug_types sections.
 	for i, s := range f.Sections {
 		suffix := dwarfSuffix(s)
-		if suffix == "" {
-			continue
-		}
-		if _, ok := dat[suffix]; ok {
-			// Already handled.
+		if suffix != "types" {
 			continue
 		}
 
@@ -666,11 +653,7 @@ func (f *File) DWARF() (*dwarf.Data, error) {
 			return nil, err
 		}
 
-		if suffix == "types" {
-			err = d.AddTypes(fmt.Sprintf("types-%d", i), b)
-		} else {
-			err = d.AddSection(".debug_"+suffix, b)
-		}
+		err = d.AddTypes(fmt.Sprintf("types-%d", i), b)
 		if err != nil {
 			return nil, err
 		}

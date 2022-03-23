@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build linux && (ppc64 || ppc64le)
+// +build linux
+// +build ppc64 ppc64le
 
 package syscall
 
@@ -36,7 +37,11 @@ const _SYS_setgroups = SYS_SETGROUPS
 //sys	sendfile(outfd int, infd int, offset *int64, count int) (written int, err error)
 //sys	Setfsgid(gid int) (err error)
 //sys	Setfsuid(uid int) (err error)
+//sysnb	Setregid(rgid int, egid int) (err error)
+//sysnb	Setresgid(rgid int, egid int, sgid int) (err error)
+//sysnb	Setresuid(ruid int, euid int, suid int) (err error)
 //sysnb	Setrlimit(resource int, rlim *Rlimit) (err error)
+//sysnb	Setreuid(ruid int, euid int) (err error)
 //sys	Shutdown(fd int, how int) (err error)
 //sys	Splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (n int64, err error)
 //sys	Stat(path string, stat *Stat_t) (err error)
@@ -48,6 +53,7 @@ const _SYS_setgroups = SYS_SETGROUPS
 //sys	bind(s int, addr unsafe.Pointer, addrlen _Socklen) (err error)
 //sys	connect(s int, addr unsafe.Pointer, addrlen _Socklen) (err error)
 //sysnb	getgroups(n int, list *_Gid_t) (nn int, err error)
+//sysnb	setgroups(n int, list *_Gid_t) (err error)
 //sys	getsockopt(s int, level int, name int, val unsafe.Pointer, vallen *_Socklen) (err error)
 //sys	setsockopt(s int, level int, name int, val unsafe.Pointer, vallen uintptr) (err error)
 //sysnb	socket(domain int, typ int, proto int) (fd int, err error)
@@ -72,6 +78,30 @@ func setTimespec(sec, nsec int64) Timespec {
 
 func setTimeval(sec, usec int64) Timeval {
 	return Timeval{Sec: sec, Usec: usec}
+}
+
+func Pipe(p []int) (err error) {
+	if len(p) != 2 {
+		return EINVAL
+	}
+	var pp [2]_C_int
+	err = pipe2(&pp, 0)
+	p[0] = int(pp[0])
+	p[1] = int(pp[1])
+	return
+}
+
+//sysnb pipe2(p *[2]_C_int, flags int) (err error)
+
+func Pipe2(p []int, flags int) (err error) {
+	if len(p) != 2 {
+		return EINVAL
+	}
+	var pp [2]_C_int
+	err = pipe2(&pp, flags)
+	p[0] = int(pp[0])
+	p[1] = int(pp[1])
+	return
 }
 
 func (r *PtraceRegs) PC() uint64 { return r.Nip }

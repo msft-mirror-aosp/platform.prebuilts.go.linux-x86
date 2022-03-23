@@ -15,7 +15,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"internal/testenv"
-	"io"
+	"io/ioutil"
 	"os"
 	"reflect"
 	"runtime"
@@ -52,7 +52,7 @@ func codeInit() {
 	if err != nil {
 		panic(err)
 	}
-	data, err := io.ReadAll(gz)
+	data, err := ioutil.ReadAll(gz)
 	if err != nil {
 		panic(err)
 	}
@@ -89,7 +89,7 @@ func BenchmarkCodeEncoder(b *testing.B) {
 		b.StartTimer()
 	}
 	b.RunParallel(func(pb *testing.PB) {
-		enc := NewEncoder(io.Discard)
+		enc := NewEncoder(ioutil.Discard)
 		for pb.Next() {
 			if err := enc.Encode(&codeStruct); err != nil {
 				b.Fatal("Encode:", err)
@@ -192,7 +192,7 @@ func BenchmarkDecoderStream(b *testing.B) {
 	var buf bytes.Buffer
 	dec := NewDecoder(&buf)
 	buf.WriteString(`"` + strings.Repeat("x", 1000000) + `"` + "\n\n\n")
-	var x any
+	var x interface{}
 	if err := dec.Decode(&x); err != nil {
 		b.Fatal("Decode:", err)
 	}
@@ -399,7 +399,7 @@ func BenchmarkEncodeMarshaler(b *testing.B) {
 	}{}
 
 	b.RunParallel(func(pb *testing.PB) {
-		enc := NewEncoder(io.Discard)
+		enc := NewEncoder(ioutil.Discard)
 
 		for pb.Next() {
 			if err := enc.Encode(&m); err != nil {
