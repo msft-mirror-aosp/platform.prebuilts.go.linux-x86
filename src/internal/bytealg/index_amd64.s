@@ -8,7 +8,7 @@
 TEXT ·Index(SB),NOSPLIT,$0-56
 	MOVQ a_base+0(FP), DI
 	MOVQ a_len+8(FP), DX
-	MOVQ b_base+24(FP), R8
+	MOVQ b_base+24(FP), BP
 	MOVQ b_len+32(FP), AX
 	MOVQ DI, R10
 	LEAQ ret+48(FP), R11
@@ -17,7 +17,7 @@ TEXT ·Index(SB),NOSPLIT,$0-56
 TEXT ·IndexString(SB),NOSPLIT,$0-40
 	MOVQ a_base+0(FP), DI
 	MOVQ a_len+8(FP), DX
-	MOVQ b_base+16(FP), R8
+	MOVQ b_base+16(FP), BP
 	MOVQ b_len+24(FP), AX
 	MOVQ DI, R10
 	LEAQ ret+32(FP), R11
@@ -26,7 +26,7 @@ TEXT ·IndexString(SB),NOSPLIT,$0-40
 // AX: length of string, that we are searching for
 // DX: length of string, in which we are searching
 // DI: pointer to string, in which we are searching
-// R8: pointer to string, that we are searching for
+// BP: pointer to string, that we are searching for
 // R11: address, where to put return value
 // Note: We want len in DX and AX, because PCMPESTRI implicitly consumes them
 TEXT indexbody<>(SB),NOSPLIT,$0
@@ -37,11 +37,11 @@ TEXT indexbody<>(SB),NOSPLIT,$0
 no_sse42:
 	CMPQ AX, $2
 	JA   _3_or_more
-	MOVW (R8), R8
+	MOVW (BP), BP
 	LEAQ -1(DI)(DX*1), DX
 loop2:
 	MOVW (DI), SI
-	CMPW SI,R8
+	CMPW SI,BP
 	JZ success
 	ADDQ $1,DI
 	CMPQ DI,DX
@@ -50,12 +50,12 @@ loop2:
 _3_or_more:
 	CMPQ AX, $3
 	JA   _4_or_more
-	MOVW 1(R8), BX
-	MOVW (R8), R8
+	MOVW 1(BP), BX
+	MOVW (BP), BP
 	LEAQ -2(DI)(DX*1), DX
 loop3:
 	MOVW (DI), SI
-	CMPW SI,R8
+	CMPW SI,BP
 	JZ   partial_success3
 	ADDQ $1,DI
 	CMPQ DI,DX
@@ -72,11 +72,11 @@ partial_success3:
 _4_or_more:
 	CMPQ AX, $4
 	JA   _5_or_more
-	MOVL (R8), R8
+	MOVL (BP), BP
 	LEAQ -3(DI)(DX*1), DX
 loop4:
 	MOVL (DI), SI
-	CMPL SI,R8
+	CMPL SI,BP
 	JZ   success
 	ADDQ $1,DI
 	CMPQ DI,DX
@@ -87,11 +87,11 @@ _5_or_more:
 	JA   _8_or_more
 	LEAQ 1(DI)(DX*1), DX
 	SUBQ AX, DX
-	MOVL -4(R8)(AX*1), BX
-	MOVL (R8), R8
+	MOVL -4(BP)(AX*1), BX
+	MOVL (BP), BP
 loop5to7:
 	MOVL (DI), SI
-	CMPL SI,R8
+	CMPL SI,BP
 	JZ   partial_success5to7
 	ADDQ $1,DI
 	CMPQ DI,DX
@@ -108,11 +108,11 @@ partial_success5to7:
 _8_or_more:
 	CMPQ AX, $8
 	JA   _9_or_more
-	MOVQ (R8), R8
+	MOVQ (BP), BP
 	LEAQ -7(DI)(DX*1), DX
 loop8:
 	MOVQ (DI), SI
-	CMPQ SI,R8
+	CMPQ SI,BP
 	JZ   success
 	ADDQ $1,DI
 	CMPQ DI,DX
@@ -123,11 +123,11 @@ _9_or_more:
 	JA   _16_or_more
 	LEAQ 1(DI)(DX*1), DX
 	SUBQ AX, DX
-	MOVQ -8(R8)(AX*1), BX
-	MOVQ (R8), R8
+	MOVQ -8(BP)(AX*1), BX
+	MOVQ (BP), BP
 loop9to15:
 	MOVQ (DI), SI
-	CMPQ SI,R8
+	CMPQ SI,BP
 	JZ   partial_success9to15
 	ADDQ $1,DI
 	CMPQ DI,DX
@@ -144,7 +144,7 @@ partial_success9to15:
 _16_or_more:
 	CMPQ AX, $16
 	JA   _17_or_more
-	MOVOU (R8), X1
+	MOVOU (BP), X1
 	LEAQ -15(DI)(DX*1), DX
 loop16:
 	MOVOU (DI), X2
@@ -161,8 +161,8 @@ _17_or_more:
 	JA   _32_or_more
 	LEAQ 1(DI)(DX*1), DX
 	SUBQ AX, DX
-	MOVOU -16(R8)(AX*1), X0
-	MOVOU (R8), X1
+	MOVOU -16(BP)(AX*1), X0
+	MOVOU (BP), X1
 loop17to31:
 	MOVOU (DI), X2
 	PCMPEQB X1,X2
@@ -188,7 +188,7 @@ partial_success17to31:
 _32_or_more:
 	CMPQ AX, $32
 	JA   _33_to_63
-	VMOVDQU (R8), Y1
+	VMOVDQU (BP), Y1
 	LEAQ -31(DI)(DX*1), DX
 loop32:
 	VMOVDQU (DI), Y2
@@ -203,8 +203,8 @@ loop32:
 _33_to_63:
 	LEAQ 1(DI)(DX*1), DX
 	SUBQ AX, DX
-	VMOVDQU -32(R8)(AX*1), Y0
-	VMOVDQU (R8), Y1
+	VMOVDQU -32(BP)(AX*1), Y0
+	VMOVDQU (BP), Y1
 loop33to63:
 	VMOVDQU (DI), Y2
 	VPCMPEQB Y1, Y2, Y3
@@ -241,10 +241,10 @@ sse42:
 	// This value was determined experimentally and is the ~same
 	// on Nehalem (first with SSE42) and Haswell.
 	JAE _9_or_more
-	LEAQ 16(R8), SI
+	LEAQ 16(BP), SI
 	TESTW $0xff0, SI
 	JEQ no_sse42
-	MOVOU (R8), X1
+	MOVOU (BP), X1
 	LEAQ -15(DI)(DX*1), SI
 	MOVQ $16, R9
 	SUBQ AX, R9 // We advance by 16-len(sep) each iteration, so precalculate it into R9

@@ -14,8 +14,7 @@
 package runtime
 
 import (
-	"internal/abi"
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -177,16 +176,12 @@ func typedmemmove(typ *_type, dst, src unsafe.Pointer) {
 //go:linkname reflect_typedmemmove reflect.typedmemmove
 func reflect_typedmemmove(typ *_type, dst, src unsafe.Pointer) {
 	if raceenabled {
-		raceWriteObjectPC(typ, dst, getcallerpc(), abi.FuncPCABIInternal(reflect_typedmemmove))
-		raceReadObjectPC(typ, src, getcallerpc(), abi.FuncPCABIInternal(reflect_typedmemmove))
+		raceWriteObjectPC(typ, dst, getcallerpc(), funcPC(reflect_typedmemmove))
+		raceReadObjectPC(typ, src, getcallerpc(), funcPC(reflect_typedmemmove))
 	}
 	if msanenabled {
 		msanwrite(dst, typ.size)
 		msanread(src, typ.size)
-	}
-	if asanenabled {
-		asanwrite(dst, typ.size)
-		asanread(src, typ.size)
 	}
 	typedmemmove(typ, dst, src)
 }
@@ -198,14 +193,14 @@ func reflectlite_typedmemmove(typ *_type, dst, src unsafe.Pointer) {
 
 // typedmemmovepartial is like typedmemmove but assumes that
 // dst and src point off bytes into the value and only copies size bytes.
-// off must be a multiple of goarch.PtrSize.
+// off must be a multiple of sys.PtrSize.
 //go:linkname reflect_typedmemmovepartial reflect.typedmemmovepartial
 func reflect_typedmemmovepartial(typ *_type, dst, src unsafe.Pointer, off, size uintptr) {
-	if writeBarrier.needed && typ.ptrdata > off && size >= goarch.PtrSize {
-		if off&(goarch.PtrSize-1) != 0 {
+	if writeBarrier.needed && typ.ptrdata > off && size >= sys.PtrSize {
+		if off&(sys.PtrSize-1) != 0 {
 			panic("reflect: internal error: misaligned offset")
 		}
-		pwsize := alignDown(size, goarch.PtrSize)
+		pwsize := alignDown(size, sys.PtrSize)
 		if poff := typ.ptrdata - off; pwsize > poff {
 			pwsize = poff
 		}
@@ -228,18 +223,11 @@ func reflect_typedmemmovepartial(typ *_type, dst, src unsafe.Pointer, off, size 
 // stack map of reflectcall is wrong.
 //
 //go:nosplit
-func reflectcallmove(typ *_type, dst, src unsafe.Pointer, size uintptr, regs *abi.RegArgs) {
-	if writeBarrier.needed && typ != nil && typ.ptrdata != 0 && size >= goarch.PtrSize {
+func reflectcallmove(typ *_type, dst, src unsafe.Pointer, size uintptr) {
+	if writeBarrier.needed && typ != nil && typ.ptrdata != 0 && size >= sys.PtrSize {
 		bulkBarrierPreWrite(uintptr(dst), uintptr(src), size)
 	}
 	memmove(dst, src, size)
-
-	// Move pointers returned in registers to a place where the GC can see them.
-	for i := range regs.Ints {
-		if regs.ReturnIsPtr.Get(i) {
-			regs.Ptrs[i] = unsafe.Pointer(regs.Ints[i])
-		}
-	}
 }
 
 //go:nosplit
@@ -258,17 +246,13 @@ func typedslicecopy(typ *_type, dstPtr unsafe.Pointer, dstLen int, srcPtr unsafe
 	// code and needs its own instrumentation.
 	if raceenabled {
 		callerpc := getcallerpc()
-		pc := abi.FuncPCABIInternal(slicecopy)
+		pc := funcPC(slicecopy)
 		racewriterangepc(dstPtr, uintptr(n)*typ.size, callerpc, pc)
 		racereadrangepc(srcPtr, uintptr(n)*typ.size, callerpc, pc)
 	}
 	if msanenabled {
 		msanwrite(dstPtr, uintptr(n)*typ.size)
 		msanread(srcPtr, uintptr(n)*typ.size)
-	}
-	if asanenabled {
-		asanwrite(dstPtr, uintptr(n)*typ.size)
-		asanread(srcPtr, uintptr(n)*typ.size)
 	}
 
 	if writeBarrier.cgo {
@@ -297,7 +281,28 @@ func typedslicecopy(typ *_type, dstPtr unsafe.Pointer, dstLen int, srcPtr unsafe
 //go:linkname reflect_typedslicecopy reflect.typedslicecopy
 func reflect_typedslicecopy(elemType *_type, dst, src slice) int {
 	if elemType.ptrdata == 0 {
-		return slicecopy(dst.array, dst.len, src.array, src.len, elemType.size)
+		n := dst.len
+		if n > src.len {
+			n = src.len
+		}
+		if n == 0 {
+			return 0
+		}
+
+		size := uintptr(n) * elemType.size
+		if raceenabled {
+			callerpc := getcallerpc()
+			pc := funcPC(reflect_typedslicecopy)
+			racewriterangepc(dst.array, size, callerpc, pc)
+			racereadrangepc(src.array, size, callerpc, pc)
+		}
+		if msanenabled {
+			msanwrite(dst.array, size)
+			msanread(src.array, size)
+		}
+
+		memmove(dst.array, src.array, size)
+		return n
 	}
 	return typedslicecopy(elemType, dst.array, dst.len, src.array, src.len)
 }

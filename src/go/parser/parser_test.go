@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
@@ -40,7 +40,7 @@ func nameFilter(filename string) bool {
 	return false
 }
 
-func dirFilter(f fs.FileInfo) bool { return nameFilter(f.Name()) }
+func dirFilter(f os.FileInfo) bool { return nameFilter(f.Name()) }
 
 func TestParseFile(t *testing.T) {
 	src := "package p\nvar _=s[::]+\ns[::]+\ns[::]+\ns[::]+\ns[::]+\ns[::]+\ns[::]+\ns[::]+\ns[::]+\ns[::]+\ns[::]+\ns[::]"
@@ -79,14 +79,6 @@ func TestParseDir(t *testing.T) {
 		if !nameFilter(filename) {
 			t.Errorf("unexpected package file: %s", filename)
 		}
-	}
-}
-
-func TestIssue42951(t *testing.T) {
-	path := "./testdata/issue42951"
-	_, err := ParseDir(token.NewFileSet(), path, nil, 0)
-	if err != nil {
-		t.Errorf("ParseDir(%s): %v", path, err)
 	}
 }
 

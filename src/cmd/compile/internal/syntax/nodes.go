@@ -37,7 +37,7 @@ type File struct {
 	Pragma   Pragma
 	PkgName  *Name
 	DeclList []Decl
-	EOF      Pos
+	Lines    uint
 	node
 }
 
@@ -55,8 +55,8 @@ type (
 	ImportDecl struct {
 		Group        *Group // nil means not part of a group
 		Pragma       Pragma
-		LocalPkgName *Name     // including "."; nil means no rename present
-		Path         *BasicLit // Path.Bad || Path.Kind == StringLit; nil means no path
+		LocalPkgName *Name // including "."; nil means no rename present
+		Path         *BasicLit
 		decl
 	}
 
@@ -74,12 +74,11 @@ type (
 
 	// Name Type
 	TypeDecl struct {
-		Group      *Group // nil means not part of a group
-		Pragma     Pragma
-		Name       *Name
-		TParamList []*Field // nil means no type parameters
-		Alias      bool
-		Type       Expr
+		Group  *Group // nil means not part of a group
+		Pragma Pragma
+		Name   *Name
+		Alias  bool
+		Type   Expr
 		decl
 	}
 
@@ -100,12 +99,11 @@ type (
 	// func Receiver Name Type { Body }
 	// func Receiver Name Type
 	FuncDecl struct {
-		Pragma     Pragma
-		Recv       *Field // nil means regular function
-		Name       *Name
-		TParamList []*Field // nil means no type parameters
-		Type       *FuncType
-		Body       *BlockStmt // nil means no body (forward declaration)
+		Pragma Pragma
+		Recv   *Field // nil means regular function
+		Name   *Name
+		Type   *FuncType
+		Body   *BlockStmt // nil means no body (forward declaration)
 		decl
 	}
 )
@@ -116,18 +114,11 @@ func (*decl) aDecl() {}
 
 // All declarations belonging to the same group point to the same Group node.
 type Group struct {
-	_ int // not empty so we are guaranteed different Group instances
+	dummy int // not empty so we are guaranteed different Group instances
 }
 
 // ----------------------------------------------------------------------------
 // Expressions
-
-func NewName(pos Pos, value string) *Name {
-	n := new(Name)
-	n.pos = pos
-	n.Value = value
-	return n
-}
 
 type (
 	Expr interface {
@@ -191,7 +182,6 @@ type (
 	}
 
 	// X[Index]
-	// X[T1, T2, ...] (with Ti = Index.(*ListExpr).ElemList[i])
 	IndexExpr struct {
 		X     Expr
 		Index Expr
@@ -275,7 +265,7 @@ type (
 	// Name Type
 	//      Type
 	Field struct {
-		Name *Name // nil means anonymous field/parameter (structs/parameters), or embedded element (interfaces)
+		Name *Name // nil means anonymous field/parameter (structs/parameters), or embedded interface (interfaces)
 		Type Expr  // field names declared in a list share the same Type (identical pointers)
 		node
 	}
@@ -367,7 +357,7 @@ type (
 
 	AssignStmt struct {
 		Op       Operator // 0 means no operation
-		Lhs, Rhs Expr     // Rhs == nil means Lhs++ (Op == Add) or Lhs-- (Op == Sub)
+		Lhs, Rhs Expr     // Rhs == ImplicitOne means Lhs++ (Op == Add) or Lhs-- (Op == Sub)
 		simpleStmt
 	}
 

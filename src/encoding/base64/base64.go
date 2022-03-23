@@ -229,7 +229,9 @@ func (e *encoder) Write(p []byte) (n int, err error) {
 	}
 
 	// Trailing fringe.
-	copy(e.buf[:], p)
+	for i := 0; i < len(p); i++ {
+		e.buf[i] = p[i]
+	}
 	e.nbuf = len(p)
 	n += len(p)
 	return

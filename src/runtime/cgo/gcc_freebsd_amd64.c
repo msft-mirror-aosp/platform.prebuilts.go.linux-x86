@@ -69,6 +69,11 @@ threadentry(void *v)
 	free(v);
 	_cgo_tsan_release();
 
-	crosscall_amd64(ts.fn, setg_gcc, (void*)ts.g);
+	/*
+	 * Set specific keys.
+	 */
+	setg_gcc((void*)ts.g);
+
+	crosscall_amd64(ts.fn);
 	return nil;
 }

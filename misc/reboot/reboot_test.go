@@ -7,29 +7,27 @@
 package reboot_test
 
 import (
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 )
 
 func TestRepeatBootstrap(t *testing.T) {
-	if testing.Short() {
-		t.Skipf("skipping test that rebuilds the entire toolchain")
+	goroot, err := ioutil.TempDir("", "reboot-goroot")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	goroot := t.TempDir()
+	defer os.RemoveAll(goroot)
 
 	gorootSrc := filepath.Join(goroot, "src")
-	overlayStart := time.Now()
 	if err := overlayDir(gorootSrc, filepath.Join(runtime.GOROOT(), "src")); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("GOROOT/src overlay set up in %s", time.Since(overlayStart))
 
-	if err := os.WriteFile(filepath.Join(goroot, "VERSION"), []byte(runtime.Version()), 0666); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(goroot, "VERSION"), []byte(runtime.Version()), 0666); err != nil {
 		t.Fatal(err)
 	}
 

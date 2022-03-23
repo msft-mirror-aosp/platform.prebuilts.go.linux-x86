@@ -12,6 +12,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"io/ioutil"
 	"strings"
 	"testing"
 )
@@ -25,7 +26,7 @@ func makeParserBytes() []byte {
 	r = strings.NewReader(parserbz2_base64)
 	r = base64.NewDecoder(base64.StdEncoding, r)
 	r = bzip2.NewReader(r)
-	b, err := io.ReadAll(r)
+	b, err := ioutil.ReadAll(r)
 	if err != nil {
 		panic(err)
 	}

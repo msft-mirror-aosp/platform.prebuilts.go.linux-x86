@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix || (darwin && !ios) || dragonfly || freebsd || (linux && !android) || netbsd || openbsd || solaris
+// +build aix darwin,amd64 dragonfly freebsd linux,!android netbsd openbsd solaris
 
 // Parse "zoneinfo" time zone file.
 // This is a fairly standard file format used on OS X, Linux, BSD, Sun, and others.
@@ -29,9 +29,7 @@ func initLocal() {
 	// consult $TZ to find the time zone to use.
 	// no $TZ means use the system default /etc/localtime.
 	// $TZ="" means use UTC.
-	// $TZ="foo" or $TZ=":foo" if foo is an absolute path, then the file pointed
-	// by foo will be used to initialize timezone; otherwise, file
-	// /usr/share/zoneinfo/foo will be used.
+	// $TZ="foo" means use /usr/share/zoneinfo/foo.
 
 	tz, ok := syscall.Getenv("TZ")
 	switch {
@@ -42,25 +40,10 @@ func initLocal() {
 			localLoc.name = "Local"
 			return
 		}
-	case tz != "":
-		if tz[0] == ':' {
-			tz = tz[1:]
-		}
-		if tz != "" && tz[0] == '/' {
-			if z, err := loadLocation(tz, []string{""}); err == nil {
-				localLoc = *z
-				if tz == "/etc/localtime" {
-					localLoc.name = "Local"
-				} else {
-					localLoc.name = tz
-				}
-				return
-			}
-		} else if tz != "" && tz != "UTC" {
-			if z, err := loadLocation(tz, zoneSources); err == nil {
-				localLoc = *z
-				return
-			}
+	case tz != "" && tz != "UTC":
+		if z, err := loadLocation(tz, zoneSources); err == nil {
+			localLoc = *z
+			return
 		}
 	}
 

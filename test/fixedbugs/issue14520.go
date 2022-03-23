@@ -6,6 +6,9 @@
 
 package f
 
-func f(x int /* // GC_ERROR "unexpected newline"
+import /* // ERROR "import path" */ `
+bogus`
 
-*/) // GCCGO_ERROR "expected .*\).*|expected declaration"
+func f(x int /* // ERROR "unexpected newline"
+
+*/)

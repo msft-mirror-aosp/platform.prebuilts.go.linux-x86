@@ -131,9 +131,7 @@ var validCompilerFlagsWithNextArg = []string{
 	"-D",
 	"-U",
 	"-I",
-	"-F",
 	"-framework",
-	"-include",
 	"-isysroot",
 	"-isystem",
 	"--sysroot",
@@ -179,8 +177,7 @@ var validLinkerFlags = []*lazyregexp.Regexp{
 	re(`-Wl,-Bdynamic`),
 	re(`-Wl,-berok`),
 	re(`-Wl,-Bstatic`),
-	re(`-Wl,-Bsymbolic-functions`),
-	re(`-Wl,-O([^@,\-][^,]*)?`),
+	re(`-WL,-O([^@,\-][^,]*)?`),
 	re(`-Wl,-d[ny]`),
 	re(`-Wl,--disable-new-dtags`),
 	re(`-Wl,-e[=,][a-zA-Z0-9]*`),
@@ -209,8 +206,8 @@ var validLinkerFlags = []*lazyregexp.Regexp{
 	re(`-Wl,-z,(no)?execstack`),
 	re(`-Wl,-z,relro`),
 
-	re(`[a-zA-Z0-9_/].*\.(a|o|obj|dll|dylib|so|tbd)`), // direct linker inputs: x.o or libfoo.so (but not -foo.o or @foo.o)
-	re(`\./.*\.(a|o|obj|dll|dylib|so|tbd)`),
+	re(`[a-zA-Z0-9_/].*\.(a|o|obj|dll|dylib|so)`), // direct linker inputs: x.o or libfoo.so (but not -foo.o or @foo.o)
+	re(`\./.*\.(a|o|obj|dll|dylib|so)`),
 }
 
 var validLinkerFlagsWithNextArg = []string{

@@ -8,7 +8,6 @@ package printer
 import (
 	"fmt"
 	"go/ast"
-	"go/build/constraint"
 	"go/token"
 	"io"
 	"os"
@@ -65,8 +64,6 @@ type printer struct {
 	lastTok      token.Token  // last token printed (token.ILLEGAL if it's whitespace)
 	prevOpen     token.Token  // previous non-brace "open" token (, [, or token.ILLEGAL
 	wsbuf        []whiteSpace // delayed white space
-	goBuild      []int        // start index of all //go:build comments in output
-	plusBuild    []int        // start index of all // +build comments in output
 
 	// Positions
 	// The out position differs from the pos position when the result
@@ -104,7 +101,7 @@ func (p *printer) init(cfg *Config, fset *token.FileSet, nodeSizes map[ast.Node]
 	p.cachedPos = -1
 }
 
-func (p *printer) internalError(msg ...any) {
+func (p *printer) internalError(msg ...interface{}) {
 	if debug {
 		fmt.Print(p.pos.String() + ": ")
 		fmt.Println(msg...)
@@ -559,9 +556,12 @@ func stripCommonPrefix(lines []string) {
 	 * Check for vertical "line of stars" and correct prefix accordingly.
 	 */
 	lineOfStars := false
-	if p, _, ok := strings.Cut(prefix, "*"); ok {
-		// remove trailing blank from prefix so stars remain aligned
-		prefix = strings.TrimSuffix(p, " ")
+	if i := strings.Index(prefix, "*"); i >= 0 {
+		// Line of stars present.
+		if i > 0 && prefix[i-1] == ' ' {
+			i-- // remove trailing blank from prefix so stars remain aligned
+		}
+		prefix = prefix[0:i]
 		lineOfStars = true
 	} else {
 		// No line of stars present.
@@ -613,8 +613,8 @@ func stripCommonPrefix(lines []string) {
 	// lines.
 	last := lines[len(lines)-1]
 	closing := "*/"
-	before, _, _ := strings.Cut(last, closing) // closing always present
-	if isBlank(before) {
+	i := strings.Index(last, closing) // i >= 0 (closing is always present)
+	if isBlank(last[0:i]) {
 		// last line only contains closing */
 		if lineOfStars {
 			closing = " */" // add blank to align final star
@@ -649,11 +649,6 @@ func (p *printer) writeComment(comment *ast.Comment) {
 
 	// shortcut common case of //-style comments
 	if text[1] == '/' {
-		if constraint.IsGoBuild(text) {
-			p.goBuild = append(p.goBuild, len(p.output))
-		} else if constraint.IsPlusBuild(text) {
-			p.plusBuild = append(p.plusBuild, len(p.output))
-		}
 		p.writeString(pos, trimRight(text), true)
 		return
 	}
@@ -841,7 +836,7 @@ func (p *printer) writeWhitespace(n int) {
 // ----------------------------------------------------------------------------
 // Printing interface
 
-// nlimit limits n to maxNewlines.
+// nlines limits n to maxNewlines.
 func nlimit(n int) int {
 	if n > maxNewlines {
 		n = maxNewlines
@@ -878,7 +873,7 @@ func mayCombine(prev token.Token, next byte) (b bool) {
 // space for best comment placement. Then, any leftover whitespace is
 // printed, followed by the actual token.
 //
-func (p *printer) print(args ...any) {
+func (p *printer) print(args ...interface{}) {
 	for _, arg := range args {
 		// information about the current arg
 		var data string
@@ -1075,7 +1070,7 @@ func getLastComment(n ast.Node) *ast.CommentGroup {
 	return nil
 }
 
-func (p *printer) printNode(node any) error {
+func (p *printer) printNode(node interface{}) error {
 	// unpack *CommentedNode, if any
 	var comments []*ast.CommentGroup
 	if cnode, ok := node.(*CommentedNode); ok {
@@ -1126,8 +1121,6 @@ func (p *printer) printNode(node any) error {
 
 	// get comments ready for use
 	p.nextComment()
-
-	p.print(pmode(0))
 
 	// format node
 	switch n := node.(type) {
@@ -1309,7 +1302,7 @@ type Config struct {
 }
 
 // fprint implements Fprint and takes a nodesSizes map for setting up the printer state.
-func (cfg *Config) fprint(output io.Writer, fset *token.FileSet, node any, nodeSizes map[ast.Node]int) (err error) {
+func (cfg *Config) fprint(output io.Writer, fset *token.FileSet, node interface{}, nodeSizes map[ast.Node]int) (err error) {
 	// print node
 	var p printer
 	p.init(cfg, fset, nodeSizes)
@@ -1319,10 +1312,6 @@ func (cfg *Config) fprint(output io.Writer, fset *token.FileSet, node any, nodeS
 	// print outstanding comments
 	p.impliedSemi = false // EOF acts like a newline
 	p.flush(token.Position{Offset: infinity, Line: infinity}, token.EOF)
-
-	// output is buffered in p.output now.
-	// fix //go:build and // +build comments if needed.
-	p.fixGoBuildLines()
 
 	// redirect output through a trimmer to eliminate trailing whitespace
 	// (Input to a tabwriter must be untrimmed since trailing tabs provide
@@ -1365,7 +1354,7 @@ func (cfg *Config) fprint(output io.Writer, fset *token.FileSet, node any, nodeS
 // It may be provided as argument to any of the Fprint functions.
 //
 type CommentedNode struct {
-	Node     any // *ast.File, or ast.Expr, ast.Decl, ast.Spec, or ast.Stmt
+	Node     interface{} // *ast.File, or ast.Expr, ast.Decl, ast.Spec, or ast.Stmt
 	Comments []*ast.CommentGroup
 }
 
@@ -1374,7 +1363,7 @@ type CommentedNode struct {
 // The node type must be *ast.File, *CommentedNode, []ast.Decl, []ast.Stmt,
 // or assignment-compatible to ast.Expr, ast.Decl, ast.Spec, or ast.Stmt.
 //
-func (cfg *Config) Fprint(output io.Writer, fset *token.FileSet, node any) error {
+func (cfg *Config) Fprint(output io.Writer, fset *token.FileSet, node interface{}) error {
 	return cfg.fprint(output, fset, node, make(map[ast.Node]int))
 }
 
@@ -1383,6 +1372,6 @@ func (cfg *Config) Fprint(output io.Writer, fset *token.FileSet, node any) error
 // Note that gofmt uses tabs for indentation but spaces for alignment;
 // use format.Node (package go/format) for output that matches gofmt.
 //
-func Fprint(output io.Writer, fset *token.FileSet, node any) error {
+func Fprint(output io.Writer, fset *token.FileSet, node interface{}) error {
 	return (&Config{Tabwidth: 8}).Fprint(output, fset, node)
 }

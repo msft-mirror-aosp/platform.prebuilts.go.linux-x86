@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"io/ioutil"
 	"os"
 	"reflect"
 	"strings"
@@ -784,7 +785,7 @@ func TestDimensionOverflow(t *testing.T) {
 }
 
 func benchmarkDecode(b *testing.B, filename string, bytesPerPixel int) {
-	data, err := os.ReadFile(filename)
+	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		b.Fatal(err)
 	}
