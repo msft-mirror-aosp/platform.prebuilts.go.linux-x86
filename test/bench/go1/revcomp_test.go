@@ -10,7 +10,7 @@ package go1
 import (
 	"bufio"
 	"bytes"
-	"io"
+	"io/ioutil"
 	"testing"
 )
 
@@ -35,7 +35,7 @@ var revCompTable = [256]uint8{
 
 func revcomp(data []byte) {
 	in := bufio.NewReader(bytes.NewBuffer(data))
-	out := io.Discard
+	out := ioutil.Discard
 	buf := make([]byte, 1024*1024)
 	line, err := in.ReadSlice('\n')
 	for err == nil {

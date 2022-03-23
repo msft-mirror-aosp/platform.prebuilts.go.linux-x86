@@ -2,20 +2,24 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build amd64 || 386
+// +build amd64 386
 
 package runtime
 
 import (
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
 // adjust Gobuf as if it executed a call to fn with context ctxt
-// and then stopped before the first instruction in fn.
+// and then did an immediate gosave.
 func gostartcall(buf *gobuf, fn, ctxt unsafe.Pointer) {
 	sp := buf.sp
-	sp -= goarch.PtrSize
+	if sys.RegSize > sys.PtrSize {
+		sp -= sys.PtrSize
+		*(*uintptr)(unsafe.Pointer(sp)) = 0
+	}
+	sp -= sys.PtrSize
 	*(*uintptr)(unsafe.Pointer(sp)) = buf.pc
 	buf.sp = sp
 	buf.pc = uintptr(fn)

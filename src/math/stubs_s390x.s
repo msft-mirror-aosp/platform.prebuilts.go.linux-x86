@@ -4,7 +4,31 @@
 
 #include "textflag.h"
 
-TEXT ·archLog10(SB), NOSPLIT, $0
+TEXT ·Exp2(SB), NOSPLIT, $0
+	BR ·exp2(SB)
+
+TEXT ·Frexp(SB), NOSPLIT, $0
+	BR ·frexp(SB)
+
+TEXT ·Hypot(SB), NOSPLIT, $0
+	BR ·hypot(SB)
+
+TEXT ·Ldexp(SB), NOSPLIT, $0
+	BR ·ldexp(SB)
+
+TEXT ·Log2(SB), NOSPLIT, $0
+	BR ·log2(SB)
+
+TEXT ·Modf(SB), NOSPLIT, $0
+	BR ·modf(SB)
+
+TEXT ·Mod(SB), NOSPLIT, $0
+	BR ·mod(SB)
+
+TEXT ·Remainder(SB), NOSPLIT, $0
+	BR ·remainder(SB)
+
+TEXT ·Log10(SB), NOSPLIT, $0
 	MOVD ·log10vectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -25,7 +49,7 @@ vectorimpl:
 GLOBL ·log10vectorfacility+0x00(SB), NOPTR, $8
 DATA ·log10vectorfacility+0x00(SB)/8, $·log10TrampolineSetup(SB)
 
-TEXT ·archCos(SB), NOSPLIT, $0
+TEXT ·Cos(SB), NOSPLIT, $0
 	MOVD ·cosvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -46,7 +70,7 @@ vectorimpl:
 GLOBL ·cosvectorfacility+0x00(SB), NOPTR, $8
 DATA ·cosvectorfacility+0x00(SB)/8, $·cosTrampolineSetup(SB)
 
-TEXT ·archCosh(SB), NOSPLIT, $0
+TEXT ·Cosh(SB), NOSPLIT, $0
 	MOVD ·coshvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -67,7 +91,7 @@ vectorimpl:
 GLOBL ·coshvectorfacility+0x00(SB), NOPTR, $8
 DATA ·coshvectorfacility+0x00(SB)/8, $·coshTrampolineSetup(SB)
 
-TEXT ·archSin(SB), NOSPLIT, $0
+TEXT ·Sin(SB), NOSPLIT, $0
 	MOVD ·sinvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -88,7 +112,7 @@ vectorimpl:
 GLOBL ·sinvectorfacility+0x00(SB), NOPTR, $8
 DATA ·sinvectorfacility+0x00(SB)/8, $·sinTrampolineSetup(SB)
 
-TEXT ·archSinh(SB), NOSPLIT, $0
+TEXT ·Sinh(SB), NOSPLIT, $0
 	MOVD ·sinhvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -109,7 +133,7 @@ vectorimpl:
 GLOBL ·sinhvectorfacility+0x00(SB), NOPTR, $8
 DATA ·sinhvectorfacility+0x00(SB)/8, $·sinhTrampolineSetup(SB)
 
-TEXT ·archTanh(SB), NOSPLIT, $0
+TEXT ·Tanh(SB), NOSPLIT, $0
 	MOVD ·tanhvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -130,7 +154,7 @@ vectorimpl:
 GLOBL ·tanhvectorfacility+0x00(SB), NOPTR, $8
 DATA ·tanhvectorfacility+0x00(SB)/8, $·tanhTrampolineSetup(SB)
 
-TEXT ·archLog1p(SB), NOSPLIT, $0
+TEXT ·Log1p(SB), NOSPLIT, $0
 	MOVD ·log1pvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -151,7 +175,7 @@ vectorimpl:
 GLOBL ·log1pvectorfacility+0x00(SB), NOPTR, $8
 DATA ·log1pvectorfacility+0x00(SB)/8, $·log1pTrampolineSetup(SB)
 
-TEXT ·archAtanh(SB), NOSPLIT, $0
+TEXT ·Atanh(SB), NOSPLIT, $0
 	MOVD ·atanhvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -172,7 +196,7 @@ vectorimpl:
 GLOBL ·atanhvectorfacility+0x00(SB), NOPTR, $8
 DATA ·atanhvectorfacility+0x00(SB)/8, $·atanhTrampolineSetup(SB)
 
-TEXT ·archAcos(SB), NOSPLIT, $0
+TEXT ·Acos(SB), NOSPLIT, $0
 	MOVD ·acosvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -193,7 +217,7 @@ vectorimpl:
 GLOBL ·acosvectorfacility+0x00(SB), NOPTR, $8
 DATA ·acosvectorfacility+0x00(SB)/8, $·acosTrampolineSetup(SB)
 
-TEXT ·archAsin(SB), NOSPLIT, $0
+TEXT ·Asin(SB), NOSPLIT, $0
 	MOVD ·asinvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -214,7 +238,7 @@ vectorimpl:
 GLOBL ·asinvectorfacility+0x00(SB), NOPTR, $8
 DATA ·asinvectorfacility+0x00(SB)/8, $·asinTrampolineSetup(SB)
 
-TEXT ·archAsinh(SB), NOSPLIT, $0
+TEXT ·Asinh(SB), NOSPLIT, $0
 	MOVD ·asinhvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -235,7 +259,7 @@ vectorimpl:
 GLOBL ·asinhvectorfacility+0x00(SB), NOPTR, $8
 DATA ·asinhvectorfacility+0x00(SB)/8, $·asinhTrampolineSetup(SB)
 
-TEXT ·archAcosh(SB), NOSPLIT, $0
+TEXT ·Acosh(SB), NOSPLIT, $0
 	MOVD ·acoshvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -256,7 +280,7 @@ vectorimpl:
 GLOBL ·acoshvectorfacility+0x00(SB), NOPTR, $8
 DATA ·acoshvectorfacility+0x00(SB)/8, $·acoshTrampolineSetup(SB)
 
-TEXT ·archErf(SB), NOSPLIT, $0
+TEXT ·Erf(SB), NOSPLIT, $0
 	MOVD ·erfvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -277,7 +301,7 @@ vectorimpl:
 GLOBL ·erfvectorfacility+0x00(SB), NOPTR, $8
 DATA ·erfvectorfacility+0x00(SB)/8, $·erfTrampolineSetup(SB)
 
-TEXT ·archErfc(SB), NOSPLIT, $0
+TEXT ·Erfc(SB), NOSPLIT, $0
 	MOVD ·erfcvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -298,7 +322,7 @@ vectorimpl:
 GLOBL ·erfcvectorfacility+0x00(SB), NOPTR, $8
 DATA ·erfcvectorfacility+0x00(SB)/8, $·erfcTrampolineSetup(SB)
 
-TEXT ·archAtan(SB), NOSPLIT, $0
+TEXT ·Atan(SB), NOSPLIT, $0
 	MOVD ·atanvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -319,7 +343,7 @@ vectorimpl:
 GLOBL ·atanvectorfacility+0x00(SB), NOPTR, $8
 DATA ·atanvectorfacility+0x00(SB)/8, $·atanTrampolineSetup(SB)
 
-TEXT ·archAtan2(SB), NOSPLIT, $0
+TEXT ·Atan2(SB), NOSPLIT, $0
 	MOVD ·atan2vectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -340,7 +364,7 @@ vectorimpl:
 GLOBL ·atan2vectorfacility+0x00(SB), NOPTR, $8
 DATA ·atan2vectorfacility+0x00(SB)/8, $·atan2TrampolineSetup(SB)
 
-TEXT ·archCbrt(SB), NOSPLIT, $0
+TEXT ·Cbrt(SB), NOSPLIT, $0
 	MOVD ·cbrtvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -361,7 +385,7 @@ vectorimpl:
 GLOBL ·cbrtvectorfacility+0x00(SB), NOPTR, $8
 DATA ·cbrtvectorfacility+0x00(SB)/8, $·cbrtTrampolineSetup(SB)
 
-TEXT ·archLog(SB), NOSPLIT, $0
+TEXT ·Log(SB), NOSPLIT, $0
 	MOVD ·logvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -382,7 +406,7 @@ vectorimpl:
 GLOBL ·logvectorfacility+0x00(SB), NOPTR, $8
 DATA ·logvectorfacility+0x00(SB)/8, $·logTrampolineSetup(SB)
 
-TEXT ·archTan(SB), NOSPLIT, $0
+TEXT ·Tan(SB), NOSPLIT, $0
 	MOVD ·tanvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -403,7 +427,7 @@ vectorimpl:
 GLOBL ·tanvectorfacility+0x00(SB), NOPTR, $8
 DATA ·tanvectorfacility+0x00(SB)/8, $·tanTrampolineSetup(SB)
 
-TEXT ·archExp(SB), NOSPLIT, $0
+TEXT ·Exp(SB), NOSPLIT, $0
 	MOVD ·expvectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -424,7 +448,7 @@ vectorimpl:
 GLOBL ·expvectorfacility+0x00(SB), NOPTR, $8
 DATA ·expvectorfacility+0x00(SB)/8, $·expTrampolineSetup(SB)
 
-TEXT ·archExpm1(SB), NOSPLIT, $0
+TEXT ·Expm1(SB), NOSPLIT, $0
 	MOVD ·expm1vectorfacility+0x00(SB), R1
 	BR   (R1)
 
@@ -445,7 +469,7 @@ vectorimpl:
 GLOBL ·expm1vectorfacility+0x00(SB), NOPTR, $8
 DATA ·expm1vectorfacility+0x00(SB)/8, $·expm1TrampolineSetup(SB)
 
-TEXT ·archPow(SB), NOSPLIT, $0
+TEXT ·Pow(SB), NOSPLIT, $0
 	MOVD ·powvectorfacility+0x00(SB), R1
 	BR   (R1)
 

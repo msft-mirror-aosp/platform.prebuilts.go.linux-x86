@@ -122,7 +122,7 @@ var jsonMarshalType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
 
 // indirectToJSONMarshaler returns the value, after dereferencing as many times
 // as necessary to reach the base type (or nil) or an implementation of json.Marshal.
-func indirectToJSONMarshaler(a any) any {
+func indirectToJSONMarshaler(a interface{}) interface{} {
 	// text/template now supports passing untyped nil as a func call
 	// argument, so we must support it. Otherwise we'd panic below, as one
 	// cannot call the Type or Interface methods on an invalid
@@ -132,7 +132,7 @@ func indirectToJSONMarshaler(a any) any {
 	}
 
 	v := reflect.ValueOf(a)
-	for !v.Type().Implements(jsonMarshalType) && v.Kind() == reflect.Pointer && !v.IsNil() {
+	for !v.Type().Implements(jsonMarshalType) && v.Kind() == reflect.Ptr && !v.IsNil() {
 		v = v.Elem()
 	}
 	return v.Interface()
@@ -140,8 +140,8 @@ func indirectToJSONMarshaler(a any) any {
 
 // jsValEscaper escapes its inputs to a JS Expression (section 11.14) that has
 // neither side-effects nor free variables outside (NaN, Infinity).
-func jsValEscaper(args ...any) string {
-	var a any
+func jsValEscaper(args ...interface{}) string {
+	var a interface{}
 	if len(args) == 1 {
 		a = indirectToJSONMarshaler(args[0])
 		switch t := a.(type) {
@@ -224,7 +224,7 @@ func jsValEscaper(args ...any) string {
 // jsStrEscaper produces a string that can be included between quotes in
 // JavaScript source, in JavaScript embedded in an HTML5 <script> element,
 // or in an HTML5 event handler attribute such as onclick.
-func jsStrEscaper(args ...any) string {
+func jsStrEscaper(args ...interface{}) string {
 	s, t := stringify(args...)
 	if t == contentTypeJSStr {
 		return replace(s, jsStrNormReplacementTable)
@@ -236,7 +236,7 @@ func jsStrEscaper(args ...any) string {
 // specials so the result is treated literally when included in a regular
 // expression literal. /foo{{.X}}bar/ matches the string "foo" followed by
 // the literal text of {{.X}} followed by the string "bar".
-func jsRegexpEscaper(args ...any) string {
+func jsRegexpEscaper(args ...interface{}) string {
 	s, _ := stringify(args...)
 	s = replace(s, jsRegexpReplacementTable)
 	if s == "" {
@@ -398,7 +398,9 @@ func isJSType(mimeType string) bool {
 	//   https://tools.ietf.org/html/rfc4329#section-3
 	//   https://www.ietf.org/rfc/rfc4627.txt
 	// discard parameters
-	mimeType, _, _ = strings.Cut(mimeType, ";")
+	if i := strings.Index(mimeType, ";"); i >= 0 {
+		mimeType = mimeType[:i]
+	}
 	mimeType = strings.ToLower(mimeType)
 	mimeType = strings.TrimSpace(mimeType)
 	switch mimeType {

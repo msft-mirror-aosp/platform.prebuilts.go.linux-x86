@@ -6,41 +6,35 @@
 #include "textflag.h"
 
 // memequal(a, b unsafe.Pointer, size uintptr) bool
-TEXT runtime·memequal<ABIInternal>(SB),NOSPLIT,$0-25
-	// AX = a    (want in SI)
-	// BX = b    (want in DI)
-	// CX = size (want in BX)
-	CMPQ	AX, BX
-	JNE	neq
-	MOVQ	$1, AX	// return 1
-	RET
-neq:
-	MOVQ	AX, SI
-	MOVQ	BX, DI
-	MOVQ	CX, BX
+TEXT runtime·memequal(SB),NOSPLIT,$0-25
+	MOVQ	a+0(FP), SI
+	MOVQ	b+8(FP), DI
+	CMPQ	SI, DI
+	JEQ	eq
+	MOVQ	size+16(FP), BX
+	LEAQ	ret+24(FP), AX
 	JMP	memeqbody<>(SB)
+eq:
+	MOVB	$1, ret+24(FP)
+	RET
 
 // memequal_varlen(a, b unsafe.Pointer) bool
-TEXT runtime·memequal_varlen<ABIInternal>(SB),NOSPLIT,$0-17
-	// AX = a       (want in SI)
-	// BX = b       (want in DI)
-	// 8(DX) = size (want in BX)
-	CMPQ	AX, BX
-	JNE	neq
-	MOVQ	$1, AX	// return 1
-	RET
-neq:
-	MOVQ	AX, SI
-	MOVQ	BX, DI
+TEXT runtime·memequal_varlen(SB),NOSPLIT,$0-17
+	MOVQ	a+0(FP), SI
+	MOVQ	b+8(FP), DI
+	CMPQ	SI, DI
+	JEQ	eq
 	MOVQ	8(DX), BX    // compiler stores size at offset 8 in the closure
+	LEAQ	ret+16(FP), AX
 	JMP	memeqbody<>(SB)
+eq:
+	MOVB	$1, ret+16(FP)
+	RET
 
-// Input:
-//   a in SI
-//   b in DI
-//   count in BX
-// Output:
-//   result in AX
+// a in SI
+// b in DI
+// count in BX
+// address of result byte in AX
 TEXT memeqbody<>(SB),NOSPLIT,$0-0
 	CMPQ	BX, $8
 	JB	small
@@ -74,7 +68,7 @@ hugeloop:
 	SUBQ	$64, BX
 	CMPL	DX, $0xffff
 	JEQ	hugeloop
-	XORQ	AX, AX	// return 0
+	MOVB	$0, (AX)
 	RET
 
 	// 64 bytes at a time using ymm registers
@@ -95,7 +89,7 @@ hugeloop_avx2:
 	CMPL	DX, $0xffffffff
 	JEQ	hugeloop_avx2
 	VZEROUPPER
-	XORQ	AX, AX	// return 0
+	MOVB	$0, (AX)
 	RET
 
 bigloop_avx2:
@@ -112,7 +106,7 @@ bigloop:
 	SUBQ	$8, BX
 	CMPQ	CX, DX
 	JEQ	bigloop
-	XORQ	AX, AX	// return 0
+	MOVB	$0, (AX)
 	RET
 
 	// remaining 0-8 bytes
@@ -120,7 +114,7 @@ leftover:
 	MOVQ	-8(SI)(BX*1), CX
 	MOVQ	-8(DI)(BX*1), DX
 	CMPQ	CX, DX
-	SETEQ	AX
+	SETEQ	(AX)
 	RET
 
 small:
@@ -155,5 +149,6 @@ di_finish:
 	SUBQ	SI, DI
 	SHLQ	CX, DI
 equal:
-	SETEQ	AX
+	SETEQ	(AX)
 	RET
+

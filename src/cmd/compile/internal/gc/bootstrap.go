@@ -2,16 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !go1.8
 // +build !go1.8
 
 package gc
 
-import (
-	"cmd/compile/internal/base"
-	"runtime"
-)
+import "runtime"
 
 func startMutexProfiling() {
-	base.Fatalf("mutex profiling unavailable in version %v", runtime.Version())
+	Fatalf("mutex profiling unavailable in version %v", runtime.Version())
 }

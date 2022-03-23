@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build ignore
+// +build ignore
 
 package main
 
@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"go/format"
+	"io/ioutil"
 	"log"
 	"os"
 )
@@ -35,7 +36,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := os.WriteFile("impl.go", out, 0660); err != nil {
+	if err := ioutil.WriteFile("impl.go", out, 0660); err != nil {
 		log.Fatal(err)
 	}
 }

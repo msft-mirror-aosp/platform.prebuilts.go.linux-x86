@@ -11,8 +11,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"io/ioutil"
 	"net"
-	"net/http/internal/testcert"
+	"net/http/internal"
 	"strings"
 	"testing"
 )
@@ -52,8 +53,8 @@ func TestTransportPersistConnReadLoopEOF(t *testing.T) {
 	conn.Close() // simulate the server hanging up on the client
 
 	_, err = pc.roundTrip(treq)
-	if !isNothingWrittenError(err) && !isTransportReadFromServerError(err) && err != errServerClosedIdle {
-		t.Errorf("roundTrip = %#v, %v; want errServerClosedIdle, transportReadFromServerError, or nothingWrittenError", err, err)
+	if !isTransportReadFromServerError(err) && err != errServerClosedIdle {
+		t.Errorf("roundTrip = %#v, %v; want errServerClosedIdle or transportReadFromServerError", err, err)
 	}
 
 	<-pc.closech
@@ -61,11 +62,6 @@ func TestTransportPersistConnReadLoopEOF(t *testing.T) {
 	if !isTransportReadFromServerError(err) && err != errServerClosedIdle {
 		t.Errorf("pc.closed = %#v, %v; want errServerClosedIdle or transportReadFromServerError", err, err)
 	}
-}
-
-func isNothingWrittenError(err error) bool {
-	_, ok := err.(nothingWrittenError)
-	return ok
 }
 
 func isTransportReadFromServerError(err error) bool {
@@ -196,7 +192,7 @@ func (f roundTripFunc) RoundTrip(r *Request) (*Response, error) {
 
 // Issue 25009
 func TestTransportBodyAltRewind(t *testing.T) {
-	cert, err := tls.X509KeyPair(testcert.LocalhostCert, testcert.LocalhostKey)
+	cert, err := tls.X509KeyPair(internal.LocalhostCert, internal.LocalhostKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +226,7 @@ func TestTransportBodyAltRewind(t *testing.T) {
 		TLSNextProto: map[string]func(string, *tls.Conn) RoundTripper{
 			"foo": func(authority string, c *tls.Conn) RoundTripper {
 				return roundTripFunc(func(r *Request) (*Response, error) {
-					n, _ := io.Copy(io.Discard, r.Body)
+					n, _ := io.Copy(ioutil.Discard, r.Body)
 					if n == 0 {
 						t.Error("body length is zero")
 					}

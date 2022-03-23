@@ -10,7 +10,6 @@ import (
 	. "html/template"
 	"strings"
 	"testing"
-	"text/template/parse"
 )
 
 func TestTemplateClone(t *testing.T) {
@@ -161,21 +160,6 @@ func TestStringsInScriptsWithJsonContentTypeAreCorrectlyEscaped(t *testing.T) {
 	}
 }
 
-func TestSkipEscapeComments(t *testing.T) {
-	c := newTestCase(t)
-	tr := parse.New("root")
-	tr.Mode = parse.ParseComments
-	newT, err := tr.Parse("{{/* A comment */}}{{ 1 }}{{/* Another comment */}}", "", "", make(map[string]*parse.Tree))
-	if err != nil {
-		t.Fatalf("Cannot parse template text: %v", err)
-	}
-	c.root, err = c.root.AddParseTree("root", newT)
-	if err != nil {
-		t.Fatalf("Cannot add parse tree to template: %v", err)
-	}
-	c.mustExecute(c.root, nil, "1")
-}
-
 type testCase struct {
 	t    *testing.T
 	root *Template
@@ -206,7 +190,7 @@ func (c *testCase) mustNotParse(t *Template, text string) {
 	}
 }
 
-func (c *testCase) mustExecute(t *Template, val any, want string) {
+func (c *testCase) mustExecute(t *Template, val interface{}, want string) {
 	var buf bytes.Buffer
 	err := t.Execute(&buf, val)
 	if err != nil {

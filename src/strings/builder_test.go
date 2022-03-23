@@ -8,7 +8,6 @@ import (
 	"bytes"
 	. "strings"
 	"testing"
-	"unicode/utf8"
 )
 
 func check(t *testing.T, b *Builder, want string) {
@@ -299,16 +298,6 @@ func TestBuilderCopyPanic(t *testing.T) {
 		if got := <-didPanic; got != tt.wantPanic {
 			t.Errorf("%s: panicked = %v; want %v", tt.name, got, tt.wantPanic)
 		}
-	}
-}
-
-func TestBuilderWriteInvalidRune(t *testing.T) {
-	// Invalid runes, including negative ones, should be written as
-	// utf8.RuneError.
-	for _, r := range []rune{-1, utf8.MaxRune + 1} {
-		var b Builder
-		b.WriteRune(r)
-		check(t, &b, "\uFFFD")
 	}
 }
 

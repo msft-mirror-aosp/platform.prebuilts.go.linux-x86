@@ -2,17 +2,16 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !js
+// +build !js
 
 package net
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"internal/poll"
 	"io"
-	"io/fs"
+	"io/ioutil"
 	"net/internal/socktest"
 	"os"
 	"runtime"
@@ -97,12 +96,12 @@ second:
 	case *os.SyscallError:
 		nestedErr = err.Err
 		goto third
-	case *fs.PathError: // for Plan 9
+	case *os.PathError: // for Plan 9
 		nestedErr = err.Err
 		goto third
 	}
 	switch nestedErr {
-	case errCanceled, ErrClosed, errMissingAddress, errNoSuitableAddress,
+	case errCanceled, poll.ErrNetClosing, errMissingAddress, errNoSuitableAddress,
 		context.DeadlineExceeded, context.Canceled:
 		return nil
 	}
@@ -437,7 +436,7 @@ second:
 		goto third
 	}
 	switch nestedErr {
-	case ErrClosed, errTimeout, poll.ErrNotPollable, os.ErrDeadlineExceeded:
+	case poll.ErrNetClosing, errTimeout, poll.ErrNotPollable, os.ErrDeadlineExceeded:
 		return nil
 	}
 	return fmt.Errorf("unexpected type on 2nd nested level: %T", nestedErr)
@@ -479,7 +478,7 @@ second:
 		goto third
 	}
 	switch nestedErr {
-	case errCanceled, ErrClosed, errMissingAddress, errTimeout, os.ErrDeadlineExceeded, ErrWriteToConnected, io.ErrUnexpectedEOF:
+	case errCanceled, poll.ErrNetClosing, errMissingAddress, errTimeout, os.ErrDeadlineExceeded, ErrWriteToConnected, io.ErrUnexpectedEOF:
 		return nil
 	}
 	return fmt.Errorf("unexpected type on 2nd nested level: %T", nestedErr)
@@ -509,10 +508,6 @@ func parseCloseError(nestedErr error, isShutdown bool) error {
 		return fmt.Errorf("error string %q does not contain expected string %q", nestedErr, want)
 	}
 
-	if !isShutdown && !errors.Is(nestedErr, ErrClosed) {
-		return fmt.Errorf("errors.Is(%v, errClosed) returns false, want true", nestedErr)
-	}
-
 	switch err := nestedErr.(type) {
 	case *OpError:
 		if err := err.isValid(); err != nil {
@@ -531,12 +526,12 @@ second:
 	case *os.SyscallError:
 		nestedErr = err.Err
 		goto third
-	case *fs.PathError: // for Plan 9
+	case *os.PathError: // for Plan 9
 		nestedErr = err.Err
 		goto third
 	}
 	switch nestedErr {
-	case ErrClosed:
+	case poll.ErrNetClosing:
 		return nil
 	}
 	return fmt.Errorf("unexpected type on 2nd nested level: %T", nestedErr)
@@ -546,14 +541,17 @@ third:
 		return nil
 	}
 	switch nestedErr {
-	case fs.ErrClosed: // for Plan 9
+	case os.ErrClosed: // for Plan 9
 		return nil
 	}
 	return fmt.Errorf("unexpected type on 3rd nested level: %T", nestedErr)
 }
 
 func TestCloseError(t *testing.T) {
-	ln := newLocalListener(t, "tcp")
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer ln.Close()
 	c, err := Dial(ln.Addr().Network(), ln.Addr().String())
 	if err != nil {
@@ -624,12 +622,12 @@ second:
 	case *os.SyscallError:
 		nestedErr = err.Err
 		goto third
-	case *fs.PathError: // for Plan 9
+	case *os.PathError: // for Plan 9
 		nestedErr = err.Err
 		goto third
 	}
 	switch nestedErr {
-	case ErrClosed, errTimeout, poll.ErrNotPollable, os.ErrDeadlineExceeded:
+	case poll.ErrNetClosing, errTimeout, poll.ErrNotPollable, os.ErrDeadlineExceeded:
 		return nil
 	}
 	return fmt.Errorf("unexpected type on 2nd nested level: %T", nestedErr)
@@ -661,7 +659,10 @@ func TestAcceptError(t *testing.T) {
 			c.Close()
 		}
 	}
-	ls := newLocalServer(t, "tcp")
+	ls, err := newLocalServer("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := ls.buildup(handler); err != nil {
 		ls.teardown()
 		t.Fatal(err)
@@ -700,12 +701,12 @@ second:
 	case *os.LinkError:
 		nestedErr = err.Err
 		goto third
-	case *fs.PathError:
+	case *os.PathError:
 		nestedErr = err.Err
 		goto third
 	}
 	switch nestedErr {
-	case ErrClosed:
+	case poll.ErrNetClosing:
 		return nil
 	}
 	return fmt.Errorf("unexpected type on 2nd nested level: %T", nestedErr)
@@ -723,7 +724,7 @@ func TestFileError(t *testing.T) {
 		t.Skipf("not supported on %s", runtime.GOOS)
 	}
 
-	f, err := os.CreateTemp("", "go-nettest")
+	f, err := ioutil.TempFile("", "go-nettest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -767,7 +768,10 @@ func TestFileError(t *testing.T) {
 		t.Error("should fail")
 	}
 
-	ln = newLocalListener(t, "tcp")
+	ln, err = newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for i := 0; i < 3; i++ {
 		f, err := ln.(*TCPListener).File()
@@ -790,7 +794,7 @@ func parseLookupPortError(nestedErr error) error {
 	switch nestedErr.(type) {
 	case *AddrError, *DNSError:
 		return nil
-	case *fs.PathError: // for Plan 9
+	case *os.PathError: // for Plan 9
 		return nil
 	}
 	return fmt.Errorf("unexpected type on 1st nested level: %T", nestedErr)

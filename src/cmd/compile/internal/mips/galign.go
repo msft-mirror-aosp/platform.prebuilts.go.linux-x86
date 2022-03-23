@@ -5,23 +5,24 @@
 package mips
 
 import (
+	"cmd/compile/internal/gc"
 	"cmd/compile/internal/ssa"
-	"cmd/compile/internal/ssagen"
 	"cmd/internal/obj/mips"
-	"internal/buildcfg"
+	"cmd/internal/objabi"
 )
 
-func Init(arch *ssagen.ArchInfo) {
+func Init(arch *gc.Arch) {
 	arch.LinkArch = &mips.Linkmips
-	if buildcfg.GOARCH == "mipsle" {
+	if objabi.GOARCH == "mipsle" {
 		arch.LinkArch = &mips.Linkmipsle
 	}
 	arch.REGSP = mips.REGSP
 	arch.MAXWIDTH = (1 << 31) - 1
-	arch.SoftFloat = (buildcfg.GOMIPS == "softfloat")
+	arch.SoftFloat = (objabi.GOMIPS == "softfloat")
 	arch.ZeroRange = zerorange
 	arch.Ginsnop = ginsnop
-	arch.SSAMarkMoves = func(s *ssagen.State, b *ssa.Block) {}
+	arch.Ginsnopdefer = ginsnop
+	arch.SSAMarkMoves = func(s *gc.SSAGenState, b *ssa.Block) {}
 	arch.SSAGenValue = ssaGenValue
 	arch.SSAGenBlock = ssaGenBlock
 }

@@ -5,7 +5,6 @@
 package types
 
 import (
-	"cmd/compile/internal/base"
 	"cmd/internal/obj"
 	"cmd/internal/src"
 	"unicode"
@@ -27,21 +26,20 @@ import (
 // NOTE: In practice, things can be messier than the description above
 // for various reasons (historical, convenience).
 type Sym struct {
-	Linkname string // link name
+	Importdef *Pkg   // where imported definition was found
+	Linkname  string // link name
 
 	Pkg  *Pkg
 	Name string // object name
 
-	// Def, Block, and Lastlineno are saved and restored by Pushdcl/Popdcl.
-
-	// The unique ONAME, OTYPE, OPACK, or OLITERAL node that this symbol is
-	// bound to within the current scope. (Most parts of the compiler should
-	// prefer passing the Node directly, rather than relying on this field.)
-	Def        Object
+	// saved and restored by dcopy
+	Def        *Node    // definition: ONAME OTYPE OPACK or OLITERAL
 	Block      int32    // blocknumber to catch redeclaration
 	Lastlineno src.XPos // last declaration for diagnostic
 
-	flags bitset8
+	flags   bitset8
+	Label   *Node // corresponding label (ephemeral)
+	Origpkg *Pkg  // original package for . import
 }
 
 const (
@@ -49,7 +47,7 @@ const (
 	symUniq
 	symSiggen // type symbol has been generated
 	symAsm    // on asmlist, for writing to -asmhdr
-	symFunc   // function symbol
+	symFunc   // function symbol; uses internal ABI
 )
 
 func (sym *Sym) OnExportList() bool { return sym.flags&symOnExportList != 0 }
@@ -68,30 +66,32 @@ func (sym *Sym) IsBlank() bool {
 	return sym != nil && sym.Name == "_"
 }
 
-// Deprecated: This method should not be used directly. Instead, use a
-// higher-level abstraction that directly returns the linker symbol
-// for a named object. For example, reflectdata.TypeLinksym(t) instead
-// of reflectdata.TypeSym(t).Linksym().
-func (sym *Sym) Linksym() *obj.LSym {
-	abi := obj.ABI0
-	if sym.Func() {
-		abi = obj.ABIInternal
-	}
-	return sym.LinksymABI(abi)
-}
-
-// Deprecated: This method should not be used directly. Instead, use a
-// higher-level abstraction that directly returns the linker symbol
-// for a named object. For example, (*ir.Name).LinksymABI(abi) instead
-// of (*ir.Name).Sym().LinksymABI(abi).
-func (sym *Sym) LinksymABI(abi obj.ABI) *obj.LSym {
-	if sym == nil {
-		base.Fatalf("nil symbol")
+func (sym *Sym) LinksymName() string {
+	if sym.IsBlank() {
+		return "_"
 	}
 	if sym.Linkname != "" {
-		return base.Linkname(sym.Linkname, abi)
+		return sym.Linkname
 	}
-	return base.PkgLinksym(sym.Pkg.Prefix, sym.Name, abi)
+	return sym.Pkg.Prefix + "." + sym.Name
+}
+
+func (sym *Sym) Linksym() *obj.LSym {
+	if sym == nil {
+		return nil
+	}
+	initPkg := func(r *obj.LSym) {
+		if sym.Linkname != "" {
+			r.Pkg = "_"
+		} else {
+			r.Pkg = sym.Pkg.Prefix
+		}
+	}
+	if sym.Func() {
+		// This is a function symbol. Mark it as "internal ABI".
+		return Ctxt.LookupABIInit(sym.LinksymName(), obj.ABIInternal, initPkg)
+	}
+	return Ctxt.LookupInit(sym.LinksymName(), initPkg)
 }
 
 // Less reports whether symbol a is ordered before symbol b.
@@ -107,14 +107,6 @@ func (sym *Sym) LinksymABI(abi obj.ABI) *obj.LSym {
 // For more background, see issue #24693.
 func (a *Sym) Less(b *Sym) bool {
 	if a == b {
-		return false
-	}
-
-	// Nil before non-nil.
-	if a == nil {
-		return true
-	}
-	if b == nil {
 		return false
 	}
 

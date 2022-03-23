@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build darwin || dragonfly || freebsd || netbsd || openbsd
 // +build darwin dragonfly freebsd netbsd openbsd
 
 package route
@@ -53,7 +52,7 @@ func ParseRIB(typ RIBType, b []byte) ([]Message, error) {
 		if w, ok := wireFormats[int(b[3])]; !ok {
 			nskips++
 		} else {
-			m, err := w.parse(typ, b[:l])
+			m, err := w.parse(typ, b)
 			if err != nil {
 				return nil, err
 			}

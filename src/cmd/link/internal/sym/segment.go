@@ -55,12 +55,7 @@ type Section struct {
 	Elfsect interface{} // an *ld.ElfShdr
 	Reloff  uint64
 	Rellen  uint64
-	// Relcount is the number of *host* relocations applied to this section
-	// (when external linking).
-	// Incremented atomically on multiple goroutines.
-	// Note: this may differ from number of Go relocations, as one Go relocation
-	// may turn into multiple host relocations.
-	Relcount uint32
-	Sym      LoaderSym // symbol for the section, if any
-	Index    uint16    // each section has a unique index, used internally
+	Sym     *Symbol   // symbol for the section, if any
+	Sym2    LoaderSym // symbol for the section, if any
+	Index   uint16    // each section has a unique index, used internally
 }

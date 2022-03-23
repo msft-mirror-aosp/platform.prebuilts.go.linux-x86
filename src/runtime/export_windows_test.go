@@ -8,8 +8,6 @@ package runtime
 
 import "unsafe"
 
-const MaxArgs = maxArgs
-
 var (
 	TestingWER              = &testingWER
 	OsYield                 = osyield

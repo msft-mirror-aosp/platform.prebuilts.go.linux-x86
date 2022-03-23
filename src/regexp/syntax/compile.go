@@ -57,9 +57,8 @@ func (l1 patchList) append(p *Prog, l2 patchList) patchList {
 
 // A frag represents a compiled program fragment.
 type frag struct {
-	i        uint32    // index of first instruction
-	out      patchList // where to record end instruction
-	nullable bool      // whether fragment can match empty string
+	i   uint32    // index of first instruction
+	out patchList // where to record end instruction
 }
 
 type compiler struct {
@@ -160,7 +159,7 @@ func (c *compiler) compile(re *Regexp) frag {
 
 func (c *compiler) inst(op InstOp) frag {
 	// TODO: impose length limit
-	f := frag{i: uint32(len(c.p.Inst)), nullable: true}
+	f := frag{i: uint32(len(c.p.Inst))}
 	c.p.Inst = append(c.p.Inst, Inst{Op: op})
 	return f
 }
@@ -195,7 +194,7 @@ func (c *compiler) cat(f1, f2 frag) frag {
 	// TODO: elide nop
 
 	f1.out.patch(c.p, f2.i)
-	return frag{f1.i, f2.out, f1.nullable && f2.nullable}
+	return frag{f1.i, f2.out}
 }
 
 func (c *compiler) alt(f1, f2 frag) frag {
@@ -212,7 +211,6 @@ func (c *compiler) alt(f1, f2 frag) frag {
 	i.Out = f1.i
 	i.Arg = f2.i
 	f.out = f1.out.append(c.p, f2.out)
-	f.nullable = f1.nullable || f2.nullable
 	return f
 }
 
@@ -230,12 +228,7 @@ func (c *compiler) quest(f1 frag, nongreedy bool) frag {
 	return f
 }
 
-// loop returns the fragment for the main loop of a plus or star.
-// For plus, it can be used after changing the entry to f1.i.
-// For star, it can be used directly when f1 can't match an empty string.
-// (When f1 can match an empty string, f1* must be implemented as (f1+)?
-// to get the priority match order correct.)
-func (c *compiler) loop(f1 frag, nongreedy bool) frag {
+func (c *compiler) star(f1 frag, nongreedy bool) frag {
 	f := c.inst(InstAlt)
 	i := &c.p.Inst[f.i]
 	if nongreedy {
@@ -249,17 +242,8 @@ func (c *compiler) loop(f1 frag, nongreedy bool) frag {
 	return f
 }
 
-func (c *compiler) star(f1 frag, nongreedy bool) frag {
-	if f1.nullable {
-		// Use (f1+)? to get priority match order correct.
-		// See golang.org/issue/46123.
-		return c.quest(c.plus(f1, nongreedy), nongreedy)
-	}
-	return c.loop(f1, nongreedy)
-}
-
 func (c *compiler) plus(f1 frag, nongreedy bool) frag {
-	return frag{f1.i, c.loop(f1, nongreedy).out, f1.nullable}
+	return frag{f1.i, c.star(f1, nongreedy).out}
 }
 
 func (c *compiler) empty(op EmptyOp) frag {
@@ -271,7 +255,6 @@ func (c *compiler) empty(op EmptyOp) frag {
 
 func (c *compiler) rune(r []rune, flags Flags) frag {
 	f := c.inst(InstRune)
-	f.nullable = false
 	i := &c.p.Inst[f.i]
 	i.Rune = r
 	flags &= FoldCase // only relevant flag is FoldCase
