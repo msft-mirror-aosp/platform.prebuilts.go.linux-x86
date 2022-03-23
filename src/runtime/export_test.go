@@ -7,8 +7,6 @@
 package runtime
 
 import (
-	"internal/goarch"
-	"internal/goos"
 	"runtime/internal/atomic"
 	"runtime/internal/sys"
 	"unsafe"
@@ -29,6 +27,8 @@ var Exitsyscall = exitsyscall
 var LockedOSThread = lockedOSThread
 var Xadduintptr = atomic.Xadduintptr
 
+var FuncPC = funcPC
+
 var Fastlog2 = fastlog2
 
 var Atoi = atoi
@@ -43,16 +43,10 @@ var PhysHugePageSize = physHugePageSize
 
 var NetpollGenericInit = netpollGenericInit
 
+var ParseRelease = parseRelease
+
 var Memmove = memmove
 var MemclrNoHeapPointers = memclrNoHeapPointers
-
-var LockPartialOrder = lockPartialOrder
-
-type LockRank lockRank
-
-func (l LockRank) String() string {
-	return lockRank(l).String()
-}
 
 const PreemptMSupported = preemptMSupported
 
@@ -75,7 +69,7 @@ func Netpoll(delta int64) {
 	})
 }
 
-func GCMask(x any) (ret []byte) {
+func GCMask(x interface{}) (ret []byte) {
 	systemstack(func() {
 		ret = getgcmask(x)
 	})
@@ -198,7 +192,7 @@ func MemclrBytes(b []byte) {
 	memclrNoHeapPointers(s.array, uintptr(s.len))
 }
 
-const HashLoad = hashLoad
+var HashLoad = &hashLoad
 
 // entry point for testing
 func GostringW(w []uint16) (s string) {
@@ -208,6 +202,8 @@ func GostringW(w []uint16) (s string) {
 	return
 }
 
+type Uintreg sys.Uintreg
+
 var Open = open
 var Close = closefd
 var Read = read
@@ -216,9 +212,11 @@ var Write = write
 func Envs() []string     { return envs }
 func SetEnvs(e []string) { envs = e }
 
+var BigEndian = sys.BigEndian
+
 // For benchmarking.
 
-func BenchSetType(n int, x any) {
+func BenchSetType(n int, x interface{}) {
 	e := *efaceOf(&x)
 	t := e._type
 	var size uintptr
@@ -245,7 +243,7 @@ func BenchSetType(n int, x any) {
 	})
 }
 
-const PtrSize = goarch.PtrSize
+const PtrSize = sys.PtrSize
 
 var ForceGCPeriod = &forcegcperiod
 
@@ -263,7 +261,7 @@ var ReadUnaligned64 = readUnaligned64
 func CountPagesInUse() (pagesInUse, counted uintptr) {
 	stopTheWorld("CountPagesInUse")
 
-	pagesInUse = uintptr(mheap_.pagesInUse.Load())
+	pagesInUse = uintptr(mheap_.pagesInUse)
 
 	for _, s := range mheap_.allspans {
 		if s.state.get() == mSpanInUse {
@@ -300,32 +298,6 @@ func (p *ProfBuf) Read(mode profBufReadMode) ([]uint64, []unsafe.Pointer, bool) 
 
 func (p *ProfBuf) Close() {
 	(*profBuf)(p).close()
-}
-
-func ReadMetricsSlow(memStats *MemStats, samplesp unsafe.Pointer, len, cap int) {
-	stopTheWorld("ReadMetricsSlow")
-
-	// Initialize the metrics beforehand because this could
-	// allocate and skew the stats.
-	semacquire(&metricsSema)
-	initMetrics()
-	semrelease(&metricsSema)
-
-	systemstack(func() {
-		// Read memstats first. It's going to flush
-		// the mcaches which readMetrics does not do, so
-		// going the other way around may result in
-		// inconsistent statistics.
-		readmemstats_m(memStats)
-	})
-
-	// Read metrics off the system stack.
-	//
-	// The only part of readMetrics that could allocate
-	// and skew the stats is initMetrics.
-	readMetrics(samplesp, len, cap)
-
-	startTheWorld()
 }
 
 // ReadMemStatsSlow returns both the runtime-computed MemStats and
@@ -367,22 +339,20 @@ func ReadMemStatsSlow() (base, slow MemStats) {
 			}
 		}
 
-		// Add in frees by just reading the stats for those directly.
-		var m heapStatsDelta
-		memstats.heapStats.unsafeRead(&m)
-
-		// Collect per-sizeclass free stats.
+		// Add in frees. readmemstats_m flushed the cached stats, so
+		// these are up-to-date.
 		var smallFree uint64
-		for i := 0; i < _NumSizeClasses; i++ {
-			slow.Frees += uint64(m.smallFreeCount[i])
-			bySize[i].Frees += uint64(m.smallFreeCount[i])
-			bySize[i].Mallocs += uint64(m.smallFreeCount[i])
-			smallFree += uint64(m.smallFreeCount[i]) * uint64(class_to_size[i])
+		slow.Frees = mheap_.nlargefree
+		for i := range mheap_.nsmallfree {
+			slow.Frees += mheap_.nsmallfree[i]
+			bySize[i].Frees = mheap_.nsmallfree[i]
+			bySize[i].Mallocs += mheap_.nsmallfree[i]
+			smallFree += mheap_.nsmallfree[i] * uint64(class_to_size[i])
 		}
-		slow.Frees += uint64(m.tinyAllocCount) + uint64(m.largeFreeCount)
+		slow.Frees += memstats.tinyallocs
 		slow.Mallocs += slow.Frees
 
-		slow.TotalAlloc = slow.Alloc + uint64(m.largeFree) + smallFree
+		slow.TotalAlloc = slow.Alloc + mheap_.largefree + smallFree
 
 		for i := range slow.BySize {
 			slow.BySize[i].Mallocs = bySize[i].Mallocs
@@ -401,6 +371,9 @@ func ReadMemStatsSlow() (base, slow MemStats) {
 			pg := sys.OnesCount64(p.pcache.scav)
 			slow.HeapReleased += uint64(pg) * pageSize
 		}
+
+		// Unused space in the current arena also counts as released space.
+		slow.HeapReleased += uint64(mheap_.curArena.end - mheap_.curArena.base)
 
 		getg().m.mallocing--
 	})
@@ -546,7 +519,7 @@ func MapTombstoneCheck(m map[int]int) {
 	// We should have a series of filled and emptyOne cells, followed by
 	// a series of emptyRest cells.
 	h := *(**hmap)(unsafe.Pointer(&m))
-	i := any(m)
+	i := interface{}(m)
 	t := *(**maptype)(unsafe.Pointer(&i))
 
 	for x := 0; x < 1<<h.B; x++ {
@@ -744,16 +717,7 @@ func (c *PageCache) Alloc(npages uintptr) (uintptr, uintptr) {
 	return (*pageCache)(c).alloc(npages)
 }
 func (c *PageCache) Flush(s *PageAlloc) {
-	cp := (*pageCache)(c)
-	sp := (*pageAlloc)(s)
-
-	systemstack(func() {
-		// None of the tests need any higher-level locking, so we just
-		// take the lock internally.
-		lock(sp.mheapLock)
-		cp.flush(sp)
-		unlock(sp.mheapLock)
-	})
+	(*pageCache)(c).flush((*pageAlloc)(s))
 }
 
 // Expose chunk index type.
@@ -764,56 +728,33 @@ type ChunkIdx chunkIdx
 type PageAlloc pageAlloc
 
 func (p *PageAlloc) Alloc(npages uintptr) (uintptr, uintptr) {
-	pp := (*pageAlloc)(p)
-
-	var addr, scav uintptr
-	systemstack(func() {
-		// None of the tests need any higher-level locking, so we just
-		// take the lock internally.
-		lock(pp.mheapLock)
-		addr, scav = pp.alloc(npages)
-		unlock(pp.mheapLock)
-	})
-	return addr, scav
+	return (*pageAlloc)(p).alloc(npages)
 }
 func (p *PageAlloc) AllocToCache() PageCache {
-	pp := (*pageAlloc)(p)
-
-	var c PageCache
-	systemstack(func() {
-		// None of the tests need any higher-level locking, so we just
-		// take the lock internally.
-		lock(pp.mheapLock)
-		c = PageCache(pp.allocToCache())
-		unlock(pp.mheapLock)
-	})
-	return c
+	return PageCache((*pageAlloc)(p).allocToCache())
 }
 func (p *PageAlloc) Free(base, npages uintptr) {
-	pp := (*pageAlloc)(p)
-
-	systemstack(func() {
-		// None of the tests need any higher-level locking, so we just
-		// take the lock internally.
-		lock(pp.mheapLock)
-		pp.free(base, npages, true)
-		unlock(pp.mheapLock)
-	})
+	(*pageAlloc)(p).free(base, npages)
 }
 func (p *PageAlloc) Bounds() (ChunkIdx, ChunkIdx) {
 	return ChunkIdx((*pageAlloc)(p).start), ChunkIdx((*pageAlloc)(p).end)
 }
-func (p *PageAlloc) Scavenge(nbytes uintptr) (r uintptr) {
+func (p *PageAlloc) Scavenge(nbytes uintptr, mayUnlock bool) (r uintptr) {
 	pp := (*pageAlloc)(p)
 	systemstack(func() {
-		r = pp.scavenge(nbytes)
+		lock(pp.mheapLock)
+		r = pp.scavenge(nbytes, mayUnlock)
+		unlock(pp.mheapLock)
 	})
 	return
 }
 func (p *PageAlloc) InUse() []AddrRange {
 	ranges := make([]AddrRange, 0, len(p.inUse.ranges))
 	for _, r := range p.inUse.ranges {
-		ranges = append(ranges, AddrRange{r})
+		ranges = append(ranges, AddrRange{
+			Base:  r.base.addr(),
+			Limit: r.limit.addr(),
+		})
 	}
 	return ranges
 }
@@ -824,111 +765,10 @@ func (p *PageAlloc) PallocData(i ChunkIdx) *PallocData {
 	return (*PallocData)((*pageAlloc)(p).tryChunkOf(ci))
 }
 
-// AddrRange is a wrapper around addrRange for testing.
+// AddrRange represents a range over addresses.
+// Specifically, it represents the range [Base, Limit).
 type AddrRange struct {
-	addrRange
-}
-
-// MakeAddrRange creates a new address range.
-func MakeAddrRange(base, limit uintptr) AddrRange {
-	return AddrRange{makeAddrRange(base, limit)}
-}
-
-// Base returns the virtual base address of the address range.
-func (a AddrRange) Base() uintptr {
-	return a.addrRange.base.addr()
-}
-
-// Base returns the virtual address of the limit of the address range.
-func (a AddrRange) Limit() uintptr {
-	return a.addrRange.limit.addr()
-}
-
-// Equals returns true if the two address ranges are exactly equal.
-func (a AddrRange) Equals(b AddrRange) bool {
-	return a == b
-}
-
-// Size returns the size in bytes of the address range.
-func (a AddrRange) Size() uintptr {
-	return a.addrRange.size()
-}
-
-// AddrRanges is a wrapper around addrRanges for testing.
-type AddrRanges struct {
-	addrRanges
-	mutable bool
-}
-
-// NewAddrRanges creates a new empty addrRanges.
-//
-// Note that this initializes addrRanges just like in the
-// runtime, so its memory is persistentalloc'd. Call this
-// function sparingly since the memory it allocates is
-// leaked.
-//
-// This AddrRanges is mutable, so we can test methods like
-// Add.
-func NewAddrRanges() AddrRanges {
-	r := addrRanges{}
-	r.init(new(sysMemStat))
-	return AddrRanges{r, true}
-}
-
-// MakeAddrRanges creates a new addrRanges populated with
-// the ranges in a.
-//
-// The returned AddrRanges is immutable, so methods like
-// Add will fail.
-func MakeAddrRanges(a ...AddrRange) AddrRanges {
-	// Methods that manipulate the backing store of addrRanges.ranges should
-	// not be used on the result from this function (e.g. add) since they may
-	// trigger reallocation. That would normally be fine, except the new
-	// backing store won't come from the heap, but from persistentalloc, so
-	// we'll leak some memory implicitly.
-	ranges := make([]addrRange, 0, len(a))
-	total := uintptr(0)
-	for _, r := range a {
-		ranges = append(ranges, r.addrRange)
-		total += r.Size()
-	}
-	return AddrRanges{addrRanges{
-		ranges:     ranges,
-		totalBytes: total,
-		sysStat:    new(sysMemStat),
-	}, false}
-}
-
-// Ranges returns a copy of the ranges described by the
-// addrRanges.
-func (a *AddrRanges) Ranges() []AddrRange {
-	result := make([]AddrRange, 0, len(a.addrRanges.ranges))
-	for _, r := range a.addrRanges.ranges {
-		result = append(result, AddrRange{r})
-	}
-	return result
-}
-
-// FindSucc returns the successor to base. See addrRanges.findSucc
-// for more details.
-func (a *AddrRanges) FindSucc(base uintptr) int {
-	return a.findSucc(base)
-}
-
-// Add adds a new AddrRange to the AddrRanges.
-//
-// The AddrRange must be mutable (i.e. created by NewAddrRanges),
-// otherwise this method will throw.
-func (a *AddrRanges) Add(r AddrRange) {
-	if !a.mutable {
-		throw("attempt to mutate immutable AddrRanges")
-	}
-	a.add(r.addrRange)
-}
-
-// TotalBytes returns the totalBytes field of the addrRanges.
-func (a *AddrRanges) TotalBytes() uintptr {
-	return a.addrRanges.totalBytes
+	Base, Limit uintptr
 }
 
 // BitRange represents a range over a bitmap.
@@ -962,11 +802,7 @@ func NewPageAlloc(chunks, scav map[ChunkIdx][]BitRange) *PageAlloc {
 		addr := chunkBase(chunkIdx(i))
 
 		// Mark the chunk's existence in the pageAlloc.
-		systemstack(func() {
-			lock(p.mheapLock)
-			p.grow(addr, pallocChunkBytes)
-			unlock(p.mheapLock)
-		})
+		p.grow(addr, pallocChunkBytes)
 
 		// Initialize the bitmap and update pageAlloc metadata.
 		chunk := p.chunkOf(chunkIndex(addr))
@@ -997,19 +833,13 @@ func NewPageAlloc(chunks, scav map[ChunkIdx][]BitRange) *PageAlloc {
 		}
 
 		// Update heap metadata for the allocRange calls above.
-		systemstack(func() {
-			lock(p.mheapLock)
-			p.update(addr, pallocChunkPages, false, false)
-			unlock(p.mheapLock)
-		})
+		p.update(addr, pallocChunkPages, false, false)
 	}
-
 	systemstack(func() {
 		lock(p.mheapLock)
 		p.scavengeStartGen()
 		unlock(p.mheapLock)
 	})
-
 	return (*PageAlloc)(p)
 }
 
@@ -1048,19 +878,7 @@ func FreePageAlloc(pp *PageAlloc) {
 //
 // This should not be higher than 0x100*pallocChunkBytes to support
 // mips and mipsle, which only have 31-bit address spaces.
-var BaseChunkIdx = func() ChunkIdx {
-	var prefix uintptr
-	if pageAlloc64Bit != 0 {
-		prefix = 0xc000
-	} else {
-		prefix = 0x100
-	}
-	baseAddr := prefix * pallocChunkBytes
-	if goos.IsAix != 0 {
-		baseAddr += arenaBaseOffset
-	}
-	return ChunkIdx(chunkIndex(baseAddr))
-}()
+var BaseChunkIdx = ChunkIdx(chunkIndex(((0xc000*pageAlloc64Bit + 0x100*pageAlloc32Bit) * pallocChunkBytes) + arenaBaseOffset*sys.GoosAix))
 
 // PageBase returns an address given a chunk index and a page index
 // relative to that chunk.
@@ -1142,211 +960,34 @@ func SemNwait(addr *uint32) uint32 {
 	return atomic.Load(&root.nwait)
 }
 
-// mspan wrapper for testing.
-//go:notinheap
-type MSpan mspan
+// MapHashCheck computes the hash of the key k for the map m, twice.
+// Method 1 uses the built-in hasher for the map.
+// Method 2 uses the typehash function (the one used by reflect).
+// Returns the two hash values, which should always be equal.
+func MapHashCheck(m interface{}, k interface{}) (uintptr, uintptr) {
+	// Unpack m.
+	mt := (*maptype)(unsafe.Pointer(efaceOf(&m)._type))
+	mh := (*hmap)(efaceOf(&m).data)
 
-// Allocate an mspan for testing.
-func AllocMSpan() *MSpan {
-	var s *mspan
-	systemstack(func() {
-		lock(&mheap_.lock)
-		s = (*mspan)(mheap_.spanalloc.alloc())
-		unlock(&mheap_.lock)
-	})
-	return (*MSpan)(s)
+	// Unpack k.
+	kt := efaceOf(&k)._type
+	var p unsafe.Pointer
+	if isDirectIface(kt) {
+		q := efaceOf(&k).data
+		p = unsafe.Pointer(&q)
+	} else {
+		p = efaceOf(&k).data
+	}
+
+	// Compute the hash functions.
+	x := mt.hasher(noescape(p), uintptr(mh.hash0))
+	y := typehash(kt, noescape(p), uintptr(mh.hash0))
+	return x, y
 }
 
-// Free an allocated mspan.
-func FreeMSpan(s *MSpan) {
-	systemstack(func() {
-		lock(&mheap_.lock)
-		mheap_.spanalloc.free(unsafe.Pointer(s))
-		unlock(&mheap_.lock)
-	})
-}
-
-func MSpanCountAlloc(ms *MSpan, bits []byte) int {
-	s := (*mspan)(ms)
+func MSpanCountAlloc(bits []byte) int {
+	s := (*mspan)(mheap_.spanalloc.alloc())
 	s.nelems = uintptr(len(bits) * 8)
 	s.gcmarkBits = (*gcBits)(unsafe.Pointer(&bits[0]))
-	result := s.countAlloc()
-	s.gcmarkBits = nil
-	return result
-}
-
-const (
-	TimeHistSubBucketBits   = timeHistSubBucketBits
-	TimeHistNumSubBuckets   = timeHistNumSubBuckets
-	TimeHistNumSuperBuckets = timeHistNumSuperBuckets
-)
-
-type TimeHistogram timeHistogram
-
-// Counts returns the counts for the given bucket, subBucket indices.
-// Returns true if the bucket was valid, otherwise returns the counts
-// for the underflow bucket and false.
-func (th *TimeHistogram) Count(bucket, subBucket uint) (uint64, bool) {
-	t := (*timeHistogram)(th)
-	i := bucket*TimeHistNumSubBuckets + subBucket
-	if i >= uint(len(t.counts)) {
-		return t.underflow, false
-	}
-	return t.counts[i], true
-}
-
-func (th *TimeHistogram) Record(duration int64) {
-	(*timeHistogram)(th).record(duration)
-}
-
-var TimeHistogramMetricsBuckets = timeHistogramMetricsBuckets
-
-func SetIntArgRegs(a int) int {
-	lock(&finlock)
-	old := intArgRegs
-	if a >= 0 {
-		intArgRegs = a
-	}
-	unlock(&finlock)
-	return old
-}
-
-func FinalizerGAsleep() bool {
-	lock(&finlock)
-	result := fingwait
-	unlock(&finlock)
-	return result
-}
-
-// For GCTestMoveStackOnNextCall, it's important not to introduce an
-// extra layer of call, since then there's a return before the "real"
-// next call.
-var GCTestMoveStackOnNextCall = gcTestMoveStackOnNextCall
-
-// For GCTestIsReachable, it's important that we do this as a call so
-// escape analysis can see through it.
-func GCTestIsReachable(ptrs ...unsafe.Pointer) (mask uint64) {
-	return gcTestIsReachable(ptrs...)
-}
-
-// For GCTestPointerClass, it's important that we do this as a call so
-// escape analysis can see through it.
-//
-// This is nosplit because gcTestPointerClass is.
-//
-//go:nosplit
-func GCTestPointerClass(p unsafe.Pointer) string {
-	return gcTestPointerClass(p)
-}
-
-const Raceenabled = raceenabled
-
-const (
-	GCBackgroundUtilization = gcBackgroundUtilization
-	GCGoalUtilization       = gcGoalUtilization
-)
-
-type GCController struct {
-	gcControllerState
-}
-
-func NewGCController(gcPercent int) *GCController {
-	// Force the controller to escape. We're going to
-	// do 64-bit atomics on it, and if it gets stack-allocated
-	// on a 32-bit architecture, it may get allocated unaligned
-	// space.
-	g := escape(new(GCController)).(*GCController)
-	g.gcControllerState.test = true // Mark it as a test copy.
-	g.init(int32(gcPercent))
-	return g
-}
-
-func (c *GCController) StartCycle(stackSize, globalsSize uint64, scannableFrac float64, gomaxprocs int) {
-	c.scannableStackSize = stackSize
-	c.globalsScan = globalsSize
-	c.heapLive = c.trigger
-	c.heapScan += uint64(float64(c.trigger-c.heapMarked) * scannableFrac)
-	c.startCycle(0, gomaxprocs)
-}
-
-func (c *GCController) AssistWorkPerByte() float64 {
-	return c.assistWorkPerByte.Load()
-}
-
-func (c *GCController) HeapGoal() uint64 {
-	return c.heapGoal
-}
-
-func (c *GCController) HeapLive() uint64 {
-	return c.heapLive
-}
-
-func (c *GCController) HeapMarked() uint64 {
-	return c.heapMarked
-}
-
-func (c *GCController) Trigger() uint64 {
-	return c.trigger
-}
-
-type GCControllerReviseDelta struct {
-	HeapLive        int64
-	HeapScan        int64
-	HeapScanWork    int64
-	StackScanWork   int64
-	GlobalsScanWork int64
-}
-
-func (c *GCController) Revise(d GCControllerReviseDelta) {
-	c.heapLive += uint64(d.HeapLive)
-	c.heapScan += uint64(d.HeapScan)
-	c.heapScanWork.Add(d.HeapScanWork)
-	c.stackScanWork.Add(d.StackScanWork)
-	c.globalsScanWork.Add(d.GlobalsScanWork)
-	c.revise()
-}
-
-func (c *GCController) EndCycle(bytesMarked uint64, assistTime, elapsed int64, gomaxprocs int) {
-	c.assistTime = assistTime
-	triggerRatio := c.endCycle(elapsed, gomaxprocs, false)
-	c.resetLive(bytesMarked)
-	c.commit(triggerRatio)
-}
-
-var escapeSink any
-
-//go:noinline
-func escape(x any) any {
-	escapeSink = x
-	escapeSink = nil
-	return x
-}
-
-// Acquirem blocks preemption.
-func Acquirem() {
-	acquirem()
-}
-
-func Releasem() {
-	releasem(getg().m)
-}
-
-var Timediv = timediv
-
-type PIController struct {
-	piController
-}
-
-func NewPIController(kp, ti, tt, min, max float64) *PIController {
-	return &PIController{piController{
-		kp:  kp,
-		ti:  ti,
-		tt:  tt,
-		min: min,
-		max: max,
-	}}
-}
-
-func (c *PIController) Next(input, setpoint, period float64) (float64, bool) {
-	return c.piController.next(input, setpoint, period)
+	return s.countAlloc()
 }

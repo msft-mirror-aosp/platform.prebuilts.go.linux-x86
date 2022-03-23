@@ -67,7 +67,7 @@ package math
 //
 //      One may easily use induction to prove (4) and (5).
 //      Note. Since the left hand side of (3) contain only i+2 bits,
-//            it is not necessary to do a full (53-bit) comparison
+//            it does not necessary to do a full (53-bit) comparison
 //            in (3).
 //   3. Final rounding
 //      After generating the 53 bits result, we compute one more bit.
@@ -89,12 +89,7 @@ package math
 //	Sqrt(±0) = ±0
 //	Sqrt(x < 0) = NaN
 //	Sqrt(NaN) = NaN
-func Sqrt(x float64) float64 {
-	if haveArchSqrt {
-		return archSqrt(x)
-	}
-	return sqrt(x)
-}
+func Sqrt(x float64) float64
 
 // Note: Sqrt is implemented in assembly on some systems.
 // Others have assembly stubs that jump to func sqrt below.

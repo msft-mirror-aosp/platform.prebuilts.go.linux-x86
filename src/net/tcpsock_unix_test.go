@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !js && !plan9 && !windows
+// +build !js,!plan9,!windows
 
 package net
 
@@ -22,7 +22,10 @@ func TestTCPSpuriousConnSetupCompletion(t *testing.T) {
 		t.Skip("skipping in short mode")
 	}
 
-	ln := newLocalListener(t, "tcp")
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func(ln Listener) {

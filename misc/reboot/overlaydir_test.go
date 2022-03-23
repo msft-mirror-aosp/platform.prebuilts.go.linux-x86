@@ -6,7 +6,6 @@ package reboot_test
 
 import (
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,13 +26,9 @@ func overlayDir(dstRoot, srcRoot string) error {
 		return err
 	}
 
-	return filepath.WalkDir(srcRoot, func(srcPath string, entry fs.DirEntry, err error) error {
+	return filepath.Walk(srcRoot, func(srcPath string, info os.FileInfo, err error) error {
 		if err != nil || srcPath == srcRoot {
 			return err
-		}
-		if filepath.Base(srcPath) == "testdata" {
-			// We're just building, so no need to copy those.
-			return fs.SkipDir
 		}
 
 		suffix := strings.TrimPrefix(srcPath, srcRoot)
@@ -42,7 +37,6 @@ func overlayDir(dstRoot, srcRoot string) error {
 		}
 		dstPath := filepath.Join(dstRoot, suffix)
 
-		info, err := entry.Info()
 		perm := info.Mode() & os.ModePerm
 		if info.Mode()&os.ModeSymlink != 0 {
 			info, err = os.Stat(srcPath)
@@ -52,15 +46,14 @@ func overlayDir(dstRoot, srcRoot string) error {
 			perm = info.Mode() & os.ModePerm
 		}
 
-		// Always make copies of directories.
+		// Always copy directories (don't symlink them).
 		// If we add a file in the overlay, we don't want to add it in the original.
 		if info.IsDir() {
 			return os.MkdirAll(dstPath, perm|0200)
 		}
 
-		// If we can use a hard link, do that instead of copying bytes.
-		// Go builds don't like symlinks in some cases, such as go:embed.
-		if err := os.Link(srcPath, dstPath); err == nil {
+		// If the OS supports symlinks, use them instead of copying bytes.
+		if err := os.Symlink(srcPath, dstPath); err == nil {
 			return nil
 		}
 

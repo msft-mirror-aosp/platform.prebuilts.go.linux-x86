@@ -94,8 +94,6 @@ const (
 
 	_PTHREAD_CREATE_DETACHED = 0x2
 
-	_PTHREAD_KEYS_MAX = 512
-
 	_F_SETFD    = 0x2
 	_F_GETFL    = 0x3
 	_F_SETFL    = 0x4
@@ -235,5 +233,3 @@ type machTimebaseInfo struct {
 	numer uint32
 	denom uint32
 }
-
-type pthreadkey uint64

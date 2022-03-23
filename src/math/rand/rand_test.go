@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package rand_test
+package rand
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 	"internal/testenv"
 	"io"
 	"math"
-	. "math/rand"
 	"os"
 	"runtime"
 	"testing"
@@ -21,9 +20,6 @@ import (
 const (
 	numTestSamples = 10000
 )
-
-var rn, kn, wn, fn = GetNormalDistributionParameters()
-var re, ke, we, fe = GetExponentialDistributionParameters()
 
 type statsResults struct {
 	mean        float64
@@ -507,7 +503,7 @@ func TestUniformFactorial(t *testing.T) {
 				fn   func() int
 			}{
 				{name: "Int31n", fn: func() int { return int(r.Int31n(int32(nfact))) }},
-				{name: "int31n", fn: func() int { return int(Int31nForTest(r, int32(nfact))) }},
+				{name: "int31n", fn: func() int { return int(r.int31n(int32(nfact))) }},
 				{name: "Perm", fn: func() int { return encodePerm(r.Perm(n)) }},
 				{name: "Shuffle", fn: func() int {
 					// Generate permutation using Shuffle.

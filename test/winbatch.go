@@ -27,11 +27,11 @@ func main() {
 	// Walk the entire Go repository source tree (without GOROOT/pkg),
 	// skipping directories that start with "." and named "testdata",
 	// and ensure all .bat files found have exact CRLF line endings.
-	err := filepath.WalkDir(runtime.GOROOT(), func(path string, d os.DirEntry, err error) error {
+	err := filepath.Walk(runtime.GOROOT(), func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && (strings.HasPrefix(d.Name(), ".") || d.Name() == "testdata") {
+		if fi.IsDir() && (strings.HasPrefix(fi.Name(), ".") || fi.Name() == "testdata") {
 			return filepath.SkipDir
 		}
 		if path == filepath.Join(runtime.GOROOT(), "pkg") {
@@ -39,7 +39,7 @@ func main() {
 			// Skip it to avoid false positives. (Also see golang.org/issue/37929.)
 			return filepath.SkipDir
 		}
-		if filepath.Ext(d.Name()) == ".bat" {
+		if filepath.Ext(fi.Name()) == ".bat" {
 			enforceBatchStrictCRLF(path)
 		}
 		return nil

@@ -140,19 +140,19 @@ func sbrk(n uintptr) unsafe.Pointer {
 	return unsafe.Pointer(bl)
 }
 
-func sysAlloc(n uintptr, sysStat *sysMemStat) unsafe.Pointer {
+func sysAlloc(n uintptr, sysStat *uint64) unsafe.Pointer {
 	lock(&memlock)
 	p := memAlloc(n)
 	memCheck()
 	unlock(&memlock)
 	if p != nil {
-		sysStat.add(int64(n))
+		mSysStatInc(sysStat, n)
 	}
 	return p
 }
 
-func sysFree(v unsafe.Pointer, n uintptr, sysStat *sysMemStat) {
-	sysStat.add(-int64(n))
+func sysFree(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+	mSysStatDec(sysStat, n)
 	lock(&memlock)
 	if uintptr(v)+n == bloc {
 		// Address range being freed is at the end of memory,
@@ -176,10 +176,10 @@ func sysUsed(v unsafe.Pointer, n uintptr) {
 func sysHugePage(v unsafe.Pointer, n uintptr) {
 }
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *sysMemStat) {
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
 	// sysReserve has already allocated all heap memory,
 	// but has not adjusted stats.
-	sysStat.add(int64(n))
+	mSysStatInc(sysStat, n)
 }
 
 func sysFault(v unsafe.Pointer, n uintptr) {

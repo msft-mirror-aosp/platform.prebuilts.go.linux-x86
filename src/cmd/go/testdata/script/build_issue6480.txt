@@ -8,7 +8,7 @@
 
 # Install some commands to compare mtimes
 env GOBIN=$WORK/tmp/bin
-go install m/now m/mtime m/before
+go install now mtime before
 
 # Initial builds
 go test -c -test.bench=XXX errors
@@ -34,10 +34,6 @@ exec $GOBIN/mtime errors2.test
 cp stdout errors2_mod_time.txt
 exec $GOBIN/before start_time.txt errors2_mod_time.txt
 
--- go.mod --
-module m
-
-go 1.16
 -- now/now.go --
 // Writes time.Now() to a file
 package main
@@ -81,6 +77,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"time"
 )
@@ -99,7 +96,7 @@ func truncateLike(t, p time.Time) time.Time {
 
 func main() {
 	var t1 time.Time
-	b1, err := os.ReadFile(os.Args[1])
+	b1, err := ioutil.ReadFile(os.Args[1])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -110,7 +107,7 @@ func main() {
 	}
 
 	var t2 time.Time
-	b2, err := os.ReadFile(os.Args[2])
+	b2, err := ioutil.ReadFile(os.Args[2])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -1,4 +1,3 @@
-// +build !js,gc
 // run
 
 // Copyright 2018 The Go Authors. All rights reserved.
@@ -14,6 +13,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -36,6 +36,10 @@ var tests = []struct {
 }
 
 func main() {
+	if runtime.GOOS == "nacl" || runtime.GOOS == "js" {
+		return // can not exec go tool
+	}
+
 	f, err := ioutil.TempFile("", "issue22662b.go")
 	if err != nil {
 		log.Fatal(err)
