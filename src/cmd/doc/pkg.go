@@ -16,8 +16,8 @@ import (
 	"go/printer"
 	"go/token"
 	"io"
-	"io/fs"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -122,17 +122,18 @@ func trim(path, prefix string) (string, bool) {
 // main do function, so it doesn't cause an exit. Allows testing to work
 // without running a subprocess. The log prefix will be added when
 // logged in main; it is not added here.
-func (pkg *Package) Fatalf(format string, args ...any) {
+func (pkg *Package) Fatalf(format string, args ...interface{}) {
 	panic(PackageError(fmt.Sprintf(format, args...)))
 }
 
 // parsePackage turns the build package we found into a parsed package
 // we can then use to generate documentation.
 func parsePackage(writer io.Writer, pkg *build.Package, userPath string) *Package {
+	fs := token.NewFileSet()
 	// include tells parser.ParseDir which files to include.
 	// That means the file must be in the build package's GoFiles or CgoFiles
 	// list only (no tag-ignored files, tests, swig or other non-Go files).
-	include := func(info fs.FileInfo) bool {
+	include := func(info os.FileInfo) bool {
 		for _, name := range pkg.GoFiles {
 			if name == info.Name() {
 				return true
@@ -145,8 +146,7 @@ func parsePackage(writer io.Writer, pkg *build.Package, userPath string) *Packag
 		}
 		return false
 	}
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, pkg.Dir, include, parser.ParseComments)
+	pkgs, err := parser.ParseDir(fs, pkg.Dir, include, parser.ParseComments)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -203,13 +203,13 @@ func parsePackage(writer io.Writer, pkg *build.Package, userPath string) *Packag
 		typedValue:  typedValue,
 		constructor: constructor,
 		build:       pkg,
-		fs:          fset,
+		fs:          fs,
 	}
 	p.buf.pkg = p
 	return p
 }
 
-func (pkg *Package) Printf(format string, args ...any) {
+func (pkg *Package) Printf(format string, args ...interface{}) {
 	fmt.Fprintf(&pkg.buf, format, args...)
 }
 
@@ -235,7 +235,7 @@ func (pkg *Package) newlines(n int) {
 // clears the stuff we don't want to print anyway. It's a bit of a magic trick.
 func (pkg *Package) emit(comment string, node ast.Node) {
 	if node != nil {
-		var arg any = node
+		var arg interface{} = node
 		if showSrc {
 			// Need an extra little dance to get internal comments to appear.
 			arg = &printer.CommentedNode{
@@ -315,7 +315,9 @@ func (pkg *Package) oneLineNodeDepth(node ast.Node, depth int) string {
 			recv = "(" + recv + ") "
 		}
 		fnc := pkg.oneLineNodeDepth(n.Type, depth)
-		fnc = strings.TrimPrefix(fnc, "func")
+		if strings.Index(fnc, "func") == 0 {
+			fnc = fnc[4:]
+		}
 		return fmt.Sprintf("func %s%s%s", recv, name, fnc)
 
 	case *ast.TypeSpec:
@@ -323,8 +325,7 @@ func (pkg *Package) oneLineNodeDepth(node ast.Node, depth int) string {
 		if n.Assign.IsValid() {
 			sep = " = "
 		}
-		tparams := pkg.formatTypeParams(n.TypeParams, depth)
-		return fmt.Sprintf("type %s%s%s%s", n.Name.Name, tparams, sep, pkg.oneLineNodeDepth(n.Type, depth))
+		return fmt.Sprintf("type %s%s%s", n.Name.Name, sep, pkg.oneLineNodeDepth(n.Type, depth))
 
 	case *ast.FuncType:
 		var params []string
@@ -343,16 +344,15 @@ func (pkg *Package) oneLineNodeDepth(node ast.Node, depth int) string {
 			}
 		}
 
-		tparam := pkg.formatTypeParams(n.TypeParams, depth)
 		param := joinStrings(params)
 		if len(results) == 0 {
-			return fmt.Sprintf("func%s(%s)", tparam, param)
+			return fmt.Sprintf("func(%s)", param)
 		}
 		result := joinStrings(results)
 		if !needParens {
-			return fmt.Sprintf("func%s(%s) %s", tparam, param, result)
+			return fmt.Sprintf("func(%s) %s", param, result)
 		}
-		return fmt.Sprintf("func%s(%s) (%s)", tparam, param, result)
+		return fmt.Sprintf("func(%s) (%s)", param, result)
 
 	case *ast.StructType:
 		if n.Fields == nil || len(n.Fields.List) == 0 {
@@ -419,17 +419,6 @@ func (pkg *Package) oneLineNodeDepth(node ast.Node, depth int) string {
 		}
 		return s
 	}
-}
-
-func (pkg *Package) formatTypeParams(list *ast.FieldList, depth int) string {
-	if list.NumFields() == 0 {
-		return ""
-	}
-	var tparams []string
-	for _, field := range list.List {
-		tparams = append(tparams, pkg.oneLineField(field, depth))
-	}
-	return "[" + joinStrings(tparams) + "]"
 }
 
 // oneLineField returns a one-line summary of the field.
@@ -865,7 +854,6 @@ func trimUnexportedFields(fields *ast.FieldList, isInterface bool) *ast.FieldLis
 		if len(names) == 0 {
 			// Embedded type. Use the name of the type. It must be of the form ident or
 			// pkg.ident (for structs and interfaces), or *ident or *pkg.ident (structs only).
-			// Or a type embedded in a constraint.
 			// Nothing else is allowed.
 			ty := field.Type
 			if se, ok := field.Type.(*ast.StarExpr); !isInterface && ok {
@@ -873,7 +861,6 @@ func trimUnexportedFields(fields *ast.FieldList, isInterface bool) *ast.FieldLis
 				// embedded types in structs.
 				ty = se.X
 			}
-			constraint := false
 			switch ident := ty.(type) {
 			case *ast.Ident:
 				if isInterface && ident.Name == "error" && ident.Obj == nil {
@@ -887,12 +874,8 @@ func trimUnexportedFields(fields *ast.FieldList, isInterface bool) *ast.FieldLis
 			case *ast.SelectorExpr:
 				// An embedded type may refer to a type in another package.
 				names = []*ast.Ident{ident.Sel}
-			default:
-				// An approximation or union or type
-				// literal in an interface.
-				constraint = true
 			}
-			if names == nil && !constraint {
+			if names == nil {
 				// Can only happen if AST is incorrect. Safe to continue with a nil list.
 				log.Print("invalid program: unexpected type for embedded field")
 			}
@@ -967,9 +950,6 @@ func (pkg *Package) printMethodDoc(symbol, method string) bool {
 			// Not an interface type.
 			continue
 		}
-
-		// Collect and print only the methods that match.
-		var methods []*ast.Field
 		for _, iMethod := range inter.Methods.List {
 			// This is an interface, so there can be only one name.
 			// TODO: Anonymous methods (embedding)
@@ -978,20 +958,21 @@ func (pkg *Package) printMethodDoc(symbol, method string) bool {
 			}
 			name := iMethod.Names[0].Name
 			if match(method, name) {
-				methods = append(methods, iMethod)
+				if iMethod.Doc != nil {
+					for _, comment := range iMethod.Doc.List {
+						doc.ToText(&pkg.buf, comment.Text, "", indent, indentedWidth)
+					}
+				}
+				s := pkg.oneLineNode(iMethod.Type)
+				// Hack: s starts "func" but there is no name present.
+				// We could instead build a FuncDecl but it's not worthwhile.
+				lineComment := ""
+				if iMethod.Comment != nil {
+					lineComment = fmt.Sprintf("  %s", iMethod.Comment.List[0].Text)
+				}
+				pkg.Printf("func %s%s%s\n", name, s[4:], lineComment)
 				found = true
 			}
-		}
-		if found {
-			pkg.Printf("type %s ", spec.Name)
-			inter.Methods.List, methods = methods, inter.Methods.List
-			err := format.Node(&pkg.buf, pkg.fs, inter)
-			if err != nil {
-				log.Fatal(err)
-			}
-			pkg.newlines(1)
-			// Restore the original methods.
-			inter.Methods.List = methods
 		}
 	}
 	return found

@@ -35,12 +35,7 @@ func isOddInt(x float64) bool {
 //	Pow(+Inf, y) = +0 for y < 0
 //	Pow(-Inf, y) = Pow(-0, -y)
 //	Pow(x, y) = NaN for finite x < 0 and finite non-integer y
-func Pow(x, y float64) float64 {
-	if haveArchPow {
-		return archPow(x, y)
-	}
-	return pow(x, y)
-}
+func Pow(x, y float64) float64
 
 func pow(x, y float64) float64 {
 	switch {

@@ -7,14 +7,11 @@ package http
 import (
 	"io"
 	"net/http/httptrace"
-	"net/http/internal/ascii"
 	"net/textproto"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/net/http/httpguts"
 )
 
 // A Header represents the key-value pairs in an HTTP header.
@@ -157,7 +154,7 @@ func (s *headerSorter) Swap(i, j int)      { s.kvs[i], s.kvs[j] = s.kvs[j], s.kv
 func (s *headerSorter) Less(i, j int) bool { return s.kvs[i].key < s.kvs[j].key }
 
 var headerSorterPool = sync.Pool{
-	New: func() any { return new(headerSorter) },
+	New: func() interface{} { return new(headerSorter) },
 }
 
 // sortedKeyValues returns h's keys sorted in the returned kvs
@@ -194,13 +191,6 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 	kvs, sorter := h.sortedKeyValues(exclude)
 	var formattedVals []string
 	for _, kv := range kvs {
-		if !httpguts.ValidHeaderFieldName(kv.key) {
-			// This could be an error. In the common case of
-			// writing response headers, however, we have no good
-			// way to provide the error back to the server
-			// handler, so just drop invalid headers instead.
-			continue
-		}
 		for _, v := range kv.values {
 			v = headerNewlineToSpace.Replace(v)
 			v = textproto.TrimString(v)
@@ -261,7 +251,7 @@ func hasToken(v, token string) bool {
 		if endPos := sp + len(token); endPos != len(v) && !isTokenBoundary(v[endPos]) {
 			continue
 		}
-		if ascii.EqualFold(v[sp:sp+len(token)], token) {
+		if strings.EqualFold(v[sp:sp+len(token)], token) {
 			return true
 		}
 	}

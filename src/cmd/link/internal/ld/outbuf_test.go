@@ -5,6 +5,8 @@
 package ld
 
 import (
+	"io/ioutil"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -15,9 +17,13 @@ func TestMMap(t *testing.T) {
 	switch runtime.GOOS {
 	default:
 		t.Skip("unsupported OS")
-	case "aix", "darwin", "ios", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "windows":
+	case "darwin", "dragonfly", "freebsd", "linux", "openbsd", "windows":
 	}
-	dir := t.TempDir()
+	dir, err := ioutil.TempDir("", "TestMMap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
 	filename := filepath.Join(dir, "foo.out")
 	ob := NewOutBuf(nil)
 	if err := ob.Open(filename); err != nil {

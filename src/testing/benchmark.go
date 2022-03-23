@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"internal/race"
-	"internal/sysinfo"
 	"io"
 	"math"
 	"os"
@@ -32,36 +31,35 @@ var (
 	matchBenchmarks *string
 	benchmarkMemory *bool
 
-	benchTime = durationOrCountFlag{d: 1 * time.Second} // changed during test of testing package
+	benchTime = benchTimeFlag{d: 1 * time.Second} // changed during test of testing package
 )
 
-type durationOrCountFlag struct {
-	d         time.Duration
-	n         int
-	allowZero bool
+type benchTimeFlag struct {
+	d time.Duration
+	n int
 }
 
-func (f *durationOrCountFlag) String() string {
+func (f *benchTimeFlag) String() string {
 	if f.n > 0 {
 		return fmt.Sprintf("%dx", f.n)
 	}
-	return f.d.String()
+	return time.Duration(f.d).String()
 }
 
-func (f *durationOrCountFlag) Set(s string) error {
+func (f *benchTimeFlag) Set(s string) error {
 	if strings.HasSuffix(s, "x") {
 		n, err := strconv.ParseInt(s[:len(s)-1], 10, 0)
-		if err != nil || n < 0 || (!f.allowZero && n == 0) {
+		if err != nil || n <= 0 {
 			return fmt.Errorf("invalid count")
 		}
-		*f = durationOrCountFlag{n: int(n)}
+		*f = benchTimeFlag{n: int(n)}
 		return nil
 	}
 	d, err := time.ParseDuration(s)
-	if err != nil || d < 0 || (!f.allowZero && d == 0) {
+	if err != nil || d <= 0 {
 		return fmt.Errorf("invalid duration")
 	}
-	*f = durationOrCountFlag{d: d}
+	*f = benchTimeFlag{d: d}
 	return nil
 }
 
@@ -99,7 +97,7 @@ type B struct {
 	previousN        int           // number of iterations in the previous run
 	previousDuration time.Duration // total duration of the previous run
 	benchFunc        func(b *B)
-	benchTime        durationOrCountFlag
+	benchTime        benchTimeFlag
 	bytes            int64
 	missingBytes     bool // one of the subbenchmarks does not have bytes set.
 	timerOn          bool
@@ -239,15 +237,12 @@ func (b *B) run1() bool {
 	}
 	// Only print the output if we know we are not going to proceed.
 	// Otherwise it is printed in processBench.
-	b.mu.RLock()
-	finished := b.finished
-	b.mu.RUnlock()
-	if atomic.LoadInt32(&b.hasSub) != 0 || finished {
+	if atomic.LoadInt32(&b.hasSub) != 0 || b.finished {
 		tag := "BENCH"
 		if b.skipped {
 			tag = "SKIP"
 		}
-		if b.chatty != nil && (len(b.output) > 0 || finished) {
+		if b.chatty != nil && (len(b.output) > 0 || b.finished) {
 			b.trimOutput()
 			fmt.Fprintf(b.w, "--- %s: %s\n%s", tag, b.name, b.output)
 		}
@@ -266,9 +261,6 @@ func (b *B) run() {
 		fmt.Fprintf(b.w, "goarch: %s\n", runtime.GOARCH)
 		if b.importPath != "" {
 			fmt.Fprintf(b.w, "pkg: %s\n", b.importPath)
-		}
-		if cpu := sysinfo.CPU.Name(); cpu != "" {
-			fmt.Fprintf(b.w, "cpu: %s\n", cpu)
 		}
 	})
 	if b.context != nil {
@@ -299,12 +291,7 @@ func (b *B) launch() {
 
 	// Run the benchmark for at least the specified amount of time.
 	if b.benchTime.n > 0 {
-		// We already ran a single iteration in run1.
-		// If -benchtime=1x was requested, use that result.
-		// See https://golang.org/issue/32051.
-		if b.benchTime.n > 1 {
-			b.runN(b.benchTime.n)
-		}
+		b.runN(b.benchTime.n)
 	} else {
 		d := b.benchTime.d
 		for n := int64(1); !b.failed && b.duration < d && n < 1e9; {
@@ -460,27 +447,23 @@ func (r BenchmarkResult) String() string {
 
 func prettyPrint(w io.Writer, x float64, unit string) {
 	// Print all numbers with 10 places before the decimal point
-	// and small numbers with four sig figs. Field widths are
-	// chosen to fit the whole part in 10 places while aligning
-	// the decimal point of all fractional formats.
+	// and small numbers with three sig figs.
 	var format string
 	switch y := math.Abs(x); {
-	case y == 0 || y >= 999.95:
+	case y == 0 || y >= 99.95:
 		format = "%10.0f %s"
-	case y >= 99.995:
+	case y >= 9.995:
 		format = "%12.1f %s"
-	case y >= 9.9995:
+	case y >= 0.9995:
 		format = "%13.2f %s"
-	case y >= 0.99995:
+	case y >= 0.09995:
 		format = "%14.3f %s"
-	case y >= 0.099995:
+	case y >= 0.009995:
 		format = "%15.4f %s"
-	case y >= 0.0099995:
+	case y >= 0.0009995:
 		format = "%16.5f %s"
-	case y >= 0.00099995:
-		format = "%17.6f %s"
 	default:
-		format = "%18.7f %s"
+		format = "%17.6f %s"
 	}
 	fmt.Fprintf(w, format, x, unit)
 }
@@ -664,9 +647,6 @@ func (b *B) Run(name string, f func(b *B)) bool {
 			fmt.Printf("goarch: %s\n", runtime.GOARCH)
 			if b.importPath != "" {
 				fmt.Printf("pkg: %s\n", b.importPath)
-			}
-			if cpu := sysinfo.CPU.Name(); cpu != "" {
-				fmt.Printf("cpu: %s\n", cpu)
 			}
 		})
 

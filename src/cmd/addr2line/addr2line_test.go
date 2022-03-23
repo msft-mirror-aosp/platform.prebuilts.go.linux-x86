@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,8 +98,8 @@ func testAddr2Line(t *testing.T, exepath, addr string) {
 	if !os.SameFile(fi1, fi2) {
 		t.Fatalf("addr2line_test.go and %s are not same file", srcPath)
 	}
-	if srcLineNo != "106" {
-		t.Fatalf("line number = %v; want 106", srcLineNo)
+	if srcLineNo != "107" {
+		t.Fatalf("line number = %v; want 107", srcLineNo)
 	}
 }
 
@@ -106,7 +107,7 @@ func testAddr2Line(t *testing.T, exepath, addr string) {
 func TestAddr2Line(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
 
-	tmpDir, err := os.MkdirTemp("", "TestAddr2Line")
+	tmpDir, err := ioutil.TempDir("", "TestAddr2Line")
 	if err != nil {
 		t.Fatal("TempDir failed: ", err)
 	}

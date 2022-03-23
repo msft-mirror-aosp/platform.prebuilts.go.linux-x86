@@ -143,12 +143,12 @@ func attrType(name string) contentType {
 		// widely applied.
 		// Treat data-action as URL below.
 		name = name[5:]
-	} else if prefix, short, ok := strings.Cut(name, ":"); ok {
-		if prefix == "xmlns" {
+	} else if colon := strings.IndexRune(name, ':'); colon != -1 {
+		if name[:colon] == "xmlns" {
 			return contentTypeURL
 		}
 		// Treat svg:href and xlink:href as href below.
-		name = short
+		name = name[colon+1:]
 	}
 	if t, ok := attrTypeMap[name]; ok {
 		return t

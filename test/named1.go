@@ -54,7 +54,7 @@ func main() {
 	_ = b
 
 	_, bb := <-c
-	asBool(bb) // ERROR "cannot use.*type bool.*as type Bool|cannot use bb"
+	asBool(bb) // ERROR "cannot use.*type bool.*as type Bool"
 	_, b = <-c // ok now
 	_ = b
 

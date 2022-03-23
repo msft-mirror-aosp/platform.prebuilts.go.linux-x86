@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"internal/testenv"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,7 +144,7 @@ func (test lookPathTest) run(t *testing.T, tmpdir, printpathExe string) {
 	if errCmd == nil && errLP == nil {
 		// both succeeded
 		if should != have {
-			t.Fatalf("test=%+v:\ncmd /c ran: %s\nlookpath found: %s", test, should, have)
+			t.Fatalf("test=%+v failed: expected to find %q, but found %q", test, should, have)
 		}
 		return
 	}
@@ -306,19 +307,22 @@ var lookPathTests = []lookPathTest{
 }
 
 func TestLookPath(t *testing.T) {
-	tmp := t.TempDir()
+	tmp, err := ioutil.TempDir("", "TestLookPath")
+	if err != nil {
+		t.Fatal("TempDir failed: ", err)
+	}
+	defer os.RemoveAll(tmp)
+
 	printpathExe := buildPrintPathExe(t, tmp)
 
 	// Run all tests.
 	for i, test := range lookPathTests {
-		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			dir := filepath.Join(tmp, "d"+strconv.Itoa(i))
-			err := os.Mkdir(dir, 0700)
-			if err != nil {
-				t.Fatal("Mkdir failed: ", err)
-			}
-			test.run(t, dir, printpathExe)
-		})
+		dir := filepath.Join(tmp, "d"+strconv.Itoa(i))
+		err := os.Mkdir(dir, 0700)
+		if err != nil {
+			t.Fatal("Mkdir failed: ", err)
+		}
+		test.run(t, dir, printpathExe)
 	}
 }
 
@@ -500,7 +504,12 @@ var commandTests = []commandTest{
 }
 
 func TestCommand(t *testing.T) {
-	tmp := t.TempDir()
+	tmp, err := ioutil.TempDir("", "TestCommand")
+	if err != nil {
+		t.Fatal("TempDir failed: ", err)
+	}
+	defer os.RemoveAll(tmp)
+
 	printpathExe := buildPrintPathExe(t, tmp)
 
 	// Run all tests.
@@ -520,7 +529,7 @@ func TestCommand(t *testing.T) {
 func buildPrintPathExe(t *testing.T, dir string) string {
 	const name = "printpath"
 	srcname := name + ".go"
-	err := os.WriteFile(filepath.Join(dir, srcname), []byte(printpathSrc), 0644)
+	err := ioutil.WriteFile(filepath.Join(dir, srcname), []byte(printpathSrc), 0644)
 	if err != nil {
 		t.Fatalf("failed to create source: %v", err)
 	}

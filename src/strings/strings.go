@@ -270,8 +270,6 @@ func genSplit(s, sep string, sepSave, n int) []string {
 //
 // Edge cases for s and sep (for example, empty strings) are handled
 // as described in the documentation for Split.
-//
-// To split around the first instance of a separator, see Cut.
 func SplitN(s, sep string, n int) []string { return genSplit(s, sep, 0, n) }
 
 // SplitAfterN slices s into substrings after each instance of sep and
@@ -298,8 +296,6 @@ func SplitAfterN(s, sep string, n int) []string {
 // and sep are empty, Split returns an empty slice.
 //
 // It is equivalent to SplitN with a count of -1.
-//
-// To split around the first instance of a separator, see Cut.
 func Split(s, sep string) []string { return genSplit(s, sep, 0, -1) }
 
 // SplitAfter slices s into all substrings after each instance of sep and
@@ -710,8 +706,7 @@ func isSeparator(r rune) bool {
 // Title returns a copy of the string s with all Unicode letters that begin words
 // mapped to their Unicode title case.
 //
-// Deprecated: The rule Title uses for word boundaries does not handle Unicode
-// punctuation properly. Use golang.org/x/text/cases instead.
+// BUG(rsc): The rule Title uses for word boundaries does not handle Unicode punctuation properly.
 func Title(s string) string {
 	// Use a closure here to remember state.
 	// Hackish but effective. Depends on Map scanning in order and calling
@@ -802,8 +797,6 @@ func lastIndexFunc(s string, f func(rune) bool, truth bool) int {
 // most-significant bit of the highest word, map to the full range of all
 // 128 ASCII characters. The 128-bits of the upper 16 bytes will be zeroed,
 // ensuring that any non-ASCII character will be reported as not in the set.
-// This allocates a total of 32 bytes even though the upper half
-// is unused to avoid bounds checks in asciiSet.contains.
 type asciiSet [8]uint32
 
 // makeASCIISet creates a set of ASCII characters and reports whether all
@@ -814,14 +807,28 @@ func makeASCIISet(chars string) (as asciiSet, ok bool) {
 		if c >= utf8.RuneSelf {
 			return as, false
 		}
-		as[c/32] |= 1 << (c % 32)
+		as[c>>5] |= 1 << uint(c&31)
 	}
 	return as, true
 }
 
 // contains reports whether c is inside the set.
 func (as *asciiSet) contains(c byte) bool {
-	return (as[c/32] & (1 << (c % 32))) != 0
+	return (as[c>>5] & (1 << uint(c&31))) != 0
+}
+
+func makeCutsetFunc(cutset string) func(rune) bool {
+	if len(cutset) == 1 && cutset[0] < utf8.RuneSelf {
+		return func(r rune) bool {
+			return r == rune(cutset[0])
+		}
+	}
+	if as, isASCII := makeASCIISet(cutset); isASCII {
+		return func(r rune) bool {
+			return r < utf8.RuneSelf && as.contains(byte(r))
+		}
+	}
+	return func(r rune) bool { return IndexRune(cutset, r) >= 0 }
 }
 
 // Trim returns a slice of the string s with all leading and
@@ -830,13 +837,7 @@ func Trim(s, cutset string) string {
 	if s == "" || cutset == "" {
 		return s
 	}
-	if len(cutset) == 1 && cutset[0] < utf8.RuneSelf {
-		return trimLeftByte(trimRightByte(s, cutset[0]), cutset[0])
-	}
-	if as, ok := makeASCIISet(cutset); ok {
-		return trimLeftASCII(trimRightASCII(s, &as), &as)
-	}
-	return trimLeftUnicode(trimRightUnicode(s, cutset), cutset)
+	return TrimFunc(s, makeCutsetFunc(cutset))
 }
 
 // TrimLeft returns a slice of the string s with all leading
@@ -847,44 +848,7 @@ func TrimLeft(s, cutset string) string {
 	if s == "" || cutset == "" {
 		return s
 	}
-	if len(cutset) == 1 && cutset[0] < utf8.RuneSelf {
-		return trimLeftByte(s, cutset[0])
-	}
-	if as, ok := makeASCIISet(cutset); ok {
-		return trimLeftASCII(s, &as)
-	}
-	return trimLeftUnicode(s, cutset)
-}
-
-func trimLeftByte(s string, c byte) string {
-	for len(s) > 0 && s[0] == c {
-		s = s[1:]
-	}
-	return s
-}
-
-func trimLeftASCII(s string, as *asciiSet) string {
-	for len(s) > 0 {
-		if !as.contains(s[0]) {
-			break
-		}
-		s = s[1:]
-	}
-	return s
-}
-
-func trimLeftUnicode(s, cutset string) string {
-	for len(s) > 0 {
-		r, n := rune(s[0]), 1
-		if r >= utf8.RuneSelf {
-			r, n = utf8.DecodeRuneInString(s)
-		}
-		if !ContainsRune(cutset, r) {
-			break
-		}
-		s = s[n:]
-	}
-	return s
+	return TrimLeftFunc(s, makeCutsetFunc(cutset))
 }
 
 // TrimRight returns a slice of the string s, with all trailing
@@ -895,44 +859,7 @@ func TrimRight(s, cutset string) string {
 	if s == "" || cutset == "" {
 		return s
 	}
-	if len(cutset) == 1 && cutset[0] < utf8.RuneSelf {
-		return trimRightByte(s, cutset[0])
-	}
-	if as, ok := makeASCIISet(cutset); ok {
-		return trimRightASCII(s, &as)
-	}
-	return trimRightUnicode(s, cutset)
-}
-
-func trimRightByte(s string, c byte) string {
-	for len(s) > 0 && s[len(s)-1] == c {
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
-func trimRightASCII(s string, as *asciiSet) string {
-	for len(s) > 0 {
-		if !as.contains(s[len(s)-1]) {
-			break
-		}
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
-func trimRightUnicode(s, cutset string) string {
-	for len(s) > 0 {
-		r, n := rune(s[len(s)-1]), 1
-		if r >= utf8.RuneSelf {
-			r, n = utf8.DecodeLastRuneInString(s)
-		}
-		if !ContainsRune(cutset, r) {
-			break
-		}
-		s = s[:len(s)-n]
-	}
-	return s
+	return TrimRightFunc(s, makeCutsetFunc(cutset))
 }
 
 // TrimSpace returns a slice of the string s, with all leading
@@ -1007,8 +934,8 @@ func Replace(s, old, new string, n int) string {
 	}
 
 	// Apply replacements to buffer.
-	var b Builder
-	b.Grow(len(s) + n*(len(new)-len(old)))
+	t := make([]byte, len(s)+n*(len(new)-len(old)))
+	w := 0
 	start := 0
 	for i := 0; i < n; i++ {
 		j := start
@@ -1020,12 +947,12 @@ func Replace(s, old, new string, n int) string {
 		} else {
 			j += Index(s[start:], old)
 		}
-		b.WriteString(s[start:j])
-		b.WriteString(new)
+		w += copy(t[w:], s[start:j])
+		w += copy(t[w:], new)
 		start = j + len(old)
 	}
-	b.WriteString(s[start:])
-	return b.String()
+	w += copy(t[w:], s[start:])
+	return string(t[0:w])
 }
 
 // ReplaceAll returns a copy of the string s with all
@@ -1172,15 +1099,4 @@ func Index(s, substr string) int {
 		}
 	}
 	return -1
-}
-
-// Cut slices s around the first instance of sep,
-// returning the text before and after sep.
-// The found result reports whether sep appears in s.
-// If sep does not appear in s, cut returns s, "", false.
-func Cut(s, sep string) (before, after string, found bool) {
-	if i := Index(s, sep); i >= 0 {
-		return s[:i], s[i+len(sep):], true
-	}
-	return s, "", false
 }

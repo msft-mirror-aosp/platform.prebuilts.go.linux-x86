@@ -8,10 +8,10 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 )
 
 var sizeTests = []struct {
@@ -222,11 +222,7 @@ var cleanUpTests = []struct {
 }
 
 type nopWriteCloser struct {
-	io.Reader
-}
-
-func (nopWriteCloser) Write(buf []byte) (int, error) {
-	return len(buf), nil
+	io.ReadWriter
 }
 
 func (nopWriteCloser) Close() error {
@@ -240,14 +236,14 @@ func TestChildServeCleansUp(t *testing.T) {
 	for _, tt := range cleanUpTests {
 		input := make([]byte, len(tt.input))
 		copy(input, tt.input)
-		rc := nopWriteCloser{bytes.NewReader(input)}
+		rc := nopWriteCloser{bytes.NewBuffer(input)}
 		done := make(chan bool)
 		c := newChild(rc, http.HandlerFunc(func(
 			w http.ResponseWriter,
 			r *http.Request,
 		) {
 			// block on reading body of request
-			_, err := io.Copy(io.Discard, r.Body)
+			_, err := io.Copy(ioutil.Discard, r.Body)
 			if err != tt.err {
 				t.Errorf("Expected %#v, got %#v", tt.err, err)
 			}
@@ -279,7 +275,7 @@ func TestMalformedParams(t *testing.T) {
 		// end of params
 		1, 4, 0, 1, 0, 0, 0, 0,
 	}
-	rw := rwNopCloser{bytes.NewReader(input), io.Discard}
+	rw := rwNopCloser{bytes.NewReader(input), ioutil.Discard}
 	c := newChild(rw, http.DefaultServeMux)
 	c.serve()
 }
@@ -330,7 +326,7 @@ func TestChildServeReadsEnvVars(t *testing.T) {
 	for _, tt := range envVarTests {
 		input := make([]byte, len(tt.input))
 		copy(input, tt.input)
-		rc := nopWriteCloser{bytes.NewReader(input)}
+		rc := nopWriteCloser{bytes.NewBuffer(input)}
 		done := make(chan bool)
 		c := newChild(rc, http.HandlerFunc(func(
 			w http.ResponseWriter,
@@ -351,6 +347,7 @@ func TestChildServeReadsEnvVars(t *testing.T) {
 }
 
 func TestResponseWriterSniffsContentType(t *testing.T) {
+	t.Skip("this test is flaky, see Issue 41167")
 	var tests = []struct {
 		name   string
 		body   string
@@ -380,7 +377,7 @@ func TestResponseWriterSniffsContentType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			input := make([]byte, len(streamFullRequestStdin))
 			copy(input, streamFullRequestStdin)
-			rc := nopWriteCloser{bytes.NewReader(input)}
+			rc := nopWriteCloser{bytes.NewBuffer(input)}
 			done := make(chan bool)
 			var resp *response
 			c := newChild(rc, http.HandlerFunc(func(
@@ -398,57 +395,5 @@ func TestResponseWriterSniffsContentType(t *testing.T) {
 				t.Errorf("got a Content-Type of %q; expected it to start with %q", got, tt.wantCT)
 			}
 		})
-	}
-}
-
-type signallingNopCloser struct {
-	io.Reader
-	closed chan bool
-}
-
-func (*signallingNopCloser) Write(buf []byte) (int, error) {
-	return len(buf), nil
-}
-
-func (rc *signallingNopCloser) Close() error {
-	close(rc.closed)
-	return nil
-}
-
-// Test whether server properly closes connection when processing slow
-// requests
-func TestSlowRequest(t *testing.T) {
-	pr, pw := io.Pipe()
-	go func(w io.Writer) {
-		for _, buf := range [][]byte{
-			streamBeginTypeStdin,
-			makeRecord(typeStdin, 1, nil),
-		} {
-			pw.Write(buf)
-			time.Sleep(100 * time.Millisecond)
-		}
-	}(pw)
-
-	rc := &signallingNopCloser{pr, make(chan bool)}
-	handlerDone := make(chan bool)
-
-	c := newChild(rc, http.HandlerFunc(func(
-		w http.ResponseWriter,
-		r *http.Request,
-	) {
-		w.WriteHeader(200)
-		close(handlerDone)
-	}))
-	go c.serve()
-	defer c.cleanUp()
-
-	timeout := time.After(2 * time.Second)
-
-	<-handlerDone
-	select {
-	case <-rc.closed:
-		t.Log("FastCGI child closed connection")
-	case <-timeout:
-		t.Error("FastCGI child did not close socket after handling request")
 	}
 }
