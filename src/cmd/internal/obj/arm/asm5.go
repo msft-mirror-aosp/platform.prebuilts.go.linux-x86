@@ -34,6 +34,7 @@ import (
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"fmt"
+	"internal/buildcfg"
 	"log"
 	"math"
 	"sort"
@@ -354,11 +355,10 @@ var oprange [ALAST & obj.AMask][]Optab
 var xcmp [C_GOK + 1][C_GOK + 1]bool
 
 var (
-	deferreturn *obj.LSym
-	symdiv      *obj.LSym
-	symdivu     *obj.LSym
-	symmod      *obj.LSym
-	symmodu     *obj.LSym
+	symdiv  *obj.LSym
+	symdivu *obj.LSym
+	symmod  *obj.LSym
+	symmodu *obj.LSym
 )
 
 // Note about encoding: Prog.scond holds the condition encoding,
@@ -390,7 +390,7 @@ func span5(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 	var p *obj.Prog
 	var op *obj.Prog
 
-	p = cursym.Func.Text
+	p = cursym.Func().Text
 	if p == nil || p.Link == nil { // handle external functions and ELF section symbols
 		return
 	}
@@ -482,8 +482,8 @@ func span5(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 		bflag = 0
 		pc = 0
 		times++
-		c.cursym.Func.Text.Pc = 0 // force re-layout the code.
-		for p = c.cursym.Func.Text; p != nil; p = p.Link {
+		c.cursym.Func().Text.Pc = 0 // force re-layout the code.
+		for p = c.cursym.Func().Text; p != nil; p = p.Link {
 			o = c.oplook(p)
 			if int64(pc) > p.Pc {
 				p.Pc = int64(pc)
@@ -558,7 +558,7 @@ func span5(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 	 * perhaps we'd be able to parallelize the span loop above.
 	 */
 
-	p = c.cursym.Func.Text
+	p = c.cursym.Func().Text
 	c.autosize = p.To.Offset + 4
 	c.cursym.Grow(c.cursym.Size)
 
@@ -644,7 +644,7 @@ func (c *ctxt5) flushpool(p *obj.Prog, skip int, force int) bool {
 			q := c.newprog()
 			q.As = AB
 			q.To.Type = obj.TYPE_BRANCH
-			q.Pcond = p.Link
+			q.To.SetTarget(p.Link)
 			q.Link = c.blitrl
 			q.Pos = p.Pos
 			c.blitrl = q
@@ -705,7 +705,7 @@ func (c *ctxt5) addpool(p *obj.Prog, a *obj.Addr) {
 	if t.Rel == nil {
 		for q := c.blitrl; q != nil; q = q.Link { /* could hash on t.t0.offset */
 			if q.Rel == nil && q.To == t.To {
-				p.Pcond = q
+				p.Pool = q
 				return
 			}
 		}
@@ -724,8 +724,8 @@ func (c *ctxt5) addpool(p *obj.Prog, a *obj.Addr) {
 	c.elitrl = q
 	c.pool.size += 4
 
-	// Store the link to the pool entry in Pcond.
-	p.Pcond = q
+	// Store the link to the pool entry in Pool.
+	p.Pool = q
 }
 
 func (c *ctxt5) regoff(a *obj.Addr) int32 {
@@ -976,7 +976,7 @@ func (c *ctxt5) aclass(a *obj.Addr) int {
 			if immrot(^uint32(c.instoffset)) != 0 {
 				return C_NCON
 			}
-			if uint32(c.instoffset) <= 0xffff && objabi.GOARM == 7 {
+			if uint32(c.instoffset) <= 0xffff && buildcfg.GOARM == 7 {
 				return C_SCON
 			}
 			if x, y := immrot2a(uint32(c.instoffset)); x != 0 && y != 0 {
@@ -1217,8 +1217,6 @@ func buildop(ctxt *obj.Link) {
 		// each of which re-initializes the arch.
 		return
 	}
-
-	deferreturn = ctxt.LookupABI("runtime.deferreturn", obj.ABIInternal)
 
 	symdiv = ctxt.Lookup("runtime._div")
 	symdivu = ctxt.Lookup("runtime._divu")
@@ -1584,8 +1582,8 @@ func (c *ctxt5) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			break
 		}
 
-		if p.Pcond != nil {
-			v = int32((p.Pcond.Pc - c.pc) - 8)
+		if p.To.Target() != nil {
+			v = int32((p.To.Target().Pc - c.pc) - 8)
 		}
 		o1 |= (uint32(v) >> 2) & 0xffffff
 
@@ -3023,7 +3021,7 @@ func (c *ctxt5) omvr(p *obj.Prog, a *obj.Addr, dr int) uint32 {
 
 func (c *ctxt5) omvl(p *obj.Prog, a *obj.Addr, dr int) uint32 {
 	var o1 uint32
-	if p.Pcond == nil {
+	if p.Pool == nil {
 		c.aclass(a)
 		v := immrot(^uint32(c.instoffset))
 		if v == 0 {
@@ -3035,7 +3033,7 @@ func (c *ctxt5) omvl(p *obj.Prog, a *obj.Addr, dr int) uint32 {
 		o1 |= uint32(v)
 		o1 |= (uint32(dr) & 15) << 12
 	} else {
-		v := int32(p.Pcond.Pc - p.Pc - 8)
+		v := int32(p.Pool.Pc - p.Pc - 8)
 		o1 = c.olr(v, REGPC, dr, int(p.Scond)&C_SCOND)
 	}
 
@@ -3044,7 +3042,7 @@ func (c *ctxt5) omvl(p *obj.Prog, a *obj.Addr, dr int) uint32 {
 
 func (c *ctxt5) chipzero5(e float64) int {
 	// We use GOARM=7 to gate the use of VFPv3 vmov (imm) instructions.
-	if objabi.GOARM < 7 || math.Float64bits(e) != 0 {
+	if buildcfg.GOARM < 7 || math.Float64bits(e) != 0 {
 		return -1
 	}
 	return 0
@@ -3052,7 +3050,7 @@ func (c *ctxt5) chipzero5(e float64) int {
 
 func (c *ctxt5) chipfloat5(e float64) int {
 	// We use GOARM=7 to gate the use of VFPv3 vmov (imm) instructions.
-	if objabi.GOARM < 7 {
+	if buildcfg.GOARM < 7 {
 		return -1
 	}
 

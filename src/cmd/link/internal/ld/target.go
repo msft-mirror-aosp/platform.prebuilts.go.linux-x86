@@ -74,8 +74,12 @@ func (t *Target) IsDynlinkingGo() bool {
 func (t *Target) UseRelro() bool {
 	switch t.BuildMode {
 	case BuildModeCArchive, BuildModeCShared, BuildModeShared, BuildModePIE, BuildModePlugin:
-		return t.IsELF || t.HeadType == objabi.Haix
+		return t.IsELF || t.HeadType == objabi.Haix || t.HeadType == objabi.Hdarwin
 	default:
+		if t.HeadType == objabi.Hdarwin && t.IsARM64() {
+			// On darwin/ARM64, everything is PIE.
+			return true
+		}
 		return t.linkShared || (t.HeadType == objabi.Haix && t.LinkMode == LinkExternal)
 	}
 }
@@ -180,4 +184,14 @@ func (t *Target) mustSetHeadType() {
 
 func (t *Target) IsBigEndian() bool {
 	return t.Arch.ByteOrder == binary.BigEndian
+}
+
+func (t *Target) UsesLibc() bool {
+	t.mustSetHeadType()
+	switch t.HeadType {
+	case objabi.Haix, objabi.Hdarwin, objabi.Hopenbsd, objabi.Hsolaris, objabi.Hwindows:
+		// platforms where we use libc for syscalls.
+		return true
+	}
+	return false
 }
