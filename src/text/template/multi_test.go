@@ -9,6 +9,7 @@ package template
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"testing"
 	"text/template/parse"
 )
@@ -151,6 +152,35 @@ func TestParseGlob(t *testing.T) {
 		t.Fatalf("error parsing files: %v", err)
 	}
 	testExecute(multiExecTests, template, t)
+}
+
+func TestParseFS(t *testing.T) {
+	fs := os.DirFS("testdata")
+
+	{
+		_, err := ParseFS(fs, "DOES NOT EXIST")
+		if err == nil {
+			t.Error("expected error for non-existent file; got none")
+		}
+	}
+
+	{
+		template := New("root")
+		_, err := template.ParseFS(fs, "file1.tmpl", "file2.tmpl")
+		if err != nil {
+			t.Fatalf("error parsing files: %v", err)
+		}
+		testExecute(multiExecTests, template, t)
+	}
+
+	{
+		template := New("root")
+		_, err := template.ParseFS(fs, "file*.tmpl")
+		if err != nil {
+			t.Fatalf("error parsing files: %v", err)
+		}
+		testExecute(multiExecTests, template, t)
+	}
 }
 
 // In these tests, actual content (not just template definitions) comes from the parsed files.
@@ -421,4 +451,14 @@ func TestIssue19294(t *testing.T) {
 			t.Fatalf("iteration %d: got %q; expected %q", i, buf.String(), "stylesheet")
 		}
 	}
+}
+
+// Issue 48436
+func TestAddToZeroTemplate(t *testing.T) {
+	tree, err := parse.Parse("c", cloneText3, "", "", nil, builtins())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tmpl Template
+	tmpl.AddParseTree("x", tree["c"])
 }
