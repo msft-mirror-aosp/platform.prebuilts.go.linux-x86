@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -32,7 +31,7 @@ func Request() (*http.Request, error) {
 		return nil, err
 	}
 	if r.ContentLength > 0 {
-		r.Body = ioutil.NopCloser(io.LimitReader(os.Stdin, r.ContentLength))
+		r.Body = io.NopCloser(io.LimitReader(os.Stdin, r.ContentLength))
 	}
 	return r, nil
 }
@@ -40,8 +39,8 @@ func Request() (*http.Request, error) {
 func envMap(env []string) map[string]string {
 	m := make(map[string]string)
 	for _, kv := range env {
-		if idx := strings.Index(kv, "="); idx != -1 {
-			m[kv[:idx]] = kv[idx+1:]
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			m[k] = v
 		}
 	}
 	return m
@@ -145,6 +144,9 @@ func Serve(handler http.Handler) error {
 	req, err := Request()
 	if err != nil {
 		return err
+	}
+	if req.Body == nil {
+		req.Body = http.NoBody
 	}
 	if handler == nil {
 		handler = http.DefaultServeMux
