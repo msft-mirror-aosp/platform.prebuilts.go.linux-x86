@@ -7,9 +7,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	exec "internal/execabs"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -221,11 +221,7 @@ func findCodeRoots() []Dir {
 	cmd.Stderr = os.Stderr
 	out, _ := cmd.Output()
 	for _, line := range strings.Split(string(out), "\n") {
-		i := strings.Index(line, "\t")
-		if i < 0 {
-			continue
-		}
-		path, dir := line[:i], line[i+1:]
+		path, dir, _ := strings.Cut(line, "\t")
 		if dir != "" {
 			list = append(list, Dir{importPath: path, dir: dir, inModule: true})
 		}
