@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"cmd/internal/objabi"
 	"fmt"
-	"io"
 	"strings"
 )
 
@@ -18,8 +17,8 @@ const REG_NONE = 0
 func (p *Prog) Line() string {
 	return p.Ctxt.OutermostPos(p.Pos).Format(false, true)
 }
-func (p *Prog) InnermostLine(w io.Writer) {
-	p.Ctxt.InnermostPos(p.Pos).WriteTo(w, false, true)
+func (p *Prog) InnermostLine() string {
+	return p.Ctxt.InnermostPos(p.Pos).Format(false, true)
 }
 
 // InnermostLineNumber returns a string containing the line number for the
@@ -122,61 +121,45 @@ func (p *Prog) String() string {
 	return fmt.Sprintf("%.5d (%v)\t%s", p.Pc, p.Line(), p.InstructionString())
 }
 
-func (p *Prog) InnermostString(w io.Writer) {
+func (p *Prog) InnermostString() string {
 	if p == nil {
-		io.WriteString(w, "<nil Prog>")
-		return
+		return "<nil Prog>"
 	}
 	if p.Ctxt == nil {
-		io.WriteString(w, "<Prog without ctxt>")
-		return
+		return "<Prog without ctxt>"
 	}
-	fmt.Fprintf(w, "%.5d (", p.Pc)
-	p.InnermostLine(w)
-	io.WriteString(w, ")\t")
-	p.WriteInstructionString(w)
+	return fmt.Sprintf("%.5d (%v)\t%s", p.Pc, p.InnermostLine(), p.InstructionString())
 }
 
 // InstructionString returns a string representation of the instruction without preceding
 // program counter or file and line number.
 func (p *Prog) InstructionString() string {
-	buf := new(bytes.Buffer)
-	p.WriteInstructionString(buf)
-	return buf.String()
-}
-
-// WriteInstructionString writes a string representation of the instruction without preceding
-// program counter or file and line number.
-func (p *Prog) WriteInstructionString(w io.Writer) {
 	if p == nil {
-		io.WriteString(w, "<nil Prog>")
-		return
+		return "<nil Prog>"
 	}
 
 	if p.Ctxt == nil {
-		io.WriteString(w, "<Prog without ctxt>")
-		return
+		return "<Prog without ctxt>"
 	}
 
 	sc := CConv(p.Scond)
 
-	io.WriteString(w, p.As.String())
-	io.WriteString(w, sc)
+	var buf bytes.Buffer
+
+	fmt.Fprintf(&buf, "%v%s", p.As, sc)
 	sep := "\t"
 
 	if p.From.Type != TYPE_NONE {
-		io.WriteString(w, sep)
-		WriteDconv(w, p, &p.From)
+		fmt.Fprintf(&buf, "%s%v", sep, Dconv(p, &p.From))
 		sep = ", "
 	}
 	if p.Reg != REG_NONE {
 		// Should not happen but might as well show it if it does.
-		fmt.Fprintf(w, "%s%v", sep, Rconv(int(p.Reg)))
+		fmt.Fprintf(&buf, "%s%v", sep, Rconv(int(p.Reg)))
 		sep = ", "
 	}
 	for i := range p.RestArgs {
-		io.WriteString(w, sep)
-		WriteDconv(w, p, &p.RestArgs[i])
+		fmt.Fprintf(&buf, "%s%v", sep, Dconv(p, &p.RestArgs[i]))
 		sep = ", "
 	}
 
@@ -187,17 +170,17 @@ func (p *Prog) WriteInstructionString(w io.Writer) {
 		// TEXT	foo(SB), $0
 		s := p.From.Sym.Attribute.TextAttrString()
 		if s != "" {
-			fmt.Fprintf(w, "%s%s", sep, s)
+			fmt.Fprintf(&buf, "%s%s", sep, s)
 			sep = ", "
 		}
 	}
 	if p.To.Type != TYPE_NONE {
-		io.WriteString(w, sep)
-		WriteDconv(w, p, &p.To)
+		fmt.Fprintf(&buf, "%s%v", sep, Dconv(p, &p.To))
 	}
 	if p.RegTo2 != REG_NONE {
-		fmt.Fprintf(w, "%s%v", sep, Rconv(int(p.RegTo2)))
+		fmt.Fprintf(&buf, "%s%v", sep, Rconv(int(p.RegTo2)))
 	}
+	return buf.String()
 }
 
 func (ctxt *Link) NewProg() *Prog {
@@ -211,20 +194,16 @@ func (ctxt *Link) CanReuseProgs() bool {
 }
 
 func Dconv(p *Prog, a *Addr) string {
-	buf := new(bytes.Buffer)
-	WriteDconv(buf, p, a)
-	return buf.String()
-}
+	var str string
 
-func WriteDconv(w io.Writer, p *Prog, a *Addr) {
 	switch a.Type {
 	default:
-		fmt.Fprintf(w, "type=%d", a.Type)
+		str = fmt.Sprintf("type=%d", a.Type)
 
 	case TYPE_NONE:
+		str = ""
 		if a.Name != NAME_NONE || a.Reg != 0 || a.Sym != nil {
-			a.WriteNameTo(w)
-			fmt.Fprintf(w, "(%v)(NONE)", Rconv(int(a.Reg)))
+			str = fmt.Sprintf("%v(%v)(NONE)", Mconv(a), Rconv(int(a.Reg)))
 		}
 
 	case TYPE_REG:
@@ -233,75 +212,71 @@ func WriteDconv(w io.Writer, p *Prog, a *Addr) {
 		// where the $1 is included in the p->to Addr.
 		// Move into a new field.
 		if a.Offset != 0 && (a.Reg < RBaseARM64 || a.Reg >= RBaseMIPS) {
-			fmt.Fprintf(w, "$%d,%v", a.Offset, Rconv(int(a.Reg)))
-			return
+			str = fmt.Sprintf("$%d,%v", a.Offset, Rconv(int(a.Reg)))
+			break
 		}
 
+		str = Rconv(int(a.Reg))
 		if a.Name != NAME_NONE || a.Sym != nil {
-			a.WriteNameTo(w)
-			fmt.Fprintf(w, "(%v)(REG)", Rconv(int(a.Reg)))
-		} else {
-			io.WriteString(w, Rconv(int(a.Reg)))
+			str = fmt.Sprintf("%v(%v)(REG)", Mconv(a), Rconv(int(a.Reg)))
 		}
 		if (RBaseARM64+1<<10+1<<9) /* arm64.REG_ELEM */ <= a.Reg &&
 			a.Reg < (RBaseARM64+1<<11) /* arm64.REG_ELEM_END */ {
-			fmt.Fprintf(w, "[%d]", a.Index)
+			str += fmt.Sprintf("[%d]", a.Index)
 		}
 
 	case TYPE_BRANCH:
 		if a.Sym != nil {
-			fmt.Fprintf(w, "%s(SB)", a.Sym.Name)
+			str = fmt.Sprintf("%s(SB)", a.Sym.Name)
 		} else if p != nil && p.Pcond != nil {
-			fmt.Fprint(w, p.Pcond.Pc)
+			str = fmt.Sprint(p.Pcond.Pc)
 		} else if a.Val != nil {
-			fmt.Fprint(w, a.Val.(*Prog).Pc)
+			str = fmt.Sprint(a.Val.(*Prog).Pc)
 		} else {
-			fmt.Fprintf(w, "%d(PC)", a.Offset)
+			str = fmt.Sprintf("%d(PC)", a.Offset)
 		}
 
 	case TYPE_INDIR:
-		io.WriteString(w, "*")
-		a.WriteNameTo(w)
+		str = fmt.Sprintf("*%s", Mconv(a))
 
 	case TYPE_MEM:
-		a.WriteNameTo(w)
+		str = Mconv(a)
 		if a.Index != REG_NONE {
 			if a.Scale == 0 {
 				// arm64 shifted or extended register offset, scale = 0.
-				fmt.Fprintf(w, "(%v)", Rconv(int(a.Index)))
+				str += fmt.Sprintf("(%v)", Rconv(int(a.Index)))
 			} else {
-				fmt.Fprintf(w, "(%v*%d)", Rconv(int(a.Index)), int(a.Scale))
+				str += fmt.Sprintf("(%v*%d)", Rconv(int(a.Index)), int(a.Scale))
 			}
 		}
 
 	case TYPE_CONST:
-		io.WriteString(w, "$")
-		a.WriteNameTo(w)
 		if a.Reg != 0 {
-			fmt.Fprintf(w, "(%v)", Rconv(int(a.Reg)))
+			str = fmt.Sprintf("$%v(%v)", Mconv(a), Rconv(int(a.Reg)))
+		} else {
+			str = fmt.Sprintf("$%v", Mconv(a))
 		}
 
 	case TYPE_TEXTSIZE:
 		if a.Val.(int32) == objabi.ArgsSizeUnknown {
-			fmt.Fprintf(w, "$%d", a.Offset)
+			str = fmt.Sprintf("$%d", a.Offset)
 		} else {
-			fmt.Fprintf(w, "$%d-%d", a.Offset, a.Val.(int32))
+			str = fmt.Sprintf("$%d-%d", a.Offset, a.Val.(int32))
 		}
 
 	case TYPE_FCONST:
-		str := fmt.Sprintf("%.17g", a.Val.(float64))
+		str = fmt.Sprintf("%.17g", a.Val.(float64))
 		// Make sure 1 prints as 1.0
 		if !strings.ContainsAny(str, ".e") {
 			str += ".0"
 		}
-		fmt.Fprintf(w, "$(%s)", str)
+		str = fmt.Sprintf("$(%s)", str)
 
 	case TYPE_SCONST:
-		fmt.Fprintf(w, "$%q", a.Val.(string))
+		str = fmt.Sprintf("$%q", a.Val.(string))
 
 	case TYPE_ADDR:
-		io.WriteString(w, "$")
-		a.WriteNameTo(w)
+		str = fmt.Sprintf("$%s", Mconv(a))
 
 	case TYPE_SHIFT:
 		v := int(a.Offset)
@@ -310,45 +285,49 @@ func WriteDconv(w io.Writer, p *Prog, a *Addr) {
 		case "arm":
 			op := ops[((v>>5)&3)<<1:]
 			if v&(1<<4) != 0 {
-				fmt.Fprintf(w, "R%d%c%cR%d", v&15, op[0], op[1], (v>>8)&15)
+				str = fmt.Sprintf("R%d%c%cR%d", v&15, op[0], op[1], (v>>8)&15)
 			} else {
-				fmt.Fprintf(w, "R%d%c%c%d", v&15, op[0], op[1], (v>>7)&31)
+				str = fmt.Sprintf("R%d%c%c%d", v&15, op[0], op[1], (v>>7)&31)
 			}
 			if a.Reg != 0 {
-				fmt.Fprintf(w, "(%v)", Rconv(int(a.Reg)))
+				str += fmt.Sprintf("(%v)", Rconv(int(a.Reg)))
 			}
 		case "arm64":
 			op := ops[((v>>22)&3)<<1:]
 			r := (v >> 16) & 31
-			fmt.Fprintf(w, "%s%c%c%d", Rconv(r+RBaseARM64), op[0], op[1], (v>>10)&63)
+			str = fmt.Sprintf("%s%c%c%d", Rconv(r+RBaseARM64), op[0], op[1], (v>>10)&63)
 		default:
 			panic("TYPE_SHIFT is not supported on " + objabi.GOARCH)
 		}
 
 	case TYPE_REGREG:
-		fmt.Fprintf(w, "(%v, %v)", Rconv(int(a.Reg)), Rconv(int(a.Offset)))
+		str = fmt.Sprintf("(%v, %v)", Rconv(int(a.Reg)), Rconv(int(a.Offset)))
 
 	case TYPE_REGREG2:
-		fmt.Fprintf(w, "%v, %v", Rconv(int(a.Offset)), Rconv(int(a.Reg)))
+		str = fmt.Sprintf("%v, %v", Rconv(int(a.Offset)), Rconv(int(a.Reg)))
 
 	case TYPE_REGLIST:
-		io.WriteString(w, RLconv(a.Offset))
+		str = RLconv(a.Offset)
 	}
+
+	return str
 }
 
-func (a *Addr) WriteNameTo(w io.Writer) {
+func Mconv(a *Addr) string {
+	var str string
+
 	switch a.Name {
 	default:
-		fmt.Fprintf(w, "name=%d", a.Name)
+		str = fmt.Sprintf("name=%d", a.Name)
 
 	case NAME_NONE:
 		switch {
 		case a.Reg == REG_NONE:
-			fmt.Fprint(w, a.Offset)
+			str = fmt.Sprint(a.Offset)
 		case a.Offset == 0:
-			fmt.Fprintf(w, "(%v)", Rconv(int(a.Reg)))
+			str = fmt.Sprintf("(%v)", Rconv(int(a.Reg)))
 		case a.Offset != 0:
-			fmt.Fprintf(w, "%d(%v)", a.Offset, Rconv(int(a.Reg)))
+			str = fmt.Sprintf("%d(%v)", a.Offset, Rconv(int(a.Reg)))
 		}
 
 		// Note: a.Reg == REG_NONE encodes the default base register for the NAME_ type.
@@ -358,9 +337,9 @@ func (a *Addr) WriteNameTo(w io.Writer) {
 			reg = Rconv(int(a.Reg))
 		}
 		if a.Sym != nil {
-			fmt.Fprintf(w, "%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			fmt.Fprintf(w, "%s(%s)", offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
 		}
 
 	case NAME_GOTREF:
@@ -369,9 +348,9 @@ func (a *Addr) WriteNameTo(w io.Writer) {
 			reg = Rconv(int(a.Reg))
 		}
 		if a.Sym != nil {
-			fmt.Fprintf(w, "%s%s@GOT(%s)", a.Sym.Name, offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s%s@GOT(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			fmt.Fprintf(w, "%s@GOT(%s)", offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s@GOT(%s)", offConv(a.Offset), reg)
 		}
 
 	case NAME_STATIC:
@@ -380,9 +359,9 @@ func (a *Addr) WriteNameTo(w io.Writer) {
 			reg = Rconv(int(a.Reg))
 		}
 		if a.Sym != nil {
-			fmt.Fprintf(w, "%s<>%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s<>%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			fmt.Fprintf(w, "<>%s(%s)", offConv(a.Offset), reg)
+			str = fmt.Sprintf("<>%s(%s)", offConv(a.Offset), reg)
 		}
 
 	case NAME_AUTO:
@@ -391,9 +370,9 @@ func (a *Addr) WriteNameTo(w io.Writer) {
 			reg = Rconv(int(a.Reg))
 		}
 		if a.Sym != nil {
-			fmt.Fprintf(w, "%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			fmt.Fprintf(w, "%s(%s)", offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
 		}
 
 	case NAME_PARAM:
@@ -402,9 +381,9 @@ func (a *Addr) WriteNameTo(w io.Writer) {
 			reg = Rconv(int(a.Reg))
 		}
 		if a.Sym != nil {
-			fmt.Fprintf(w, "%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			fmt.Fprintf(w, "%s(%s)", offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
 		}
 	case NAME_TOCREF:
 		reg := "SB"
@@ -412,11 +391,13 @@ func (a *Addr) WriteNameTo(w io.Writer) {
 			reg = Rconv(int(a.Reg))
 		}
 		if a.Sym != nil {
-			fmt.Fprintf(w, "%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
 		} else {
-			fmt.Fprintf(w, "%s(%s)", offConv(a.Offset), reg)
+			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
 		}
+
 	}
+	return str
 }
 
 func offConv(off int64) string {
@@ -476,7 +457,6 @@ const (
 	RBaseARM64 = 8 * 1024  // range [8k, 13k)
 	RBaseMIPS  = 13 * 1024 // range [13k, 14k)
 	RBaseS390X = 14 * 1024 // range [14k, 15k)
-	RBaseRISCV = 15 * 1024 // range [15k, 16k)
 	RBaseWasm  = 16 * 1024
 )
 

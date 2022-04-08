@@ -7,20 +7,16 @@ package ssa
 import (
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
-	"cmd/internal/objabi"
 	"cmd/internal/src"
-	"fmt"
+	"strings"
 )
 
-// A ZeroRegion records parts of an object which are known to be zero.
+// A ZeroRegion records a range of an object which is known to be zero.
 // A ZeroRegion only applies to a single memory state.
-// Each bit in mask is set if the corresponding pointer-sized word of
-// the base object is known to be zero.
-// In other words, if mask & (1<<i) != 0, then [base+i*ptrSize, base+(i+1)*ptrSize)
-// is known to be zero.
 type ZeroRegion struct {
 	base *Value
-	mask uint64
+	min  int64
+	max  int64
 }
 
 // needwb reports whether we need write barrier for store op v.
@@ -31,7 +27,7 @@ func needwb(v *Value, zeroes map[ID]ZeroRegion) bool {
 	if !ok {
 		v.Fatalf("store aux is not a type: %s", v.LongString())
 	}
-	if !t.HasPointers() {
+	if !t.HasHeapPointer() {
 		return false
 	}
 	if IsStackAddr(v.Args[0]) {
@@ -50,25 +46,10 @@ func needwb(v *Value, zeroes map[ID]ZeroRegion) bool {
 			off += ptr.AuxInt
 			ptr = ptr.Args[0]
 		}
-		ptrSize := v.Block.Func.Config.PtrSize
-		if off%ptrSize != 0 || size%ptrSize != 0 {
-			v.Fatalf("unaligned pointer write")
-		}
-		if off < 0 || off+size > 64*ptrSize {
-			// write goes off end of tracked offsets
-			return true
-		}
 		z := zeroes[v.MemoryArg().ID]
-		if ptr != z.base {
-			return true
+		if ptr == z.base && off >= z.min && off+size <= z.max {
+			return false
 		}
-		for i := off; i < off+size; i += ptrSize {
-			if z.mask>>uint(i/ptrSize)&1 == 0 {
-				return true // not known to be zero
-			}
-		}
-		// All written locations are known to be zero - write barrier not needed.
-		return false
 	}
 	return true
 }
@@ -201,7 +182,7 @@ func writebarrier(f *Func) {
 		b.Pos = pos
 
 		// set up control flow for end block
-		bEnd.CopyControls(b)
+		bEnd.SetControl(b.Control)
 		bEnd.Likely = b.Likely
 		for _, e := range b.Succs {
 			bEnd.Succs = append(bEnd.Succs, e)
@@ -347,7 +328,6 @@ func writebarrier(f *Func) {
 		bEnd.Values = append(bEnd.Values, last)
 		last.Block = bEnd
 		last.reset(OpPhi)
-		last.Pos = last.Pos.WithNotStmt()
 		last.Type = types.TypeMem
 		last.AddArg(memThen)
 		last.AddArg(memElse)
@@ -395,11 +375,10 @@ func writebarrier(f *Func) {
 // computeZeroMap returns a map from an ID of a memory value to
 // a set of locations that are known to be zeroed at that memory value.
 func (f *Func) computeZeroMap() map[ID]ZeroRegion {
-	ptrSize := f.Config.PtrSize
 	// Keep track of which parts of memory are known to be zero.
 	// This helps with removing write barriers for various initialization patterns.
 	// This analysis is conservative. We only keep track, for each memory state, of
-	// which of the first 64 words of a single object are known to be zero.
+	// a single constant range of a single object which is known to be zero.
 	zeroes := map[ID]ZeroRegion{}
 	// Find new objects.
 	for _, b := range f.Blocks {
@@ -409,11 +388,7 @@ func (f *Func) computeZeroMap() map[ID]ZeroRegion {
 			}
 			mem := v.MemoryArg()
 			if IsNewObject(v, mem) {
-				nptr := v.Type.Elem().Size() / ptrSize
-				if nptr > 64 {
-					nptr = 64
-				}
-				zeroes[mem.ID] = ZeroRegion{base: v, mask: 1<<uint(nptr) - 1}
+				zeroes[mem.ID] = ZeroRegion{v, 0, v.Type.Elem().Size()}
 			}
 		}
 	}
@@ -445,36 +420,26 @@ func (f *Func) computeZeroMap() map[ID]ZeroRegion {
 					// So we have to throw all the zero information we have away.
 					continue
 				}
-				// Round to cover any partially written pointer slots.
-				// Pointer writes should never be unaligned like this, but non-pointer
-				// writes to pointer-containing types will do this.
-				if d := off % ptrSize; d != 0 {
-					off -= d
-					size += d
-				}
-				if d := size % ptrSize; d != 0 {
-					size += ptrSize - d
-				}
-				// Clip to the 64 words that we track.
-				min := off
-				max := off + size
-				if min < 0 {
-					min = 0
-				}
-				if max > 64*ptrSize {
-					max = 64 * ptrSize
-				}
-				// Clear bits for parts that we are writing (and hence
-				// will no longer necessarily be zero).
-				for i := min; i < max; i += ptrSize {
-					bit := i / ptrSize
-					z.mask &^= 1 << uint(bit)
-				}
-				if z.mask == 0 {
-					// No more known zeros - don't bother keeping.
+				if off < z.min || off+size > z.max {
+					// Writing, at least partially, outside the known zeroes.
+					// We could salvage some zero information, but probably
+					// not worth it.
 					continue
 				}
-				// Save updated known zero contents for new store.
+				// We now know we're storing to a zeroed area.
+				// We need to make a smaller zero range for the result of this store.
+				if off == z.min {
+					z.min += size
+				} else if off+size == z.max {
+					z.max -= size
+				} else {
+					// The store splits the known zero range in two.
+					// Keep track of the upper one, as we tend to initialize
+					// things in increasing memory order.
+					// TODO: keep track of larger one instead?
+					z.min = off + size
+				}
+				// Save updated zero range.
 				if zeroes[v.ID] != z {
 					zeroes[v.ID] = z
 					changed = true
@@ -483,12 +448,6 @@ func (f *Func) computeZeroMap() map[ID]ZeroRegion {
 		}
 		if !changed {
 			break
-		}
-	}
-	if f.pass.debug > 0 {
-		fmt.Printf("func %s\n", f.Name)
-		for mem, z := range zeroes {
-			fmt.Printf("  memory=v%d ptr=%v zeromask=%b\n", mem, z.base, z.mask)
 		}
 	}
 	return zeroes
@@ -550,25 +509,23 @@ func IsGlobalAddr(v *Value) bool {
 	if v.Op == OpAddr && v.Args[0].Op == OpSB {
 		return true // address of a global
 	}
-	if v.Op == OpConstNil {
-		return true
-	}
-	if v.Op == OpLoad && IsReadOnlyGlobalAddr(v.Args[0]) {
-		return true // loading from a read-only global - the resulting address can't be a heap address.
+	if v.Op == OpConst64 || v.Op == OpConst32 {
+		return true // nil, the only possible pointer constant
 	}
 	return false
 }
 
 // IsReadOnlyGlobalAddr reports whether v is known to be an address of a read-only global.
 func IsReadOnlyGlobalAddr(v *Value) bool {
-	if v.Op == OpConstNil {
+	if !IsGlobalAddr(v) {
+		return false
+	}
+	if v.Op == OpConst64 || v.Op == OpConst32 {
 		// Nil pointers are read only. See issue 33438.
 		return true
 	}
-	if v.Op == OpAddr && v.Aux.(*obj.LSym).Type == objabi.SRODATA {
-		return true
-	}
-	return false
+	// See TODO in OpAddr case in IsSanitizerSafeAddr below.
+	return strings.HasPrefix(v.Aux.(*obj.LSym).Name, `""..stmp_`)
 }
 
 // IsNewObject reports whether v is a pointer to a freshly allocated & zeroed object at memory state mem.
@@ -613,7 +570,15 @@ func IsSanitizerSafeAddr(v *Value) bool {
 		// read-only once initialized.
 		return true
 	case OpAddr:
-		return v.Aux.(*obj.LSym).Type == objabi.SRODATA
+		sym := v.Aux.(*obj.LSym)
+		// TODO(mdempsky): Find a cleaner way to
+		// detect this. It would be nice if we could
+		// test sym.Type==objabi.SRODATA, but we don't
+		// initialize sym.Type until after function
+		// compilation.
+		if strings.HasPrefix(sym.Name, `""..stmp_`) {
+			return true
+		}
 	}
 	return false
 }

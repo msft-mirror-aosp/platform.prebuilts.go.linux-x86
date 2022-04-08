@@ -238,7 +238,7 @@ func (r Reg) String() string {
 	}
 }
 
-// CondReg is a bit or field in the condition register.
+// CondReg is a bit or field in the conditon register.
 type CondReg int8
 
 const (

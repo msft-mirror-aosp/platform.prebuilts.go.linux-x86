@@ -30,13 +30,11 @@ import (
 // value is a filename on the native file system, not a URL, so it is separated
 // by filepath.Separator, which isn't necessarily '/'.
 //
-// Note that Dir could expose sensitive files and directories. Dir will follow
-// symlinks pointing out of the directory tree, which can be especially dangerous
-// if serving from a directory in which users are able to create arbitrary symlinks.
-// Dir will also allow access to files and directories starting with a period,
-// which could expose sensitive directories like .git or sensitive files like
-// .htpasswd. To exclude files with a leading period, remove the files/directories
-// from the server or create a custom FileSystem implementation.
+// Note that Dir will allow access to files and directories starting with a
+// period, which could expose sensitive directories like a .git directory or
+// sensitive files like .htpasswd. To exclude files with a leading period,
+// remove the files/directories from the server or create a custom FileSystem
+// implementation.
 //
 // An empty Dir is treated as ".".
 type Dir string
@@ -386,18 +384,15 @@ func checkIfUnmodifiedSince(r *Request, modtime time.Time) condResult {
 	if ius == "" || isZeroTime(modtime) {
 		return condNone
 	}
-	t, err := ParseTime(ius)
-	if err != nil {
-		return condNone
+	if t, err := ParseTime(ius); err == nil {
+		// The Date-Modified header truncates sub-second precision, so
+		// use mtime < t+1s instead of mtime <= t to check for unmodified.
+		if modtime.Before(t.Add(1 * time.Second)) {
+			return condTrue
+		}
+		return condFalse
 	}
-
-	// The Last-Modified header truncates sub-second precision so
-	// the modtime needs to be truncated too.
-	modtime = modtime.Truncate(time.Second)
-	if modtime.Before(t) || modtime.Equal(t) {
-		return condTrue
-	}
-	return condFalse
+	return condNone
 }
 
 func checkIfNoneMatch(w ResponseWriter, r *Request) condResult {
@@ -413,7 +408,6 @@ func checkIfNoneMatch(w ResponseWriter, r *Request) condResult {
 		}
 		if buf[0] == ',' {
 			buf = buf[1:]
-			continue
 		}
 		if buf[0] == '*' {
 			return condFalse
@@ -442,10 +436,9 @@ func checkIfModifiedSince(r *Request, modtime time.Time) condResult {
 	if err != nil {
 		return condNone
 	}
-	// The Last-Modified header truncates sub-second precision so
-	// the modtime needs to be truncated too.
-	modtime = modtime.Truncate(time.Second)
-	if modtime.Before(t) || modtime.Equal(t) {
+	// The Date-Modified header truncates sub-second precision, so
+	// use mtime < t+1s instead of mtime <= t to check for unmodified.
+	if modtime.Before(t.Add(1 * time.Second)) {
 		return condFalse
 	}
 	return condTrue
@@ -589,15 +582,17 @@ func serveFile(w ResponseWriter, r *Request, fs FileSystem, name string, redirec
 		}
 	}
 
+	// redirect if the directory name doesn't end in a slash
 	if d.IsDir() {
 		url := r.URL.Path
-		// redirect if the directory name doesn't end in a slash
-		if url == "" || url[len(url)-1] != '/' {
+		if url[len(url)-1] != '/' {
 			localRedirect(w, r, path.Base(url)+"/")
 			return
 		}
+	}
 
-		// use contents of index.html for directory, if present
+	// use contents of index.html for directory, if present
+	if d.IsDir() {
 		index := strings.TrimSuffix(name, "/") + indexPage
 		ff, err := fs.Open(index)
 		if err == nil {
@@ -617,7 +612,7 @@ func serveFile(w ResponseWriter, r *Request, fs FileSystem, name string, redirec
 			writeNotModified(w)
 			return
 		}
-		setLastModified(w, d.ModTime())
+		w.Header().Set("Last-Modified", d.ModTime().UTC().Format(TimeFormat))
 		dirList(w, r, f)
 		return
 	}
@@ -759,7 +754,7 @@ func parseRange(s string, size int64) ([]httpRange, error) {
 	var ranges []httpRange
 	noOverlap := false
 	for _, ra := range strings.Split(s[len(b):], ",") {
-		ra = textproto.TrimString(ra)
+		ra = strings.TrimSpace(ra)
 		if ra == "" {
 			continue
 		}
@@ -767,7 +762,7 @@ func parseRange(s string, size int64) ([]httpRange, error) {
 		if i < 0 {
 			return nil, errors.New("invalid range")
 		}
-		start, end := textproto.TrimString(ra[:i]), textproto.TrimString(ra[i+1:])
+		start, end := strings.TrimSpace(ra[:i]), strings.TrimSpace(ra[i+1:])
 		var r httpRange
 		if start == "" {
 			// If no start is specified, end specifies the

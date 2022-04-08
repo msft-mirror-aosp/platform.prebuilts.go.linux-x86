@@ -548,6 +548,9 @@ func (check *Checker) convertUntyped(x *operand, target Type) {
 			}
 		}
 	case *Interface:
+		if !x.isNil() && !t.Empty() /* empty interfaces are ok */ {
+			goto Error
+		}
 		// Update operand types to the default type rather then
 		// the target (interface) type: values must have concrete
 		// dynamic types. If the value is nil, keep it untyped
@@ -558,7 +561,6 @@ func (check *Checker) convertUntyped(x *operand, target Type) {
 			target = Typ[UntypedNil]
 		} else {
 			// cannot assign untyped values to non-empty interfaces
-			check.completeInterface(t)
 			if !t.Empty() {
 				goto Error
 			}
@@ -807,7 +809,7 @@ func (check *Checker) binary(x *operand, e *ast.BinaryExpr, lhs, rhs ast.Expr, o
 		return
 	}
 
-	if !check.identical(x.typ, y.typ) {
+	if !Identical(x.typ, y.typ) {
 		// only report an error if we have valid types
 		// (otherwise we had an error reported elsewhere already)
 		if x.typ != Typ[Invalid] && y.typ != Typ[Invalid] {
@@ -868,12 +870,8 @@ func (check *Checker) binary(x *operand, e *ast.BinaryExpr, lhs, rhs ast.Expr, o
 
 // index checks an index expression for validity.
 // If max >= 0, it is the upper bound for index.
-// If the result typ is != Typ[Invalid], index is valid and typ is its (possibly named) integer type.
-// If the result val >= 0, index is valid and val is its constant int value.
-func (check *Checker) index(index ast.Expr, max int64) (typ Type, val int64) {
-	typ = Typ[Invalid]
-	val = -1
-
+// If index is valid and the result i >= 0, then i is the constant value of index.
+func (check *Checker) index(index ast.Expr, max int64) (i int64, valid bool) {
 	var x operand
 	check.expr(&x, index)
 	if x.mode == invalid {
@@ -892,24 +890,22 @@ func (check *Checker) index(index ast.Expr, max int64) (typ Type, val int64) {
 		return
 	}
 
-	if x.mode != constant_ {
-		return x.typ, -1
-	}
-
 	// a constant index i must be in bounds
-	if constant.Sign(x.val) < 0 {
-		check.invalidArg(x.pos(), "index %s must not be negative", &x)
-		return
+	if x.mode == constant_ {
+		if constant.Sign(x.val) < 0 {
+			check.invalidArg(x.pos(), "index %s must not be negative", &x)
+			return
+		}
+		i, valid = constant.Int64Val(constant.ToInt(x.val))
+		if !valid || max >= 0 && i >= max {
+			check.errorf(x.pos(), "index %s is out of bounds", &x)
+			return i, false
+		}
+		// 0 <= i [ && i < max ]
+		return i, true
 	}
 
-	v, valid := constant.Int64Val(constant.ToInt(x.val))
-	if !valid || max >= 0 && v >= max {
-		check.errorf(x.pos(), "index %s is out of bounds", &x)
-		return
-	}
-
-	// 0 <= v [ && v < max ]
-	return Typ[Int], v
+	return -1, true
 }
 
 // indexElts checks the elements (elts) of an array or slice composite literal
@@ -925,7 +921,7 @@ func (check *Checker) indexedElts(elts []ast.Expr, typ Type, length int64) int64
 		validIndex := false
 		eval := e
 		if kv, _ := e.(*ast.KeyValueExpr); kv != nil {
-			if typ, i := check.index(kv.Key, length); typ != Typ[Invalid] {
+			if i, ok := check.index(kv.Key, length); ok {
 				if i >= 0 {
 					index = i
 					validIndex = true
@@ -1163,9 +1159,12 @@ func (check *Checker) exprInternal(x *operand, e ast.Expr, hint Type) exprKind {
 			}
 
 		case *Array:
-			// Prevent crash if the array referred to is not yet set up. Was issue #18643.
-			// This is a stop-gap solution. Should use Checker.objPath to report entire
-			// path starting with earliest declaration in the source. TODO(gri) fix this.
+			// Prevent crash if the array referred to is not yet set up.
+			// This is a stop-gap solution; a better approach would use the mechanism of
+			// Checker.ident (typexpr.go) using a path of types. But that would require
+			// passing the path everywhere (all expression-checking methods, not just
+			// type expression checking), and we're not set up for that (quite possibly
+			// an indication that cycle detection needs to be rethought). Was issue #18643.
 			if utyp.elem == nil {
 				check.error(e.Pos(), "illegal cycle in type declaration")
 				goto Error
@@ -1224,7 +1223,7 @@ func (check *Checker) exprInternal(x *operand, e ast.Expr, hint Type) exprKind {
 					xkey := keyVal(x.val)
 					if _, ok := utyp.key.Underlying().(*Interface); ok {
 						for _, vtyp := range visited[xkey] {
-							if check.identical(vtyp, x.typ) {
+							if Identical(vtyp, x.typ) {
 								duplicate = true
 								break
 							}
@@ -1417,8 +1416,8 @@ func (check *Checker) exprInternal(x *operand, e ast.Expr, hint Type) exprKind {
 				if length >= 0 {
 					max = length + 1
 				}
-				if _, v := check.index(expr, max); v >= 0 {
-					x = v
+				if t, ok := check.index(expr, max); ok && t >= 0 {
+					x = t
 				}
 			case i == 0:
 				// default is 0 for the first index
@@ -1566,17 +1565,14 @@ func (check *Checker) typeAssertion(pos token.Pos, x *operand, xtyp *Interface, 
 	if method == nil {
 		return
 	}
+
 	var msg string
-	if wrongType != nil {
-		if check.identical(method.typ, wrongType.typ) {
-			msg = fmt.Sprintf("missing method %s (%s has pointer receiver)", method.name, method.name)
-		} else {
-			msg = fmt.Sprintf("wrong type for method %s (have %s, want %s)", method.name, wrongType.typ, method.typ)
-		}
+	if wrongType {
+		msg = "wrong type for method"
 	} else {
-		msg = "missing method " + method.name
+		msg = "missing method"
 	}
-	check.errorf(pos, "%s cannot have dynamic type %s (%s)", x, T, msg)
+	check.errorf(pos, "%s cannot have dynamic type %s (%s %s)", x, T, msg, method.name)
 }
 
 func (check *Checker) singleValue(x *operand) {

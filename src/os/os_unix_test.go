@@ -275,7 +275,7 @@ func newFileTest(t *testing.T, blocking bool) {
 	_, err := file.Read(b)
 	if !blocking {
 		// We want it to fail with a timeout.
-		if !isDeadlineExceeded(err) {
+		if !IsTimeout(err) {
 			t.Fatalf("No timeout reading from file: %v", err)
 		}
 	} else {

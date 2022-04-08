@@ -5,10 +5,8 @@
 package ssa
 
 import (
-	"cmd/compile/internal/logopt"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
-	"cmd/internal/obj/s390x"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"encoding/binary"
@@ -24,43 +22,19 @@ func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter) {
 	// repeat rewrites until we find no more rewrites
 	pendingLines := f.cachedLineStarts // Holds statement boundaries that need to be moved to a new value/block
 	pendingLines.clear()
-	debug := f.pass.debug
-	if debug > 1 {
-		fmt.Printf("%s: rewriting for %s\n", f.pass.name, f.Name)
-	}
 	for {
 		change := false
 		for _, b := range f.Blocks {
-			var b0 *Block
-			if debug > 1 {
-				b0 = new(Block)
-				*b0 = *b
-				b0.Succs = append([]Edge{}, b.Succs...) // make a new copy, not aliasing
-			}
-			for i, c := range b.ControlValues() {
-				for c.Op == OpCopy {
-					c = c.Args[0]
-					b.ReplaceControl(i, c)
+			if b.Control != nil && b.Control.Op == OpCopy {
+				for b.Control.Op == OpCopy {
+					b.SetControl(b.Control.Args[0])
 				}
 			}
 			if rb(b) {
 				change = true
-				if debug > 1 {
-					fmt.Printf("rewriting %s  ->  %s\n", b0.LongString(), b.LongString())
-				}
 			}
 			for j, v := range b.Values {
-				var v0 *Value
-				if debug > 1 {
-					v0 = new(Value)
-					*v0 = *v
-					v0.Args = append([]*Value{}, v.Args...) // make a new copy, not aliasing
-				}
-
-				vchange := phielimValue(v)
-				if vchange && debug > 1 {
-					fmt.Printf("rewriting %s  ->  %s\n", v0.LongString(), v.LongString())
-				}
+				change = phielimValue(v) || change
 
 				// Eliminate copy inputs.
 				// If any copy input becomes unused, mark it
@@ -94,20 +68,17 @@ func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter) {
 						}
 						a.Pos = a.Pos.WithNotStmt()
 					}
-					vchange = true
+					change = true
 					for a.Uses == 0 {
 						b := a.Args[0]
 						a.reset(OpInvalid)
 						a = b
 					}
 				}
-				if vchange && debug > 1 {
-					fmt.Printf("rewriting %s  ->  %s\n", v0.LongString(), v.LongString())
-				}
 
 				// apply rewrite function
 				if rv(v) {
-					vchange = true
+					change = true
 					// If value changed to a poor choice for a statement boundary, move the boundary
 					if v.Pos.IsStmt() == src.PosIsStmt {
 						if k := nextGoodStatementIndex(v, j, b); k != j {
@@ -115,11 +86,6 @@ func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter) {
 							b.Values[k].Pos = b.Values[k].Pos.WithIsStmt()
 						}
 					}
-				}
-
-				change = change || vchange
-				if vchange && debug > 1 {
-					fmt.Printf("rewriting %s  ->  %s\n", v0.LongString(), v.LongString())
 				}
 			}
 		}
@@ -152,7 +118,13 @@ func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter) {
 			b.Pos = b.Pos.WithIsStmt()
 			pendingLines.remove(b.Pos)
 		}
-		b.truncateValues(j)
+		if j != len(b.Values) {
+			tail := b.Values[j:]
+			for j := range tail {
+				tail[j] = nil
+			}
+			b.Values = b.Values[:j]
+		}
 	}
 }
 
@@ -201,19 +173,8 @@ func mergeSym(x, y interface{}) interface{} {
 	}
 	panic(fmt.Sprintf("mergeSym with two non-nil syms %s %s", x, y))
 }
-
 func canMergeSym(x, y interface{}) bool {
 	return x == nil || y == nil
-}
-
-func mergeSymTyped(x, y Sym) Sym {
-	if x == nil {
-		return y
-	}
-	if y == nil {
-		return x
-	}
-	panic(fmt.Sprintf("mergeSym with two non-nil syms %v %v", x, y))
 }
 
 // canMergeLoadClobber reports whether the load can be merged into target without
@@ -373,11 +334,6 @@ func canMergeLoad(target, load *Value) bool {
 	return true
 }
 
-// symNamed reports whether sym's name is name.
-func symNamed(sym Sym, name string) bool {
-	return sym.String() == name
-}
-
 // isSameSym reports whether sym is the same as the given named symbol
 func isSameSym(sym interface{}, name string) bool {
 	s, ok := sym.(fmt.Stringer)
@@ -385,46 +341,32 @@ func isSameSym(sym interface{}, name string) bool {
 }
 
 // nlz returns the number of leading zeros.
-func nlz64(x int64) int { return bits.LeadingZeros64(uint64(x)) }
-func nlz32(x int32) int { return bits.LeadingZeros32(uint32(x)) }
-func nlz16(x int16) int { return bits.LeadingZeros16(uint16(x)) }
-func nlz8(x int8) int   { return bits.LeadingZeros8(uint8(x)) }
+func nlz(x int64) int64 {
+	return int64(bits.LeadingZeros64(uint64(x)))
+}
 
-// ntzX returns the number of trailing zeros.
-func ntz64(x int64) int { return bits.TrailingZeros64(uint64(x)) }
-func ntz32(x int32) int { return bits.TrailingZeros32(uint32(x)) }
-func ntz16(x int16) int { return bits.TrailingZeros16(uint16(x)) }
-func ntz8(x int8) int   { return bits.TrailingZeros8(uint8(x)) }
+// ntz returns the number of trailing zeros.
+func ntz(x int64) int64 {
+	return int64(bits.TrailingZeros64(uint64(x)))
+}
 
-func oneBit(x int64) bool   { return x&(x-1) == 0 && x != 0 }
-func oneBit8(x int8) bool   { return x&(x-1) == 0 && x != 0 }
-func oneBit16(x int16) bool { return x&(x-1) == 0 && x != 0 }
-func oneBit32(x int32) bool { return x&(x-1) == 0 && x != 0 }
-func oneBit64(x int64) bool { return x&(x-1) == 0 && x != 0 }
+func oneBit(x int64) bool {
+	return bits.OnesCount64(uint64(x)) == 1
+}
+
+// nlo returns the number of leading ones.
+func nlo(x int64) int64 {
+	return nlz(^x)
+}
 
 // nto returns the number of trailing ones.
 func nto(x int64) int64 {
-	return int64(ntz64(^x))
+	return ntz(^x)
 }
 
 // log2 returns logarithm in base 2 of uint64(n), with log2(0) = -1.
 // Rounds down.
 func log2(n int64) int64 {
-	return int64(bits.Len64(uint64(n))) - 1
-}
-
-// logX returns logarithm of n base 2.
-// n must be a positive power of 2 (isPowerOfTwoX returns true).
-func log8(n int8) int64 {
-	return int64(bits.Len8(uint8(n))) - 1
-}
-func log16(n int16) int64 {
-	return int64(bits.Len16(uint16(n))) - 1
-}
-func log32(n int32) int64 {
-	return int64(bits.Len32(uint32(n))) - 1
-}
-func log64(n int64) int64 {
 	return int64(bits.Len64(uint64(n))) - 1
 }
 
@@ -436,18 +378,6 @@ func log2uint32(n int64) int64 {
 
 // isPowerOfTwo reports whether n is a power of 2.
 func isPowerOfTwo(n int64) bool {
-	return n > 0 && n&(n-1) == 0
-}
-func isPowerOfTwo8(n int8) bool {
-	return n > 0 && n&(n-1) == 0
-}
-func isPowerOfTwo16(n int16) bool {
-	return n > 0 && n&(n-1) == 0
-}
-func isPowerOfTwo32(n int32) bool {
-	return n > 0 && n&(n-1) == 0
-}
-func isPowerOfTwo64(n int64) bool {
 	return n > 0 && n&(n-1) == 0
 }
 
@@ -473,16 +403,6 @@ func is16Bit(n int64) bool {
 	return n == int64(int16(n))
 }
 
-// is8Bit reports whether n can be represented as a signed 8 bit integer.
-func is8Bit(n int64) bool {
-	return n == int64(int8(n))
-}
-
-// isU8Bit reports whether n can be represented as an unsigned 8 bit integer.
-func isU8Bit(n int64) bool {
-	return n == int64(uint8(n))
-}
-
 // isU12Bit reports whether n can be represented as an unsigned 12 bit integer.
 func isU12Bit(n int64) bool {
 	return 0 <= n && n < (1<<12)
@@ -505,14 +425,6 @@ func is20Bit(n int64) bool {
 
 // b2i translates a boolean value to 0 or 1 for assigning to auxInt.
 func b2i(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-// b2i32 translates a boolean value to 0 or 1.
-func b2i32(b bool) int32 {
 	if b {
 		return 1
 	}
@@ -557,24 +469,23 @@ func extend32Fto64F(f float32) float64 {
 	return math.Float64frombits(r)
 }
 
-// DivisionNeedsFixUp reports whether the division needs fix-up code.
-func DivisionNeedsFixUp(v *Value) bool {
+// NeedsFixUp reports whether the division needs fix-up code.
+func NeedsFixUp(v *Value) bool {
 	return v.AuxInt == 0
+}
+
+// i2f is used in rules for converting from an AuxInt to a float.
+func i2f(i int64) float64 {
+	return math.Float64frombits(uint64(i))
 }
 
 // auxFrom64F encodes a float64 value so it can be stored in an AuxInt.
 func auxFrom64F(f float64) int64 {
-	if f != f {
-		panic("can't encode a NaN in AuxInt field")
-	}
 	return int64(math.Float64bits(f))
 }
 
 // auxFrom32F encodes a float32 value so it can be stored in an AuxInt.
 func auxFrom32F(f float32) int64 {
-	if f != f {
-		panic("can't encode a NaN in AuxInt field")
-	}
 	return int64(math.Float64bits(extend32Fto64F(f)))
 }
 
@@ -588,123 +499,6 @@ func auxTo64F(i int64) float64 {
 	return math.Float64frombits(uint64(i))
 }
 
-func auxIntToBool(i int64) bool {
-	if i == 0 {
-		return false
-	}
-	return true
-}
-func auxIntToInt8(i int64) int8 {
-	return int8(i)
-}
-func auxIntToInt16(i int64) int16 {
-	return int16(i)
-}
-func auxIntToInt32(i int64) int32 {
-	return int32(i)
-}
-func auxIntToInt64(i int64) int64 {
-	return i
-}
-func auxIntToUint8(i int64) uint8 {
-	return uint8(i)
-}
-func auxIntToFloat32(i int64) float32 {
-	return float32(math.Float64frombits(uint64(i)))
-}
-func auxIntToFloat64(i int64) float64 {
-	return math.Float64frombits(uint64(i))
-}
-func auxIntToValAndOff(i int64) ValAndOff {
-	return ValAndOff(i)
-}
-func auxIntToInt128(x int64) int128 {
-	if x != 0 {
-		panic("nonzero int128 not allowed")
-	}
-	return 0
-}
-func auxIntToFlagConstant(x int64) flagConstant {
-	return flagConstant(x)
-}
-
-func boolToAuxInt(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
-}
-func int8ToAuxInt(i int8) int64 {
-	return int64(i)
-}
-func int16ToAuxInt(i int16) int64 {
-	return int64(i)
-}
-func int32ToAuxInt(i int32) int64 {
-	return int64(i)
-}
-func int64ToAuxInt(i int64) int64 {
-	return int64(i)
-}
-func uint8ToAuxInt(i uint8) int64 {
-	return int64(int8(i))
-}
-func float32ToAuxInt(f float32) int64 {
-	return int64(math.Float64bits(float64(f)))
-}
-func float64ToAuxInt(f float64) int64 {
-	return int64(math.Float64bits(f))
-}
-func valAndOffToAuxInt(v ValAndOff) int64 {
-	return int64(v)
-}
-func int128ToAuxInt(x int128) int64 {
-	if x != 0 {
-		panic("nonzero int128 not allowed")
-	}
-	return 0
-}
-func flagConstantToAuxInt(x flagConstant) int64 {
-	return int64(x)
-}
-
-func auxToString(i interface{}) string {
-	return i.(string)
-}
-func auxToSym(i interface{}) Sym {
-	// TODO: kind of a hack - allows nil interface through
-	s, _ := i.(Sym)
-	return s
-}
-func auxToType(i interface{}) *types.Type {
-	return i.(*types.Type)
-}
-func auxToS390xCCMask(i interface{}) s390x.CCMask {
-	return i.(s390x.CCMask)
-}
-func auxToS390xRotateParams(i interface{}) s390x.RotateParams {
-	return i.(s390x.RotateParams)
-}
-
-func stringToAux(s string) interface{} {
-	return s
-}
-func symToAux(s Sym) interface{} {
-	return s
-}
-func typeToAux(t *types.Type) interface{} {
-	return t
-}
-func s390xCCMaskToAux(c s390x.CCMask) interface{} {
-	return c
-}
-func s390xRotateParamsToAux(r s390x.RotateParams) interface{} {
-	return r
-}
-func cCopToAux(o Op) interface{} {
-	return o
-}
-
 // uaddOvf reports whether unsigned a+b would overflow.
 func uaddOvf(a, b int64) bool {
 	return uint64(a)+uint64(b) < uint64(a)
@@ -712,7 +506,7 @@ func uaddOvf(a, b int64) bool {
 
 // de-virtualize an InterCall
 // 'sym' is the symbol for the itab
-func devirt(v *Value, sym Sym, offset int64) *obj.LSym {
+func devirt(v *Value, sym interface{}, offset int64) *obj.LSym {
 	f := v.Block.Func
 	n, ok := sym.(*obj.LSym)
 	if !ok {
@@ -863,15 +657,13 @@ found:
 	return nil // too far away
 }
 
-// clobber invalidates values. Returns true.
+// clobber invalidates v.  Returns true.
 // clobber is used by rewrite rules to:
-//   A) make sure the values are really dead and never used again.
-//   B) decrement use counts of the values' args.
-func clobber(vv ...*Value) bool {
-	for _, v := range vv {
-		v.reset(OpInvalid)
-		// Note: leave v.Block intact.  The Block field is used after clobber.
-	}
+//   A) make sure v is really dead and never used again.
+//   B) decrement use counts of v's args.
+func clobber(v *Value) bool {
+	v.reset(OpInvalid)
+	// Note: leave v.Block intact.  The Block field is used after clobber.
 	return true
 }
 
@@ -1011,42 +803,52 @@ func arm64Invert(op Op) Op {
 func ccARM64Eval(cc interface{}, flags *Value) int {
 	op := cc.(Op)
 	fop := flags.Op
-	if fop == OpARM64InvertFlags {
+	switch fop {
+	case OpARM64InvertFlags:
 		return -ccARM64Eval(op, flags.Args[0])
-	}
-	if fop != OpARM64FlagConstant {
+	case OpARM64FlagEQ:
+		switch op {
+		case OpARM64Equal, OpARM64GreaterEqual, OpARM64LessEqual,
+			OpARM64GreaterEqualU, OpARM64LessEqualU:
+			return 1
+		default:
+			return -1
+		}
+	case OpARM64FlagLT_ULT:
+		switch op {
+		case OpARM64LessThan, OpARM64LessThanU,
+			OpARM64LessEqual, OpARM64LessEqualU:
+			return 1
+		default:
+			return -1
+		}
+	case OpARM64FlagLT_UGT:
+		switch op {
+		case OpARM64LessThan, OpARM64GreaterThanU,
+			OpARM64LessEqual, OpARM64GreaterEqualU:
+			return 1
+		default:
+			return -1
+		}
+	case OpARM64FlagGT_ULT:
+		switch op {
+		case OpARM64GreaterThan, OpARM64LessThanU,
+			OpARM64GreaterEqual, OpARM64LessEqualU:
+			return 1
+		default:
+			return -1
+		}
+	case OpARM64FlagGT_UGT:
+		switch op {
+		case OpARM64GreaterThan, OpARM64GreaterThanU,
+			OpARM64GreaterEqual, OpARM64GreaterEqualU:
+			return 1
+		default:
+			return -1
+		}
+	default:
 		return 0
 	}
-	fc := flagConstant(flags.AuxInt)
-	b2i := func(b bool) int {
-		if b {
-			return 1
-		}
-		return -1
-	}
-	switch op {
-	case OpARM64Equal:
-		return b2i(fc.eq())
-	case OpARM64NotEqual:
-		return b2i(fc.ne())
-	case OpARM64LessThan:
-		return b2i(fc.lt())
-	case OpARM64LessThanU:
-		return b2i(fc.ult())
-	case OpARM64GreaterThan:
-		return b2i(fc.gt())
-	case OpARM64GreaterThanU:
-		return b2i(fc.ugt())
-	case OpARM64LessEqual:
-		return b2i(fc.le())
-	case OpARM64LessEqualU:
-		return b2i(fc.ule())
-	case OpARM64GreaterEqual:
-		return b2i(fc.ge())
-	case OpARM64GreaterEqualU:
-		return b2i(fc.uge())
-	}
-	return 0
 }
 
 // logRule logs the use of the rule s. This will only be enabled if
@@ -1174,9 +976,7 @@ func zeroUpper32Bits(x *Value, depth int) bool {
 		OpAMD64ORLload, OpAMD64XORLload, OpAMD64CVTTSD2SL,
 		OpAMD64ADDL, OpAMD64ADDLconst, OpAMD64SUBL, OpAMD64SUBLconst,
 		OpAMD64ANDL, OpAMD64ANDLconst, OpAMD64ORL, OpAMD64ORLconst,
-		OpAMD64XORL, OpAMD64XORLconst, OpAMD64NEGL, OpAMD64NOTL,
-		OpAMD64SHRL, OpAMD64SHRLconst, OpAMD64SARL, OpAMD64SARLconst,
-		OpAMD64SHLL, OpAMD64SHLLconst:
+		OpAMD64XORL, OpAMD64XORLconst, OpAMD64NEGL, OpAMD64NOTL:
 		return true
 	case OpArg:
 		return x.Type.Width == 4
@@ -1255,11 +1055,11 @@ func isInlinableMemmove(dst, src *Value, sz int64, c *Config) bool {
 	// lowers them, so we only perform this optimization on platforms that we know to
 	// have fast Move ops.
 	switch c.arch {
-	case "amd64":
+	case "amd64", "amd64p32":
 		return sz <= 16 || (sz < 1024 && disjoint(dst, sz, src, sz))
-	case "386", "arm64":
+	case "386", "ppc64", "ppc64le", "arm64":
 		return sz <= 8
-	case "s390x", "ppc64", "ppc64le":
+	case "s390x":
 		return sz <= 8 || disjoint(dst, sz, src, sz)
 	case "arm", "mips", "mips64", "mipsle", "mips64le":
 		return sz <= 4
@@ -1267,24 +1067,11 @@ func isInlinableMemmove(dst, src *Value, sz int64, c *Config) bool {
 	return false
 }
 
-// logLargeCopy logs the occurrence of a large copy.
-// The best place to do this is in the rewrite rules where the size of the move is easy to find.
-// "Large" is arbitrarily chosen to be 128 bytes; this may change.
-func logLargeCopy(v *Value, s int64) bool {
-	if s < 128 {
-		return true
-	}
-	if logopt.Enabled() {
-		logopt.LogOpt(v.Pos, "copy", "lower", v.Block.Func.Name, fmt.Sprintf("%d bytes", s))
-	}
-	return true
-}
-
 // hasSmallRotate reports whether the architecture has rotate instructions
 // for sizes < 32-bit.  This is used to decide whether to promote some rotations.
 func hasSmallRotate(c *Config) bool {
 	switch c.arch {
-	case "amd64", "386":
+	case "amd64", "amd64p32", "386":
 		return true
 	default:
 		return false
@@ -1333,10 +1120,18 @@ func sizeof(t interface{}) int64 {
 	return t.(*types.Type).Size()
 }
 
+// alignof returns the alignment of t in bytes.
+// It will panic if t is not a *types.Type.
+func alignof(t interface{}) int64 {
+	return t.(*types.Type).Alignment()
+}
+
 // registerizable reports whether t is a primitive type that fits in
 // a register. It assumes float64 values will always fit into registers
 // even if that isn't strictly true.
-func registerizable(b *Block, typ *types.Type) bool {
+// It will panic if t is not a *types.Type.
+func registerizable(b *Block, t interface{}) bool {
+	typ := t.(*types.Type)
 	if typ.IsPtrShaped() || typ.IsFloat() {
 		return true
 	}
@@ -1347,12 +1142,12 @@ func registerizable(b *Block, typ *types.Type) bool {
 }
 
 // needRaceCleanup reports whether this call to racefuncenter/exit isn't needed.
-func needRaceCleanup(sym Sym, v *Value) bool {
+func needRaceCleanup(sym interface{}, v *Value) bool {
 	f := v.Block.Func
 	if !f.Config.Race {
 		return false
 	}
-	if !symNamed(sym, "runtime.racefuncenter") && !symNamed(sym, "runtime.racefuncexit") {
+	if !isSameSym(sym, "runtime.racefuncenter") && !isSameSym(sym, "runtime.racefuncexit") {
 		return false
 	}
 	for _, b := range f.Blocks {
@@ -1388,20 +1183,6 @@ func symIsRO(sym interface{}) bool {
 	return lsym.Type == objabi.SRODATA && len(lsym.R) == 0
 }
 
-// symIsROZero reports whether sym is a read-only global whose data contains all zeros.
-func symIsROZero(sym Sym) bool {
-	lsym := sym.(*obj.LSym)
-	if lsym.Type != objabi.SRODATA || len(lsym.R) != 0 {
-		return false
-	}
-	for _, b := range lsym.P {
-		if b != 0 {
-			return false
-		}
-	}
-	return true
-}
-
 // read8 reads one byte from the read-only global sym at offset off.
 func read8(sym interface{}, off int64) uint8 {
 	lsym := sym.(*obj.LSym)
@@ -1416,231 +1197,40 @@ func read8(sym interface{}, off int64) uint8 {
 }
 
 // read16 reads two bytes from the read-only global sym at offset off.
-func read16(sym interface{}, off int64, byteorder binary.ByteOrder) uint16 {
+func read16(sym interface{}, off int64, bigEndian bool) uint16 {
 	lsym := sym.(*obj.LSym)
-	// lsym.P is written lazily.
-	// Bytes requested after the end of lsym.P are 0.
-	var src []byte
-	if 0 <= off && off < int64(len(lsym.P)) {
-		src = lsym.P[off:]
+	if off >= int64(len(lsym.P))-1 || off < 0 {
+		return 0
 	}
-	buf := make([]byte, 2)
-	copy(buf, src)
-	return byteorder.Uint16(buf)
+	if bigEndian {
+		return binary.BigEndian.Uint16(lsym.P[off:])
+	} else {
+		return binary.LittleEndian.Uint16(lsym.P[off:])
+	}
 }
 
 // read32 reads four bytes from the read-only global sym at offset off.
-func read32(sym interface{}, off int64, byteorder binary.ByteOrder) uint32 {
+func read32(sym interface{}, off int64, bigEndian bool) uint32 {
 	lsym := sym.(*obj.LSym)
-	var src []byte
-	if 0 <= off && off < int64(len(lsym.P)) {
-		src = lsym.P[off:]
+	if off >= int64(len(lsym.P))-3 || off < 0 {
+		return 0
 	}
-	buf := make([]byte, 4)
-	copy(buf, src)
-	return byteorder.Uint32(buf)
+	if bigEndian {
+		return binary.BigEndian.Uint32(lsym.P[off:])
+	} else {
+		return binary.LittleEndian.Uint32(lsym.P[off:])
+	}
 }
 
 // read64 reads eight bytes from the read-only global sym at offset off.
-func read64(sym interface{}, off int64, byteorder binary.ByteOrder) uint64 {
+func read64(sym interface{}, off int64, bigEndian bool) uint64 {
 	lsym := sym.(*obj.LSym)
-	var src []byte
-	if 0 <= off && off < int64(len(lsym.P)) {
-		src = lsym.P[off:]
+	if off >= int64(len(lsym.P))-7 || off < 0 {
+		return 0
 	}
-	buf := make([]byte, 8)
-	copy(buf, src)
-	return byteorder.Uint64(buf)
-}
-
-// sequentialAddresses reports true if it can prove that x + n == y
-func sequentialAddresses(x, y *Value, n int64) bool {
-	if x.Op == Op386ADDL && y.Op == Op386LEAL1 && y.AuxInt == n && y.Aux == nil &&
-		(x.Args[0] == y.Args[0] && x.Args[1] == y.Args[1] ||
-			x.Args[0] == y.Args[1] && x.Args[1] == y.Args[0]) {
-		return true
+	if bigEndian {
+		return binary.BigEndian.Uint64(lsym.P[off:])
+	} else {
+		return binary.LittleEndian.Uint64(lsym.P[off:])
 	}
-	if x.Op == Op386LEAL1 && y.Op == Op386LEAL1 && y.AuxInt == x.AuxInt+n && x.Aux == y.Aux &&
-		(x.Args[0] == y.Args[0] && x.Args[1] == y.Args[1] ||
-			x.Args[0] == y.Args[1] && x.Args[1] == y.Args[0]) {
-		return true
-	}
-	if x.Op == OpAMD64ADDQ && y.Op == OpAMD64LEAQ1 && y.AuxInt == n && y.Aux == nil &&
-		(x.Args[0] == y.Args[0] && x.Args[1] == y.Args[1] ||
-			x.Args[0] == y.Args[1] && x.Args[1] == y.Args[0]) {
-		return true
-	}
-	if x.Op == OpAMD64LEAQ1 && y.Op == OpAMD64LEAQ1 && y.AuxInt == x.AuxInt+n && x.Aux == y.Aux &&
-		(x.Args[0] == y.Args[0] && x.Args[1] == y.Args[1] ||
-			x.Args[0] == y.Args[1] && x.Args[1] == y.Args[0]) {
-		return true
-	}
-	return false
-}
-
-// flagConstant represents the result of a compile-time comparison.
-// The sense of these flags does not necessarily represent the hardware's notion
-// of a flags register - these are just a compile-time construct.
-// We happen to match the semantics to those of arm/arm64.
-// Note that these semantics differ from x86: the carry flag has the opposite
-// sense on a subtraction!
-//   On amd64, C=1 represents a borrow, e.g. SBB on amd64 does x - y - C.
-//   On arm64, C=0 represents a borrow, e.g. SBC on arm64 does x - y - ^C.
-//    (because it does x + ^y + C).
-// See https://en.wikipedia.org/wiki/Carry_flag#Vs._borrow_flag
-type flagConstant uint8
-
-// N reports whether the result of an operation is negative (high bit set).
-func (fc flagConstant) N() bool {
-	return fc&1 != 0
-}
-
-// Z reports whether the result of an operation is 0.
-func (fc flagConstant) Z() bool {
-	return fc&2 != 0
-}
-
-// C reports whether an unsigned add overflowed (carry), or an
-// unsigned subtract did not underflow (borrow).
-func (fc flagConstant) C() bool {
-	return fc&4 != 0
-}
-
-// V reports whether a signed operation overflowed or underflowed.
-func (fc flagConstant) V() bool {
-	return fc&8 != 0
-}
-
-func (fc flagConstant) eq() bool {
-	return fc.Z()
-}
-func (fc flagConstant) ne() bool {
-	return !fc.Z()
-}
-func (fc flagConstant) lt() bool {
-	return fc.N() != fc.V()
-}
-func (fc flagConstant) le() bool {
-	return fc.Z() || fc.lt()
-}
-func (fc flagConstant) gt() bool {
-	return !fc.Z() && fc.ge()
-}
-func (fc flagConstant) ge() bool {
-	return fc.N() == fc.V()
-}
-func (fc flagConstant) ult() bool {
-	return !fc.C()
-}
-func (fc flagConstant) ule() bool {
-	return fc.Z() || fc.ult()
-}
-func (fc flagConstant) ugt() bool {
-	return !fc.Z() && fc.uge()
-}
-func (fc flagConstant) uge() bool {
-	return fc.C()
-}
-
-func (fc flagConstant) ltNoov() bool {
-	return fc.lt() && !fc.V()
-}
-func (fc flagConstant) leNoov() bool {
-	return fc.le() && !fc.V()
-}
-func (fc flagConstant) gtNoov() bool {
-	return fc.gt() && !fc.V()
-}
-func (fc flagConstant) geNoov() bool {
-	return fc.ge() && !fc.V()
-}
-
-func (fc flagConstant) String() string {
-	return fmt.Sprintf("N=%v,Z=%v,C=%v,V=%v", fc.N(), fc.Z(), fc.C(), fc.V())
-}
-
-type flagConstantBuilder struct {
-	N bool
-	Z bool
-	C bool
-	V bool
-}
-
-func (fcs flagConstantBuilder) encode() flagConstant {
-	var fc flagConstant
-	if fcs.N {
-		fc |= 1
-	}
-	if fcs.Z {
-		fc |= 2
-	}
-	if fcs.C {
-		fc |= 4
-	}
-	if fcs.V {
-		fc |= 8
-	}
-	return fc
-}
-
-// Note: addFlags(x,y) != subFlags(x,-y) in some situations:
-//  - the results of the C flag are different
-//  - the results of the V flag when y==minint are different
-
-// addFlags64 returns the flags that would be set from computing x+y.
-func addFlags64(x, y int64) flagConstant {
-	var fcb flagConstantBuilder
-	fcb.Z = x+y == 0
-	fcb.N = x+y < 0
-	fcb.C = uint64(x+y) < uint64(x)
-	fcb.V = x >= 0 && y >= 0 && x+y < 0 || x < 0 && y < 0 && x+y >= 0
-	return fcb.encode()
-}
-
-// subFlags64 returns the flags that would be set from computing x-y.
-func subFlags64(x, y int64) flagConstant {
-	var fcb flagConstantBuilder
-	fcb.Z = x-y == 0
-	fcb.N = x-y < 0
-	fcb.C = uint64(y) <= uint64(x) // This code follows the arm carry flag model.
-	fcb.V = x >= 0 && y < 0 && x-y < 0 || x < 0 && y >= 0 && x-y >= 0
-	return fcb.encode()
-}
-
-// addFlags32 returns the flags that would be set from computing x+y.
-func addFlags32(x, y int32) flagConstant {
-	var fcb flagConstantBuilder
-	fcb.Z = x+y == 0
-	fcb.N = x+y < 0
-	fcb.C = uint32(x+y) < uint32(x)
-	fcb.V = x >= 0 && y >= 0 && x+y < 0 || x < 0 && y < 0 && x+y >= 0
-	return fcb.encode()
-}
-
-// subFlags32 returns the flags that would be set from computing x-y.
-func subFlags32(x, y int32) flagConstant {
-	var fcb flagConstantBuilder
-	fcb.Z = x-y == 0
-	fcb.N = x-y < 0
-	fcb.C = uint32(y) <= uint32(x) // This code follows the arm carry flag model.
-	fcb.V = x >= 0 && y < 0 && x-y < 0 || x < 0 && y >= 0 && x-y >= 0
-	return fcb.encode()
-}
-
-// logicFlags64 returns flags set to the sign/zeroness of x.
-// C and V are set to false.
-func logicFlags64(x int64) flagConstant {
-	var fcb flagConstantBuilder
-	fcb.Z = x == 0
-	fcb.N = x < 0
-	return fcb.encode()
-}
-
-// logicFlags32 returns flags set to the sign/zeroness of x.
-// C and V are set to false.
-func logicFlags32(x int32) flagConstant {
-	var fcb flagConstantBuilder
-	fcb.Z = x == 0
-	fcb.N = x < 0
-	return fcb.encode()
 }

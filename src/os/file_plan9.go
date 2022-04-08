@@ -111,10 +111,11 @@ func openFileNolog(name string, flag int, perm FileMode) (*File, error) {
 		fd, e = syscall.Create(name, flag, syscallMode(perm))
 	} else {
 		fd, e = syscall.Open(name, flag)
-		if IsNotExist(e) && create {
-			fd, e = syscall.Create(name, flag, syscallMode(perm))
-			if e != nil {
-				return nil, &PathError{"create", name, e}
+		if e != nil && create {
+			var e1 error
+			fd, e1 = syscall.Create(name, flag, syscallMode(perm))
+			if e1 == nil {
+				e = nil
 			}
 		}
 	}
@@ -233,10 +234,10 @@ func (f *File) Sync() error {
 	var buf [syscall.STATFIXLEN]byte
 	n, err := d.Marshal(buf[:])
 	if err != nil {
-		return &PathError{"sync", f.name, err}
+		return NewSyscallError("fsync", err)
 	}
 	if err = syscall.Fwstat(f.fd, buf[:n]); err != nil {
-		return &PathError{"sync", f.name, err}
+		return NewSyscallError("fsync", err)
 	}
 	return nil
 }
@@ -289,11 +290,6 @@ func (f *File) pwrite(b []byte, off int64) (n int, err error) {
 // relative to the current offset, and 2 means relative to the end.
 // It returns the new offset and an error, if any.
 func (f *File) seek(offset int64, whence int) (ret int64, err error) {
-	if f.dirinfo != nil {
-		// Free cached dirinfo, so we allocate a new one if we
-		// access this file as a directory again. See #35767 and #37161.
-		f.dirinfo = nil
-	}
 	return syscall.Seek(f.fd, offset, whence)
 }
 

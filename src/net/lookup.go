@@ -27,7 +27,8 @@ var protocols = map[string]int{
 }
 
 // services contains minimal mappings between services names and port
-// numbers for platforms that don't have a complete list of port numbers.
+// numbers for platforms that don't have a complete list of port numbers
+// (some Solaris distros, nacl, etc).
 //
 // See https://www.iana.org/assignments/service-names-port-numbers
 //
@@ -202,31 +203,6 @@ func LookupIP(host string) ([]IP, error) {
 // It returns a slice of that host's IPv4 and IPv6 addresses.
 func (r *Resolver) LookupIPAddr(ctx context.Context, host string) ([]IPAddr, error) {
 	return r.lookupIPAddr(ctx, "ip", host)
-}
-
-// LookupIP looks up host for the given network using the local resolver.
-// It returns a slice of that host's IP addresses of the type specified by
-// network.
-// network must be one of "ip", "ip4" or "ip6".
-func (r *Resolver) LookupIP(ctx context.Context, network, host string) ([]IP, error) {
-	afnet, _, err := parseNetwork(ctx, network, false)
-	if err != nil {
-		return nil, err
-	}
-	switch afnet {
-	case "ip", "ip4", "ip6":
-	default:
-		return nil, UnknownNetworkError(network)
-	}
-	addrs, err := r.internetAddrList(ctx, afnet, host)
-	if err != nil {
-		return nil, err
-	}
-	ips := make([]IP, 0, len(addrs))
-	for _, addr := range addrs {
-		ips = append(ips, addr.(*IPAddr).IP)
-	}
-	return ips, nil
 }
 
 // onlyValuesCtx is a context that uses an underlying context

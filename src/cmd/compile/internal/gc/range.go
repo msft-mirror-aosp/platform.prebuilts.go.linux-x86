@@ -101,7 +101,7 @@ func typecheckrangeExpr(n *Node) {
 		v2 = n.List.Second()
 	}
 
-	// this is not only an optimization but also a requirement in the spec.
+	// this is not only a optimization but also a requirement in the spec.
 	// "if the second iteration variable is the blank identifier, the range
 	// clause is equivalent to the same clause with only the first variable
 	// present."
@@ -216,7 +216,7 @@ func walkrange(n *Node) *Node {
 			return n
 		}
 
-		// order.stmt arranged for a copy of the array/slice variable if needed.
+		// orderstmt arranged for a copy of the array/slice variable if needed.
 		ha := a
 
 		hv1 := temp(types.Types[TINT])
@@ -291,7 +291,7 @@ func walkrange(n *Node) *Node {
 		n.List.Set1(a)
 
 	case TMAP:
-		// order.stmt allocated the iterator for us.
+		// orderstmt allocated the iterator for us.
 		// we only use a once, so no copy needed.
 		ha := a
 
@@ -327,14 +327,14 @@ func walkrange(n *Node) *Node {
 		}
 
 	case TCHAN:
-		// order.stmt arranged for a copy of the channel variable.
+		// orderstmt arranged for a copy of the channel variable.
 		ha := a
 
 		n.Left = nil
 
 		hv1 := temp(t.Elem())
 		hv1.SetTypecheck(1)
-		if t.Elem().HasPointers() {
+		if types.Haspointers(t.Elem()) {
 			init = append(init, nod(OAS, hv1, nil))
 		}
 		hb := temp(types.Types[TBOOL])
@@ -343,7 +343,7 @@ func walkrange(n *Node) *Node {
 		a := nod(OAS2RECV, nil, nil)
 		a.SetTypecheck(1)
 		a.List.Set2(hv1, hb)
-		a.Right = nod(ORECV, ha, nil)
+		a.Rlist.Set1(nod(ORECV, ha, nil))
 		n.Left.Ninit.Set1(a)
 		if v1 == nil {
 			body = nil
@@ -371,7 +371,7 @@ func walkrange(n *Node) *Node {
 		//   // original body
 		// }
 
-		// order.stmt arranged for a copy of the string variable.
+		// orderstmt arranged for a copy of the string variable.
 		ha := a
 
 		hv1 := temp(types.Types[TINT])
@@ -586,7 +586,7 @@ func arrayClear(n, v1, v2, a *Node) bool {
 	n.Nbody.Append(nod(OAS, hn, tmp))
 
 	var fn *Node
-	if a.Type.Elem().HasPointers() {
+	if a.Type.Elem().HasHeapPointer() {
 		// memclrHasPointers(hp, hn)
 		Curfn.Func.setWBPos(stmt.Pos)
 		fn = mkcall("memclrHasPointers", nil, nil, hp, hn)

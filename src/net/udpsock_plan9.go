@@ -109,9 +109,7 @@ func (sl *sysListener) listenUDP(ctx context.Context, laddr *UDPAddr) (*UDPConn,
 }
 
 func (sl *sysListener) listenMulticastUDP(ctx context.Context, ifi *Interface, gaddr *UDPAddr) (*UDPConn, error) {
-	// Plan 9 does not like announce command with a multicast address,
-	// so do not specify an IP address when listening.
-	l, err := listenPlan9(ctx, sl.network, &UDPAddr{IP: nil, Port: gaddr.Port, Zone: gaddr.Zone})
+	l, err := listenPlan9(ctx, sl.network, gaddr)
 	if err != nil {
 		return nil, err
 	}
@@ -131,13 +129,11 @@ func (sl *sysListener) listenMulticastUDP(ctx context.Context, ifi *Interface, g
 			return nil, err
 		}
 	}
-
-	have4 := gaddr.IP.To4() != nil
 	for _, addr := range addrs {
-		if ipnet, ok := addr.(*IPNet); ok && (ipnet.IP.To4() != nil) == have4 {
+		if ipnet, ok := addr.(*IPNet); ok {
 			_, err = l.ctl.WriteString("addmulti " + ipnet.IP.String() + " " + gaddr.IP.String())
 			if err != nil {
-				return nil, &OpError{Op: "addmulti", Net: "", Source: nil, Addr: ipnet, Err: err}
+				return nil, err
 			}
 		}
 	}

@@ -98,15 +98,13 @@ func (t *tester) run() {
 		os.Setenv("PATH", fmt.Sprintf("%s%c%s", gobin, os.PathListSeparator, os.Getenv("PATH")))
 	}
 
-	cmd := exec.Command("go", "env", "CGO_ENABLED")
-	cmd.Stderr = new(bytes.Buffer)
-	slurp, err := cmd.Output()
+	slurp, err := exec.Command("go", "env", "CGO_ENABLED").Output()
 	if err != nil {
-		fatalf("Error running go env CGO_ENABLED: %v\n%s", err, cmd.Stderr)
+		log.Fatalf("Error running go env CGO_ENABLED: %v", err)
 	}
 	t.cgoEnabled, _ = strconv.ParseBool(strings.TrimSpace(string(slurp)))
 	if flag.NArg() > 0 && t.runRxStr != "" {
-		fatalf("the -run regular expression flag is mutually exclusive with test name arguments")
+		log.Fatalf("the -run regular expression flag is mutually exclusive with test name arguments")
 	}
 
 	t.runNames = flag.Args()
@@ -156,7 +154,7 @@ func (t *tester) run() {
 	if s := os.Getenv("GO_TEST_TIMEOUT_SCALE"); s != "" {
 		t.timeoutScale, err = strconv.Atoi(s)
 		if err != nil {
-			fatalf("failed to parse $GO_TEST_TIMEOUT_SCALE = %q as integer: %v", s, err)
+			log.Fatalf("failed to parse $GO_TEST_TIMEOUT_SCALE = %q as integer: %v", s, err)
 		}
 	}
 
@@ -178,20 +176,24 @@ func (t *tester) run() {
 		return
 	}
 
+	// We must unset GOROOT_FINAL before tests, because runtime/debug requires
+	// correct access to source code, so if we have GOROOT_FINAL in effect,
+	// at least runtime/debug test will fail.
+	// If GOROOT_FINAL was set before, then now all the commands will appear stale.
+	// Nothing we can do about that other than not checking them below.
+	// (We call checkNotStale but only with "std" not "cmd".)
+	os.Setenv("GOROOT_FINAL_OLD", os.Getenv("GOROOT_FINAL")) // for cmd/link test
+	os.Unsetenv("GOROOT_FINAL")
+
 	for _, name := range t.runNames {
 		if !t.isRegisteredTestName(name) {
-			fatalf("unknown test %q", name)
+			log.Fatalf("unknown test %q", name)
 		}
 	}
 
 	// On a few builders, make GOROOT unwritable to catch tests writing to it.
 	if strings.HasPrefix(os.Getenv("GO_BUILDER_NAME"), "linux-") {
-		if os.Getuid() == 0 {
-			// Don't bother making GOROOT unwritable:
-			// we're running as root, so permissions would have no effect.
-		} else {
-			xatexit(t.makeGOROOTUnwritable())
-		}
+		t.makeGOROOTUnwritable()
 	}
 
 	for _, dt := range t.tests {
@@ -206,19 +208,18 @@ func (t *tester) run() {
 			if t.keepGoing {
 				log.Printf("Failed: %v", err)
 			} else {
-				fatalf("Failed: %v", err)
+				log.Fatalf("Failed: %v", err)
 			}
 		}
 	}
 	t.runPending(nil)
 	timelog("end", "dist test")
-
 	if t.failed {
 		fmt.Println("\nFAILED")
-		xexit(1)
+		os.Exit(1)
 	} else if incomplete[goos+"/"+goarch] {
 		fmt.Println("\nFAILED (incomplete port)")
-		xexit(1)
+		os.Exit(1)
 	} else if t.partial {
 		fmt.Println("\nALL TESTS PASSED (some were excluded)")
 	} else {
@@ -252,7 +253,7 @@ func short() string {
 	if v := os.Getenv("GO_TEST_SHORT"); v != "" {
 		short, err := strconv.ParseBool(v)
 		if err != nil {
-			fatalf("invalid GO_TEST_SHORT %q: %v", v, err)
+			log.Fatalf("invalid GO_TEST_SHORT %q: %v", v, err)
 		}
 		if !short {
 			return "-short=false"
@@ -417,13 +418,13 @@ func (t *tester) registerTests() {
 			cmd.Args = append(cmd.Args, "-tags=race")
 		}
 		cmd.Args = append(cmd.Args, "std")
-		if t.shouldTestCmd() {
+		if !t.race {
 			cmd.Args = append(cmd.Args, "cmd")
 		}
 		cmd.Stderr = new(bytes.Buffer)
 		all, err := cmd.Output()
 		if err != nil {
-			fatalf("Error running go list std cmd: %v:\n%s", err, cmd.Stderr)
+			log.Fatalf("Error running go list std cmd: %v:\n%s", err, cmd.Stderr)
 		}
 		pkgs := strings.Fields(string(all))
 		for _, pkg := range pkgs {
@@ -445,29 +446,6 @@ func (t *tester) registerTests() {
 			heading: "os/user with tag osusergo",
 			fn: func(dt *distTest) error {
 				t.addCmd(dt, "src", t.goTest(), t.timeout(300), "-tags=osusergo", "os/user")
-				return nil
-			},
-		})
-	}
-
-	if t.iOS() && !t.compileOnly {
-		t.tests = append(t.tests, distTest{
-			name:    "x509omitbundledroots",
-			heading: "crypto/x509 without bundled roots",
-			fn: func(dt *distTest) error {
-				t.addCmd(dt, "src", t.goTest(), t.timeout(300), "-tags=x509omitbundledroots", "-run=OmitBundledRoots", "crypto/x509")
-				return nil
-			},
-		})
-	}
-
-	// Test the ios build tag on darwin/amd64 for the iOS simulator.
-	if goos == "darwin" && !t.iOS() {
-		t.tests = append(t.tests, distTest{
-			name:    "amd64ios",
-			heading: "ios tag on darwin/amd64",
-			fn: func(dt *distTest) error {
-				t.addCmd(dt, "src", t.goTest(), t.timeout(300), "-tags=ios", "-run=SystemRoots", "crypto/x509")
 				return nil
 			},
 		})
@@ -558,7 +536,7 @@ func (t *tester) registerTests() {
 				err := cmd.Run()
 
 				if rerr := os.Rename(moved, goroot); rerr != nil {
-					fatalf("failed to restore GOROOT: %v", rerr)
+					log.Fatalf("failed to restore GOROOT: %v", rerr)
 				}
 				return err
 			},
@@ -597,7 +575,7 @@ func (t *tester) registerTests() {
 	}
 
 	// Test internal linking of PIE binaries where it is supported.
-	if t.internalLinkPIE() {
+	if goos == "linux" && (goarch == "amd64" || goarch == "arm64") {
 		t.tests = append(t.tests, distTest{
 			name:    "pie_internal",
 			heading: "internal linking of -buildmode=pie",
@@ -607,7 +585,7 @@ func (t *tester) registerTests() {
 			},
 		})
 		// Also test a cgo package.
-		if t.cgoEnabled && t.internalLink() {
+		if t.cgoEnabled {
 			t.tests = append(t.tests, distTest{
 				name:    "pie_internal_cgo",
 				heading: "internal linking of -buildmode=pie",
@@ -686,13 +664,15 @@ func (t *tester) registerTests() {
 		})
 	}
 
+	if t.hasBash() && t.cgoEnabled && goos != "android" && goos != "darwin" {
+		t.registerTest("testgodefs", "../misc/cgo/testgodefs", "./test.bash")
+	}
+
 	// Don't run these tests with $GO_GCFLAGS because most of them
 	// assume that they can run "go install" with no -gcflags and not
 	// recompile the entire standard library. If make.bash ran with
 	// special -gcflags, that's not true.
 	if t.cgoEnabled && gogcflags == "" {
-		t.registerHostTest("testgodefs", "../misc/cgo/testgodefs", "misc/cgo/testgodefs", ".")
-
 		t.registerTest("testso", "../misc/cgo/testso", t.goTest(), t.timeout(600), ".")
 		t.registerTest("testsovar", "../misc/cgo/testsovar", t.goTest(), t.timeout(600), ".")
 		if t.supportedBuildmode("c-archive") {
@@ -708,7 +688,7 @@ func (t *tester) registerTests() {
 			t.registerTest("testplugin", "../misc/cgo/testplugin", t.goTest(), t.timeout(600), ".")
 		}
 		if gohostos == "linux" && goarch == "amd64" {
-			t.registerTest("testasan", "../misc/cgo/testasan", "go", "run", ".")
+			t.registerTest("testasan", "../misc/cgo/testasan", "go", "run", "main.go")
 		}
 		if mSanSupported(goos, goarch) {
 			t.registerHostTest("testsanitizers/msan", "../misc/cgo/testsanitizers", "misc/cgo/testsanitizers", ".")
@@ -717,16 +697,16 @@ func (t *tester) registerTests() {
 			t.registerHostTest("cgo_errors", "../misc/cgo/errors", "misc/cgo/errors", ".")
 		}
 		if gohostos == "linux" && t.extLink() {
-			t.registerTest("testsigfwd", "../misc/cgo/testsigfwd", "go", "run", ".")
+			t.registerTest("testsigfwd", "../misc/cgo/testsigfwd", "go", "run", "main.go")
 		}
 	}
 
 	// Doc tests only run on builders.
 	// They find problems approximately never.
-	if goos != "js" && goos != "android" && !t.iOS() && os.Getenv("GO_BUILDER_NAME") != "" {
-		t.registerTest("doc_progs", "../doc/progs", "go", "run", "run.go")
-		t.registerTest("wiki", "../doc/articles/wiki", t.goTest(), ".")
-		t.registerTest("codewalk", "../doc/codewalk", t.goTest(), "codewalk_test.go")
+	if t.hasBash() && goos != "nacl" && goos != "js" && goos != "android" && !t.iOS() && os.Getenv("GO_BUILDER_NAME") != "" {
+		t.registerTest("doc_progs", "../doc/progs", "time", "go", "run", "run.go")
+		t.registerTest("wiki", "../doc/articles/wiki", "./test.bash")
+		t.registerTest("codewalk", "../doc/codewalk", "time", "./run")
 	}
 
 	if goos != "android" && !t.iOS() {
@@ -755,18 +735,13 @@ func (t *tester) registerTests() {
 			})
 		}
 	}
-	// Only run the API check on fast development platforms. Android, iOS, and JS
-	// are always cross-compiled, and the filesystems on our only plan9 builders
-	// are too slow to complete in a reasonable timeframe. Every platform checks
-	// the API on every GOOS/GOARCH/CGO_ENABLED combination anyway, so we really
-	// only need to run this check once anywhere to get adequate coverage.
-	if goos != "android" && !t.iOS() && goos != "js" && goos != "plan9" {
+	if goos != "nacl" && goos != "android" && !t.iOS() && goos != "js" {
 		t.tests = append(t.tests, distTest{
 			name:    "api",
 			heading: "API check",
 			fn: func(dt *distTest) error {
 				if t.compileOnly {
-					t.addCmd(dt, "src", "go", "build", "-o", os.DevNull, filepath.Join(goroot, "src/cmd/api/run.go"))
+					t.addCmd(dt, "src", "go", "build", filepath.Join(goroot, "src/cmd/api/run.go"))
 					return nil
 				}
 				t.addCmd(dt, "src", "go", "run", filepath.Join(goroot, "src/cmd/api/run.go"))
@@ -901,7 +876,7 @@ func (t *tester) addCmd(dt *distTest, dir string, cmdline ...interface{}) *exec.
 }
 
 func (t *tester) iOS() bool {
-	return goos == "darwin" && goarch == "arm64"
+	return goos == "darwin" && (goarch == "arm" || goarch == "arm64")
 }
 
 func (t *tester) out(v string) {
@@ -915,8 +890,8 @@ func (t *tester) extLink() bool {
 	pair := gohostos + "-" + goarch
 	switch pair {
 	case "aix-ppc64",
-		"android-arm", "android-arm64",
-		"darwin-amd64", "darwin-arm64",
+		"android-arm",
+		"darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
 		"dragonfly-amd64",
 		"freebsd-386", "freebsd-amd64", "freebsd-arm",
 		"linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-mips64", "linux-mips64le", "linux-mips", "linux-mipsle", "linux-s390x",
@@ -941,7 +916,7 @@ func (t *tester) internalLink() bool {
 	if goos == "android" {
 		return false
 	}
-	if t.iOS() {
+	if goos == "darwin" && (goarch == "arm" || goarch == "arm64") {
 		return false
 	}
 	// Internally linking cgo is incomplete on some architectures.
@@ -957,17 +932,6 @@ func (t *tester) internalLink() bool {
 	return true
 }
 
-func (t *tester) internalLinkPIE() bool {
-	switch goos + "-" + goarch {
-	case "linux-amd64", "linux-arm64",
-		"android-arm64":
-		return true
-	case "windows-amd64", "windows-386", "windows-arm":
-		return true
-	}
-	return false
-}
-
 func (t *tester) supportedBuildmode(mode string) bool {
 	pair := goos + "-" + goarch
 	switch mode {
@@ -977,7 +941,7 @@ func (t *tester) supportedBuildmode(mode string) bool {
 		}
 		switch pair {
 		case "aix-ppc64",
-			"darwin-amd64", "darwin-arm64",
+			"darwin-386", "darwin-amd64", "darwin-arm", "darwin-arm64",
 			"linux-amd64", "linux-386", "linux-ppc64le", "linux-s390x",
 			"freebsd-amd64",
 			"windows-amd64", "windows-386":
@@ -987,7 +951,7 @@ func (t *tester) supportedBuildmode(mode string) bool {
 	case "c-shared":
 		switch pair {
 		case "linux-386", "linux-amd64", "linux-arm", "linux-arm64", "linux-ppc64le", "linux-s390x",
-			"darwin-amd64",
+			"darwin-amd64", "darwin-386",
 			"freebsd-amd64",
 			"android-arm", "android-arm64", "android-386",
 			"windows-amd64", "windows-386":
@@ -1008,8 +972,6 @@ func (t *tester) supportedBuildmode(mode string) bool {
 			return true
 		case "darwin-amd64":
 			return true
-		case "freebsd-amd64":
-			return true
 		}
 		return false
 	case "pie":
@@ -1020,13 +982,11 @@ func (t *tester) supportedBuildmode(mode string) bool {
 			return true
 		case "darwin-amd64":
 			return true
-		case "windows-amd64", "windows-386", "windows-arm":
-			return true
 		}
 		return false
 
 	default:
-		fatalf("internal error: unknown buildmode %s", mode)
+		log.Fatalf("internal error: unknown buildmode %s", mode)
 		return false
 	}
 }
@@ -1045,31 +1005,13 @@ func (t *tester) registerHostTest(name, heading, dir, pkg string) {
 }
 
 func (t *tester) runHostTest(dir, pkg string) error {
-	out, err := exec.Command("go", "env", "GOEXE", "GOTMPDIR").Output()
-	if err != nil {
-		return err
-	}
-
-	parts := strings.Split(string(out), "\n")
-	if len(parts) < 2 {
-		return fmt.Errorf("'go env GOEXE GOTMPDIR' output contains <2 lines")
-	}
-	GOEXE := strings.TrimSpace(parts[0])
-	GOTMPDIR := strings.TrimSpace(parts[1])
-
-	f, err := ioutil.TempFile(GOTMPDIR, "test.test-*"+GOEXE)
-	if err != nil {
-		return err
-	}
-	f.Close()
-	defer os.Remove(f.Name())
-
-	cmd := t.dirCmd(dir, t.goTest(), "-c", "-o", f.Name(), pkg)
+	defer os.Remove(filepath.Join(goroot, dir, "test.test"))
+	cmd := t.dirCmd(dir, t.goTest(), "-c", "-o", "test.test", pkg)
 	cmd.Env = append(os.Environ(), "GOARCH="+gohostarch, "GOOS="+gohostos)
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	return t.dirCmd(dir, f.Name(), "-test.short").Run()
+	return t.dirCmd(dir, "./test.test", "-test.short").Run()
 }
 
 func (t *tester) cgoTest(dt *distTest) error {
@@ -1083,7 +1025,7 @@ func (t *tester) cgoTest(dt *distTest) error {
 
 	pair := gohostos + "-" + goarch
 	switch pair {
-	case "darwin-amd64",
+	case "darwin-386", "darwin-amd64",
 		"openbsd-386", "openbsd-amd64",
 		"windows-386", "windows-amd64":
 		// test linkmode=external, but __thread not supported, so skip testtls.
@@ -1096,7 +1038,7 @@ func (t *tester) cgoTest(dt *distTest) error {
 		cmd = t.addCmd(dt, "misc/cgo/test", t.goTest(), "-ldflags", "-linkmode=external -s")
 
 	case "aix-ppc64",
-		"android-arm", "android-arm64",
+		"android-arm",
 		"dragonfly-amd64",
 		"freebsd-386", "freebsd-amd64", "freebsd-arm",
 		"linux-386", "linux-amd64", "linux-arm", "linux-ppc64le", "linux-s390x",
@@ -1144,9 +1086,6 @@ func (t *tester) cgoTest(dt *distTest) error {
 
 			if t.supportedBuildmode("pie") {
 				t.addCmd(dt, "misc/cgo/test", t.goTest(), "-buildmode=pie")
-				if t.internalLink() && t.internalLinkPIE() {
-					t.addCmd(dt, "misc/cgo/test", t.goTest(), "-buildmode=pie", "-ldflags=-linkmode=internal")
-				}
 				t.addCmd(dt, "misc/cgo/testtls", t.goTest(), "-buildmode=pie")
 				t.addCmd(dt, "misc/cgo/nocgo", t.goTest(), "-buildmode=pie")
 			}
@@ -1224,7 +1163,7 @@ func (t *tester) runPending(nextTest *distTest) {
 		checkNotStale("go", "std")
 	}
 	if t.failed && !t.keepGoing {
-		fatalf("FAILED")
+		log.Fatal("FAILED")
 	}
 
 	if dt := nextTest; dt != nil {
@@ -1364,6 +1303,7 @@ func (t *tester) runFlag(rx string) string {
 }
 
 func (t *tester) raceTest(dt *distTest) error {
+	t.addCmd(dt, "src", t.goTest(), "-race", "-i", "runtime/race", "flag", "os", "os/exec")
 	t.addCmd(dt, "src", t.goTest(), "-race", t.runFlag("Output"), "runtime/race")
 	t.addCmd(dt, "src", t.goTest(), "-race", t.runFlag("TestParse|TestEcho|TestStdinCloseRace|TestClosedPipeRace|TestTypeRace|TestFdRace|TestFdReadRace|TestFileCloseRace"), "flag", "net", "os", "os/exec", "encoding/gob")
 	// We don't want the following line, because it
@@ -1394,21 +1334,17 @@ var runtest struct {
 
 func (t *tester) testDirTest(dt *distTest, shard, shards int) error {
 	runtest.Do(func() {
-		f, err := ioutil.TempFile("", "runtest-*.exe") // named exe for Windows, but harmless elsewhere
-		if err != nil {
+		const exe = "runtest.exe" // named exe for Windows, but harmless elsewhere
+		cmd := t.dirCmd("test", "go", "build", "-o", exe, "run.go")
+		cmd.Env = append(os.Environ(), "GOOS="+gohostos, "GOARCH="+gohostarch)
+		runtest.exe = filepath.Join(cmd.Dir, exe)
+		if err := cmd.Run(); err != nil {
 			runtest.err = err
 			return
 		}
-		f.Close()
-
-		runtest.exe = f.Name()
 		xatexit(func() {
 			os.Remove(runtest.exe)
 		})
-
-		cmd := t.dirCmd("test", "go", "build", "-o", runtest.exe, "run.go")
-		cmd.Env = append(os.Environ(), "GOOS="+gohostos, "GOARCH="+gohostarch)
-		runtest.err = cmd.Run()
 	})
 	if runtest.err != nil {
 		return runtest.err
@@ -1467,63 +1403,32 @@ func (t *tester) packageHasBenchmarks(pkg string) bool {
 
 // makeGOROOTUnwritable makes all $GOROOT files & directories non-writable to
 // check that no tests accidentally write to $GOROOT.
-func (t *tester) makeGOROOTUnwritable() (undo func()) {
-	dir := os.Getenv("GOROOT")
-	if dir == "" {
+func (t *tester) makeGOROOTUnwritable() {
+	if os.Getenv("GO_BUILDER_NAME") == "" {
+		panic("not a builder")
+	}
+	if os.Getenv("GOROOT") == "" {
 		panic("GOROOT not set")
 	}
-
-	type pathMode struct {
-		path string
-		mode os.FileMode
-	}
-	var dirs []pathMode // in lexical order
-
-	undo = func() {
-		for i := range dirs {
-			os.Chmod(dirs[i].path, dirs[i].mode) // best effort
+	err := filepath.Walk(os.Getenv("GOROOT"), func(name string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
-	}
-
-	gocache := os.Getenv("GOCACHE")
-	if gocache == "" {
-		panic("GOCACHE not set")
-	}
-	gocacheSubdir, _ := filepath.Rel(dir, gocache)
-
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if suffix := strings.TrimPrefix(path, dir+string(filepath.Separator)); suffix != "" {
-			if suffix == gocacheSubdir {
-				// Leave GOCACHE writable: we may need to write test binaries into it.
-				return filepath.SkipDir
-			}
-			if suffix == ".git" {
-				// Leave Git metadata in whatever state it was in. It may contain a lot
-				// of files, and it is highly unlikely that a test will try to modify
-				// anything within that directory.
-				return filepath.SkipDir
-			}
+		if !fi.Mode().IsRegular() && !fi.IsDir() {
+			return nil
 		}
-		if err == nil {
-			mode := info.Mode()
-			if mode&0222 != 0 && (mode.IsDir() || mode.IsRegular()) {
-				dirs = append(dirs, pathMode{path, mode})
+		mode := fi.Mode()
+		newMode := mode & ^os.FileMode(0222)
+		if newMode != mode {
+			if err := os.Chmod(name, newMode); err != nil {
+				return err
 			}
 		}
 		return nil
 	})
-
-	// Run over list backward to chmod children before parents.
-	for i := len(dirs) - 1; i >= 0; i-- {
-		err := os.Chmod(dirs[i].path, dirs[i].mode&^0222)
-		if err != nil {
-			dirs = dirs[i:] // Only undo what we did so far.
-			undo()
-			fatalf("failed to make GOROOT read-only: %v", err)
-		}
+	if err != nil {
+		log.Fatalf("making builder's files read-only: %v", err)
 	}
-
-	return undo
 }
 
 // shouldUsePrecompiledStdTest reports whether "dist test" should use
@@ -1543,14 +1448,6 @@ func (t *tester) shouldUsePrecompiledStdTest() bool {
 	}
 	_, err := os.Stat(bin)
 	return err == nil
-}
-
-func (t *tester) shouldTestCmd() bool {
-	if goos == "js" && goarch == "wasm" {
-		// Issues 25911, 35220
-		return false
-	}
-	return true
 }
 
 // prebuiltGoPackageTestBinary returns the path where we'd expect

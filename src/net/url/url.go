@@ -26,7 +26,7 @@ type Error struct {
 }
 
 func (e *Error) Unwrap() error { return e.Err }
-func (e *Error) Error() string { return fmt.Sprintf("%s %q: %s", e.Op, e.URL, e.Err) }
+func (e *Error) Error() string { return e.Op + " " + e.URL + ": " + e.Err.Error() }
 
 func (e *Error) Timeout() bool {
 	t, ok := e.Err.(interface {
@@ -41,8 +41,6 @@ func (e *Error) Temporary() bool {
 	})
 	return ok && t.Temporary()
 }
-
-const upperhex = "0123456789ABCDEF"
 
 func ishex(c byte) bool {
 	switch {
@@ -326,8 +324,8 @@ func escape(s string, mode encoding) string {
 			j++
 		case shouldEscape(c, mode):
 			t[j] = '%'
-			t[j+1] = upperhex[c>>4]
-			t[j+2] = upperhex[c&15]
+			t[j+1] = "0123456789ABCDEF"[c>>4]
+			t[j+2] = "0123456789ABCDEF"[c&15]
 			j += 3
 		default:
 			t[j] = s[i]
@@ -356,16 +354,15 @@ func escape(s string, mode encoding) string {
 // URL's String method uses the EscapedPath method to obtain the path. See the
 // EscapedPath method for more details.
 type URL struct {
-	Scheme      string
-	Opaque      string    // encoded opaque data
-	User        *Userinfo // username and password information
-	Host        string    // host or host:port
-	Path        string    // path (relative paths may omit leading slash)
-	RawPath     string    // encoded path hint (see EscapedPath method)
-	ForceQuery  bool      // append a query ('?') even if RawQuery is empty
-	RawQuery    string    // encoded query values, without '?'
-	Fragment    string    // fragment for references, without '#'
-	RawFragment string    // encoded fragment hint (see EscapedFragment method)
+	Scheme     string
+	Opaque     string    // encoded opaque data
+	User       *Userinfo // username and password information
+	Host       string    // host or host:port
+	Path       string    // path (relative paths may omit leading slash)
+	RawPath    string    // encoded path hint (see EscapedPath method)
+	ForceQuery bool      // append a query ('?') even if RawQuery is empty
+	RawQuery   string    // encoded query values, without '?'
+	Fragment   string    // fragment for references, without '#'
 }
 
 // User returns a Userinfo containing the provided username
@@ -452,16 +449,16 @@ func getscheme(rawurl string) (scheme, path string, err error) {
 	return "", rawurl, nil
 }
 
-// split slices s into two substrings separated by the first occurrence of
-// sep. If cutc is true then sep is excluded from the second substring.
-// If sep does not occur in s then s and the empty string is returned.
-func split(s string, sep byte, cutc bool) (string, string) {
-	i := strings.IndexByte(s, sep)
+// Maybe s is of the form t c u.
+// If so, return t, c u (or t, u if cutc == true).
+// If not, return s, "".
+func split(s string, c string, cutc bool) (string, string) {
+	i := strings.Index(s, c)
 	if i < 0 {
 		return s, ""
 	}
 	if cutc {
-		return s[:i], s[i+1:]
+		return s[:i], s[i+len(c):]
 	}
 	return s[:i], s[i:]
 }
@@ -474,7 +471,7 @@ func split(s string, sep byte, cutc bool) (string, string) {
 // error, due to parsing ambiguities.
 func Parse(rawurl string) (*URL, error) {
 	// Cut off #frag
-	u, frag := split(rawurl, '#', true)
+	u, frag := split(rawurl, "#", true)
 	url, err := parse(u, false)
 	if err != nil {
 		return nil, &Error{"parse", u, err}
@@ -482,7 +479,7 @@ func Parse(rawurl string) (*URL, error) {
 	if frag == "" {
 		return url, nil
 	}
-	if err = url.setFragment(frag); err != nil {
+	if url.Fragment, err = unescape(frag, encodeFragment); err != nil {
 		return nil, &Error{"parse", rawurl, err}
 	}
 	return url, nil
@@ -534,7 +531,7 @@ func parse(rawurl string, viaRequest bool) (*URL, error) {
 		url.ForceQuery = true
 		rest = rest[:len(rest)-1]
 	} else {
-		rest, url.RawQuery = split(rest, '?', true)
+		rest, url.RawQuery = split(rest, "?", true)
 	}
 
 	if !strings.HasPrefix(rest, "/") {
@@ -563,7 +560,7 @@ func parse(rawurl string, viaRequest bool) (*URL, error) {
 
 	if (url.Scheme != "" || !viaRequest && !strings.HasPrefix(rest, "///")) && strings.HasPrefix(rest, "//") {
 		var authority string
-		authority, rest = split(rest[2:], '/', false)
+		authority, rest = split(rest[2:], "/", false)
 		url.User, url.Host, err = parseAuthority(authority)
 		if err != nil {
 			return nil, err
@@ -602,7 +599,7 @@ func parseAuthority(authority string) (user *Userinfo, host string, err error) {
 		}
 		user = User(userinfo)
 	} else {
-		username, password := split(userinfo, ':', true)
+		username, password := split(userinfo, ":", true)
 		if username, err = unescape(username, encodeUserPassword); err != nil {
 			return nil, "", err
 		}
@@ -698,7 +695,7 @@ func (u *URL) setPath(p string) error {
 // In general, code should call EscapedPath instead of
 // reading u.RawPath directly.
 func (u *URL) EscapedPath() string {
-	if u.RawPath != "" && validEncoded(u.RawPath, encodePath) {
+	if u.RawPath != "" && validEncodedPath(u.RawPath) {
 		p, err := unescape(u.RawPath, encodePath)
 		if err == nil && p == u.Path {
 			return u.RawPath
@@ -710,10 +707,9 @@ func (u *URL) EscapedPath() string {
 	return escape(u.Path, encodePath)
 }
 
-// validEncoded reports whether s is a valid encoded path or fragment,
-// according to mode.
-// It must not contain any bytes that require escaping during encoding.
-func validEncoded(s string, mode encoding) bool {
+// validEncodedPath reports whether s is a valid encoded path.
+// It must not contain any bytes that require escaping during path encoding.
+func validEncodedPath(s string) bool {
 	for i := 0; i < len(s); i++ {
 		// RFC 3986, Appendix A.
 		// pchar = unreserved / pct-encoded / sub-delims / ":" / "@".
@@ -728,46 +724,12 @@ func validEncoded(s string, mode encoding) bool {
 		case '%':
 			// ok - percent encoded, will decode
 		default:
-			if shouldEscape(s[i], mode) {
+			if shouldEscape(s[i], encodePath) {
 				return false
 			}
 		}
 	}
 	return true
-}
-
-// setFragment is like setPath but for Fragment/RawFragment.
-func (u *URL) setFragment(f string) error {
-	frag, err := unescape(f, encodeFragment)
-	if err != nil {
-		return err
-	}
-	u.Fragment = frag
-	if escf := escape(frag, encodeFragment); f == escf {
-		// Default encoding is fine.
-		u.RawFragment = ""
-	} else {
-		u.RawFragment = f
-	}
-	return nil
-}
-
-// EscapedFragment returns the escaped form of u.Fragment.
-// In general there are multiple possible escaped forms of any fragment.
-// EscapedFragment returns u.RawFragment when it is a valid escaping of u.Fragment.
-// Otherwise EscapedFragment ignores u.RawFragment and computes an escaped
-// form on its own.
-// The String method uses EscapedFragment to construct its result.
-// In general, code should call EscapedFragment instead of
-// reading u.RawFragment directly.
-func (u *URL) EscapedFragment() string {
-	if u.RawFragment != "" && validEncoded(u.RawFragment, encodeFragment) {
-		f, err := unescape(u.RawFragment, encodeFragment)
-		if err == nil && f == u.Fragment {
-			return u.RawFragment
-		}
-	}
-	return escape(u.Fragment, encodeFragment)
 }
 
 // validOptionalPort reports whether port is either an empty string
@@ -852,23 +814,9 @@ func (u *URL) String() string {
 	}
 	if u.Fragment != "" {
 		buf.WriteByte('#')
-		buf.WriteString(u.EscapedFragment())
+		buf.WriteString(escape(u.Fragment, encodeFragment))
 	}
 	return buf.String()
-}
-
-// Redacted is like String but replaces any password with "xxxxx".
-// Only the password in u.URL is redacted.
-func (u *URL) Redacted() string {
-	if u == nil {
-		return ""
-	}
-
-	ru := *u
-	if _, has := ru.User.Password(); has {
-		ru.User = UserPassword(ru.User.Username(), "xxxxx")
-	}
-	return ru.String()
 }
 
 // Values maps a string key to a list of values.
@@ -1000,8 +948,8 @@ func resolvePath(base, ref string) string {
 	if full == "" {
 		return ""
 	}
+	var dst []string
 	src := strings.Split(full, "/")
-	dst := make([]string, 0, len(src))
 	for _, elem := range src {
 		switch elem {
 		case ".":
@@ -1066,7 +1014,6 @@ func (u *URL) ResolveReference(ref *URL) *URL {
 		url.RawQuery = u.RawQuery
 		if ref.Fragment == "" {
 			url.Fragment = u.Fragment
-			url.RawFragment = u.RawFragment
 		}
 	}
 	// The "abs_path" or "rel_path" cases.

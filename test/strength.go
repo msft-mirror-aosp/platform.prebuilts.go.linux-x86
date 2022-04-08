@@ -5,7 +5,7 @@
 // license that can be found in the LICENSE file.
 
 // Generate test of strength reduction for multiplications
-// with constants. Especially useful for amd64/386.
+// with contstants. Especially useful for amd64/386.
 
 package main
 

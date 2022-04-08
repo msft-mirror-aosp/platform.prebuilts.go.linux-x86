@@ -13,12 +13,8 @@ import (
 	"path/filepath"
 )
 
-// Break init loop.
-func init() {
-	CmdVet.Run = runVet
-}
-
 var CmdVet = &base.Command{
+	Run:         runVet,
 	CustomFlags: true,
 	UsageLine:   "go vet [-n] [-x] [-vettool prog] [build flags] [vet flags] [packages]",
 	Short:       "report likely mistakes in packages",
@@ -51,13 +47,10 @@ See also: go fmt, go fix.
 func runVet(cmd *base.Command, args []string) {
 	modload.LoadTests = true
 
-	vetFlags, pkgArgs := vetFlags(args)
+	vetFlags, pkgArgs := vetFlags(vetUsage, args)
 
 	work.BuildInit()
 	work.VetFlags = vetFlags
-	if len(vetFlags) > 0 {
-		work.VetExplicit = true
-	}
 	if vetTool != "" {
 		var err error
 		work.VetTool, err = filepath.Abs(vetTool)

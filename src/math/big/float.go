@@ -224,9 +224,7 @@ func (x *Float) Mode() RoundingMode {
 	return x.mode
 }
 
-// Acc returns the accuracy of x produced by the most recent
-// operation, unless explicitly documented otherwise by that
-// operation.
+// Acc returns the accuracy of x produced by the most recent operation.
 func (x *Float) Acc() Accuracy {
 	return x.acc
 }

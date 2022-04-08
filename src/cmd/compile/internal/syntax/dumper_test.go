@@ -5,6 +5,7 @@
 package syntax
 
 import (
+	"os"
 	"testing"
 )
 
@@ -20,6 +21,6 @@ func TestDump(t *testing.T) {
 	}
 
 	if ast != nil {
-		Fdump(testOut(), ast)
+		Fdump(os.Stdout, ast)
 	}
 }

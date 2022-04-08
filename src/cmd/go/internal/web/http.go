@@ -13,9 +13,8 @@ package web
 
 import (
 	"crypto/tls"
-	"errors"
 	"fmt"
-	"mime"
+	"io/ioutil"
 	"net/http"
 	urlpkg "net/url"
 	"os"
@@ -48,13 +47,6 @@ var securityPreservingHTTPClient = &http.Client{
 			lastHop := via[len(via)-1].URL
 			return fmt.Errorf("redirected from secure URL %s to insecure URL %s", lastHop, req.URL)
 		}
-
-		// Go's http.DefaultClient allows 10 redirects before returning an error.
-		// The securityPreservingHTTPClient also uses this default policy to avoid
-		// Go command hangs.
-		if len(via) >= 10 {
-			return errors.New("stopped after 10 redirects")
-		}
 		return nil
 	},
 }
@@ -68,14 +60,14 @@ func get(security SecurityMode, url *urlpkg.URL) (*Response, error) {
 
 	if os.Getenv("TESTGOPROXY404") == "1" && url.Host == "proxy.golang.org" {
 		res := &Response{
-			URL:        url.Redacted(),
+			URL:        Redacted(url),
 			Status:     "404 testing",
 			StatusCode: 404,
 			Header:     make(map[string][]string),
-			Body:       http.NoBody,
+			Body:       ioutil.NopCloser(strings.NewReader("")),
 		}
 		if cfg.BuildX {
-			fmt.Fprintf(os.Stderr, "# get %s: %v (%.3fs)\n", url.Redacted(), res.Status, time.Since(start).Seconds())
+			fmt.Fprintf(os.Stderr, "# get %s: %v (%.3fs)\n", Redacted(url), res.Status, time.Since(start).Seconds())
 		}
 		return res, nil
 	}
@@ -86,7 +78,7 @@ func get(security SecurityMode, url *urlpkg.URL) (*Response, error) {
 		// We print extra logging in -x mode instead, which traces what
 		// commands are executed.
 		if cfg.BuildX {
-			fmt.Fprintf(os.Stderr, "# get %s\n", url.Redacted())
+			fmt.Fprintf(os.Stderr, "# get %s\n", Redacted(url))
 		}
 
 		req, err := http.NewRequest("GET", url.String(), nil)
@@ -119,7 +111,7 @@ func get(security SecurityMode, url *urlpkg.URL) (*Response, error) {
 		fetched, res, err = fetch(secure)
 		if err != nil {
 			if cfg.BuildX {
-				fmt.Fprintf(os.Stderr, "# get %s: %v\n", secure.Redacted(), err)
+				fmt.Fprintf(os.Stderr, "# get %s: %v\n", Redacted(url), err)
 			}
 			if security != Insecure || url.Scheme == "https" {
 				// HTTPS failed, and we can't fall back to plain HTTP.
@@ -134,9 +126,9 @@ func get(security SecurityMode, url *urlpkg.URL) (*Response, error) {
 		case "http":
 			if security == SecureOnly {
 				if cfg.BuildX {
-					fmt.Fprintf(os.Stderr, "# get %s: insecure\n", url.Redacted())
+					fmt.Fprintf(os.Stderr, "# get %s: insecure\n", Redacted(url))
 				}
-				return nil, fmt.Errorf("insecure URL: %s", url.Redacted())
+				return nil, fmt.Errorf("insecure URL: %s", Redacted(url))
 			}
 		case "":
 			if security != Insecure {
@@ -144,9 +136,9 @@ func get(security SecurityMode, url *urlpkg.URL) (*Response, error) {
 			}
 		default:
 			if cfg.BuildX {
-				fmt.Fprintf(os.Stderr, "# get %s: unsupported\n", url.Redacted())
+				fmt.Fprintf(os.Stderr, "# get %s: unsupported\n", Redacted(url))
 			}
-			return nil, fmt.Errorf("unsupported scheme: %s", url.Redacted())
+			return nil, fmt.Errorf("unsupported scheme: %s", Redacted(url))
 		}
 
 		insecure := new(urlpkg.URL)
@@ -154,15 +146,15 @@ func get(security SecurityMode, url *urlpkg.URL) (*Response, error) {
 		insecure.Scheme = "http"
 		if insecure.User != nil && security != Insecure {
 			if cfg.BuildX {
-				fmt.Fprintf(os.Stderr, "# get %s: insecure credentials\n", insecure.Redacted())
+				fmt.Fprintf(os.Stderr, "# get %s: insecure credentials\n", Redacted(url))
 			}
-			return nil, fmt.Errorf("refusing to pass credentials to insecure URL: %s", insecure.Redacted())
+			return nil, fmt.Errorf("refusing to pass credentials to insecure URL: %s", Redacted(insecure))
 		}
 
 		fetched, res, err = fetch(insecure)
 		if err != nil {
 			if cfg.BuildX {
-				fmt.Fprintf(os.Stderr, "# get %s: %v\n", insecure.Redacted(), err)
+				fmt.Fprintf(os.Stderr, "# get %s: %v\n", Redacted(url), err)
 			}
 			// HTTP failed, and we already tried HTTPS if applicable.
 			// Report the error from the HTTP attempt.
@@ -173,30 +165,15 @@ func get(security SecurityMode, url *urlpkg.URL) (*Response, error) {
 	// Note: accepting a non-200 OK here, so people can serve a
 	// meta import in their http 404 page.
 	if cfg.BuildX {
-		fmt.Fprintf(os.Stderr, "# get %s: %v (%.3fs)\n", fetched.Redacted(), res.Status, time.Since(start).Seconds())
+		fmt.Fprintf(os.Stderr, "# get %s: %v (%.3fs)\n", Redacted(url), res.Status, time.Since(start).Seconds())
 	}
-
 	r := &Response{
-		URL:        fetched.Redacted(),
+		URL:        Redacted(fetched),
 		Status:     res.Status,
 		StatusCode: res.StatusCode,
 		Header:     map[string][]string(res.Header),
 		Body:       res.Body,
 	}
-
-	if res.StatusCode != http.StatusOK {
-		contentType := res.Header.Get("Content-Type")
-		if mediaType, params, _ := mime.ParseMediaType(contentType); mediaType == "text/plain" {
-			switch charset := strings.ToLower(params["charset"]); charset {
-			case "us-ascii", "utf-8", "":
-				// Body claims to be plain text in UTF-8 or a subset thereof.
-				// Try to extract a useful error message from it.
-				r.errorDetail.r = res.Body
-				r.Body = &r.errorDetail
-			}
-		}
-	}
-
 	return r, nil
 }
 
@@ -209,21 +186,19 @@ func getFile(u *urlpkg.URL) (*Response, error) {
 
 	if os.IsNotExist(err) {
 		return &Response{
-			URL:        u.Redacted(),
+			URL:        Redacted(u),
 			Status:     http.StatusText(http.StatusNotFound),
 			StatusCode: http.StatusNotFound,
 			Body:       http.NoBody,
-			fileErr:    err,
 		}, nil
 	}
 
 	if os.IsPermission(err) {
 		return &Response{
-			URL:        u.Redacted(),
+			URL:        Redacted(u),
 			Status:     http.StatusText(http.StatusForbidden),
 			StatusCode: http.StatusForbidden,
 			Body:       http.NoBody,
-			fileErr:    err,
 		}, nil
 	}
 
@@ -232,7 +207,7 @@ func getFile(u *urlpkg.URL) (*Response, error) {
 	}
 
 	return &Response{
-		URL:        u.Redacted(),
+		URL:        Redacted(u),
 		Status:     http.StatusText(http.StatusOK),
 		StatusCode: http.StatusOK,
 		Body:       f,

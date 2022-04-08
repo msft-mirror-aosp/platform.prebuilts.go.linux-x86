@@ -18,12 +18,11 @@ var (
 	// Methods on File will return this error when the receiver is nil.
 	ErrInvalid = errInvalid() // "invalid argument"
 
-	ErrPermission       = errPermission()       // "permission denied"
-	ErrExist            = errExist()            // "file already exists"
-	ErrNotExist         = errNotExist()         // "file does not exist"
-	ErrClosed           = errClosed()           // "file already closed"
-	ErrNoDeadline       = errNoDeadline()       // "file type does not support deadline"
-	ErrDeadlineExceeded = errDeadlineExceeded() // "i/o timeout"
+	ErrPermission = errPermission() // "permission denied"
+	ErrExist      = errExist()      // "file already exists"
+	ErrNotExist   = errNotExist()   // "file does not exist"
+	ErrClosed     = errClosed()     // "file already closed"
+	ErrNoDeadline = errNoDeadline() // "file type does not support deadline"
 )
 
 func errInvalid() error    { return oserror.ErrInvalid }
@@ -32,15 +31,6 @@ func errExist() error      { return oserror.ErrExist }
 func errNotExist() error   { return oserror.ErrNotExist }
 func errClosed() error     { return oserror.ErrClosed }
 func errNoDeadline() error { return poll.ErrNoDeadline }
-
-// errDeadlineExceeded returns the value for os.ErrDeadlineExceeded.
-// This error comes from the internal/poll package, which is also
-// used by package net. Doing this this way ensures that the net
-// package will return os.ErrDeadlineExceeded for an exceeded deadline,
-// as documented by net.Conn.SetDeadline, without requiring any extra
-// work in the net package and without requiring the internal/poll
-// package to import os (which it can't, because that would be circular).
-func errDeadlineExceeded() error { return poll.ErrDeadlineExceeded }
 
 type timeout interface {
 	Timeout() bool
@@ -120,7 +110,7 @@ func IsTimeout(err error) bool {
 func underlyingErrorIs(err, target error) bool {
 	// Note that this function is not errors.Is:
 	// underlyingError only unwraps the specific error-wrapping types
-	// that it historically did, not all errors implementing Unwrap().
+	// that it historically did, not all errors.Wrapper implementations.
 	err = underlyingError(err)
 	if err == target {
 		return true

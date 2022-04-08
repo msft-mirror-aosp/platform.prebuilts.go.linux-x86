@@ -20,14 +20,16 @@ import (
 func requireTestSOSupported(t *testing.T) {
 	t.Helper()
 	switch runtime.GOARCH {
-	case "arm64":
+	case "arm", "arm64":
 		if runtime.GOOS == "darwin" {
 			t.Skip("No exec facility on iOS.")
 		}
 	case "ppc64":
 		if runtime.GOOS == "linux" {
-			t.Skip("External linking not implemented on linux/ppc64 (issue #8912).")
+			t.Skip("External linking not implemented on aix/ppc64 (issue #8912).")
 		}
+	case "mips64le", "mips64":
+		t.Skip("External linking not implemented on mips64.")
 	}
 	if runtime.GOOS == "android" {
 		t.Skip("No exec facility on Android.")

@@ -2,7 +2,8 @@ env GO111MODULE=on
 [short] skip
 
 # golang.org/x/internal should be importable from other golang.org/x modules.
-go mod edit -module=golang.org/x/anything
+rm go.mod
+go mod init golang.org/x/anything
 go build .
 
 # ...and their tests...
@@ -19,7 +20,8 @@ stderr 'use of internal package golang.org/x/.* not allowed'
 stderr 'use of internal package internal/testenv not allowed'
 
 # Dependencies should be able to use their own internal modules...
-go mod edit -module=golang.org/notx
+rm go.mod
+go mod init golang.org/notx
 go build ./throughdep
 
 # ... but other modules should not, even if they have transitive dependencies.
@@ -32,7 +34,8 @@ stderr golang.org[/\\]notx[/\\]useinternal
 stderr 'use of internal package golang.org/x/.* not allowed'
 
 # Replacing an internal module should keep it internal to the same paths.
-go mod edit -module=golang.org/notx
+rm go.mod
+go mod init golang.org/notx
 go mod edit -replace golang.org/x/internal=./replace/golang.org/notx/internal
 go build ./throughdep
 
@@ -47,9 +50,6 @@ go build ./throughdep
 stderr golang.org[/\\]notx[/\\]useinternal
 stderr 'use of internal package golang.org/x/.* not allowed'
 
--- go.mod --
-module TBD
-go 1.12
 -- useinternal.go --
 package useinternal
 import _ "golang.org/x/internal/subtle"

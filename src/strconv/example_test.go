@@ -294,8 +294,7 @@ func ExampleParseUint() {
 }
 
 func ExampleQuote() {
-	// This string literal contains a tab character.
-	s := strconv.Quote(`"Fran & Freddie's Diner	☺"`)
+	s := strconv.Quote(`"Fran & Freddie's Diner	☺"`) // there is a tab character inside the string literal
 	fmt.Println(s)
 
 	// Output:
@@ -339,8 +338,7 @@ func ExampleQuoteRuneToGraphic() {
 }
 
 func ExampleQuoteToASCII() {
-	// This string literal contains a tab character.
-	s := strconv.QuoteToASCII(`"Fran & Freddie's Diner	☺"`)
+	s := strconv.QuoteToASCII(`"Fran & Freddie's Diner	☺"`) // there is a tab character inside the string literal
 	fmt.Println(s)
 
 	// Output:
@@ -351,8 +349,7 @@ func ExampleQuoteToGraphic() {
 	s := strconv.QuoteToGraphic("☺")
 	fmt.Println(s)
 
-	// This string literal contains a tab character.
-	s = strconv.QuoteToGraphic("This is a \u263a	\u000a")
+	s = strconv.QuoteToGraphic("This is a \u263a	\u000a") // there is a tab character inside the string literal
 	fmt.Println(s)
 
 	s = strconv.QuoteToGraphic(`" This is a ☺ \n "`)

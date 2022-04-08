@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build aix darwin dragonfly freebsd js,wasm linux netbsd openbsd solaris windows
+// +build aix darwin dragonfly freebsd js,wasm linux nacl netbsd openbsd solaris windows
 
 package runtime
 
@@ -12,35 +12,12 @@ import (
 )
 
 // Integrated network poller (platform-independent part).
-// A particular implementation (epoll/kqueue/port/AIX/Windows)
-// must define the following functions:
-//
-// func netpollinit()
-//     Initialize the poller. Only called once.
-//
-// func netpollopen(fd uintptr, pd *pollDesc) int32
-//     Arm edge-triggered notifications for fd. The pd argument is to pass
-//     back to netpollready when fd is ready. Return an errno value.
-//
-// func netpoll(delta int64) gList
-//     Poll the network. If delta < 0, block indefinitely. If delta == 0,
-//     poll without blocking. If delta > 0, block for up to delta nanoseconds.
-//     Return a list of goroutines built by calling netpollready.
-//
-// func netpollBreak()
-//     Wake up the network poller, assumed to be blocked in netpoll.
-//
-// func netpollIsPollDescriptor(fd uintptr) bool
-//     Reports whether fd is a file descriptor used by the poller.
-
-// Error codes returned by runtime_pollReset and runtime_pollWait.
-// These must match the values in internal/poll/fd_poll_runtime.go.
-const (
-	pollNoError        = 0 // no error
-	pollErrClosing     = 1 // descriptor is closed
-	pollErrTimeout     = 2 // I/O timeout
-	pollErrNotPollable = 3 // general error polling descriptor
-)
+// A particular implementation (epoll/kqueue) must define the following functions:
+// func netpollinit()			// to initialize the poller
+// func netpollopen(fd uintptr, pd *pollDesc) int32	// to arm edge-triggered notifications
+// and associate fd with pd.
+// An implementation must call the following function to denote that the pd is ready.
+// func netpollready(gpp **g, pd *pollDesc, mode int32)
 
 // pollDesc contains 2 binary semaphores, rg and wg, to park reader and writer
 // goroutines respectively. The semaphore can be in the following states:
@@ -48,12 +25,12 @@ const (
 //           a goroutine consumes the notification by changing the state to nil.
 // pdWait - a goroutine prepares to park on the semaphore, but not yet parked;
 //          the goroutine commits to park by changing the state to G pointer,
-//          or, alternatively, concurrent io notification changes the state to pdReady,
+//          or, alternatively, concurrent io notification changes the state to READY,
 //          or, alternatively, concurrent timeout/close changes the state to nil.
 // G pointer - the goroutine is blocked on the semaphore;
-//             io notification or timeout/close changes the state to pdReady or nil respectively
+//             io notification or timeout/close changes the state to READY or nil respectively
 //             and unparks the goroutine.
-// nil - none of the above.
+// nil - nothing of the above.
 const (
 	pdReady uintptr = 1
 	pdWait  uintptr = 2
@@ -79,17 +56,16 @@ type pollDesc struct {
 	lock    mutex // protects the following fields
 	fd      uintptr
 	closing bool
-	everr   bool      // marks event scanning error happened
-	user    uint32    // user settable cookie
-	rseq    uintptr   // protects from stale read timers
-	rg      uintptr   // pdReady, pdWait, G waiting for read or nil
-	rt      timer     // read deadline timer (set if rt.f != nil)
-	rd      int64     // read deadline
-	wseq    uintptr   // protects from stale write timers
-	wg      uintptr   // pdReady, pdWait, G waiting for write or nil
-	wt      timer     // write deadline timer
-	wd      int64     // write deadline
-	self    *pollDesc // storage for indirect interface. See (*pollDesc).makeArg.
+	everr   bool    // marks event scanning error happened
+	user    uint32  // user settable cookie
+	rseq    uintptr // protects from stale read timers
+	rg      uintptr // pdReady, pdWait, G waiting for read or nil
+	rt      timer   // read deadline timer (set if rt.f != nil)
+	rd      int64   // read deadline
+	wseq    uintptr // protects from stale write timers
+	wg      uintptr // pdReady, pdWait, G waiting for write or nil
+	wt      timer   // write deadline timer
+	wd      int64   // write deadline
 }
 
 type pollCache struct {
@@ -103,28 +79,15 @@ type pollCache struct {
 }
 
 var (
-	netpollInitLock mutex
-	netpollInited   uint32
-
+	netpollInited  uint32
 	pollcache      pollCache
 	netpollWaiters uint32
 )
 
 //go:linkname poll_runtime_pollServerInit internal/poll.runtime_pollServerInit
 func poll_runtime_pollServerInit() {
-	netpollGenericInit()
-}
-
-func netpollGenericInit() {
-	if atomic.Load(&netpollInited) == 0 {
-		lockInit(&netpollInitLock, lockRankNetpollInit)
-		lock(&netpollInitLock)
-		if netpollInited == 0 {
-			netpollinit()
-			atomic.Store(&netpollInited, 1)
-		}
-		unlock(&netpollInitLock)
-	}
+	netpollinit()
+	atomic.Store(&netpollInited, 1)
 }
 
 func netpollinited() bool {
@@ -136,7 +99,14 @@ func netpollinited() bool {
 // poll_runtime_isPollServerDescriptor reports whether fd is a
 // descriptor being used by netpoll.
 func poll_runtime_isPollServerDescriptor(fd uintptr) bool {
-	return netpollIsPollDescriptor(fd)
+	fds := netpolldescriptor()
+	if GOOS != "aix" {
+		return fd == fds
+	} else {
+		// AIX have a pipe in its netpoll implementation.
+		// Therefore, two fd are returned by netpolldescriptor using a mask.
+		return fd == fds&0xFFFF || fd == (fds>>16)&0xFFFF
+	}
 }
 
 //go:linkname poll_runtime_pollOpen internal/poll.runtime_pollOpen
@@ -158,7 +128,6 @@ func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
 	pd.wseq++
 	pd.wg = 0
 	pd.wd = 0
-	pd.self = pd
 	unlock(&pd.lock)
 
 	var errno int32
@@ -188,47 +157,40 @@ func (c *pollCache) free(pd *pollDesc) {
 	unlock(&c.lock)
 }
 
-// poll_runtime_pollReset, which is internal/poll.runtime_pollReset,
-// prepares a descriptor for polling in mode, which is 'r' or 'w'.
-// This returns an error code; the codes are defined above.
 //go:linkname poll_runtime_pollReset internal/poll.runtime_pollReset
 func poll_runtime_pollReset(pd *pollDesc, mode int) int {
-	errcode := netpollcheckerr(pd, int32(mode))
-	if errcode != pollNoError {
-		return errcode
+	err := netpollcheckerr(pd, int32(mode))
+	if err != 0 {
+		return err
 	}
 	if mode == 'r' {
 		pd.rg = 0
 	} else if mode == 'w' {
 		pd.wg = 0
 	}
-	return pollNoError
+	return 0
 }
 
-// poll_runtime_pollWait, which is internal/poll.runtime_pollWait,
-// waits for a descriptor to be ready for reading or writing,
-// according to mode, which is 'r' or 'w'.
-// This returns an error code; the codes are defined above.
 //go:linkname poll_runtime_pollWait internal/poll.runtime_pollWait
 func poll_runtime_pollWait(pd *pollDesc, mode int) int {
-	errcode := netpollcheckerr(pd, int32(mode))
-	if errcode != pollNoError {
-		return errcode
+	err := netpollcheckerr(pd, int32(mode))
+	if err != 0 {
+		return err
 	}
 	// As for now only Solaris, illumos, and AIX use level-triggered IO.
 	if GOOS == "solaris" || GOOS == "illumos" || GOOS == "aix" {
 		netpollarm(pd, mode)
 	}
 	for !netpollblock(pd, int32(mode), false) {
-		errcode = netpollcheckerr(pd, int32(mode))
-		if errcode != pollNoError {
-			return errcode
+		err = netpollcheckerr(pd, int32(mode))
+		if err != 0 {
+			return err
 		}
 		// Can happen if timeout has fired and unblocked us,
 		// but before we had a chance to run, timeout has been reset.
 		// Pretend it has not happened and retry.
 	}
-	return pollNoError
+	return 0
 }
 
 //go:linkname poll_runtime_pollWaitCanceled internal/poll.runtime_pollWaitCanceled
@@ -270,17 +232,18 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 	if pd.rt.f == nil {
 		if pd.rd > 0 {
 			pd.rt.f = rtf
+			pd.rt.when = pd.rd
 			// Copy current seq into the timer arg.
 			// Timer func will check the seq against current descriptor seq,
 			// if they differ the descriptor was reused or timers were reset.
-			pd.rt.arg = pd.makeArg()
+			pd.rt.arg = pd
 			pd.rt.seq = pd.rseq
-			resettimer(&pd.rt, pd.rd)
+			addtimer(&pd.rt)
 		}
 	} else if pd.rd != rd0 || combo != combo0 {
 		pd.rseq++ // invalidate current timers
 		if pd.rd > 0 {
-			modtimer(&pd.rt, pd.rd, 0, rtf, pd.makeArg(), pd.rseq)
+			modtimer(&pd.rt, pd.rd, 0, rtf, pd, pd.rseq)
 		} else {
 			deltimer(&pd.rt)
 			pd.rt.f = nil
@@ -289,14 +252,15 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 	if pd.wt.f == nil {
 		if pd.wd > 0 && !combo {
 			pd.wt.f = netpollWriteDeadline
-			pd.wt.arg = pd.makeArg()
+			pd.wt.when = pd.wd
+			pd.wt.arg = pd
 			pd.wt.seq = pd.wseq
-			resettimer(&pd.wt, pd.wd)
+			addtimer(&pd.wt)
 		}
 	} else if pd.wd != wd0 || combo != combo0 {
 		pd.wseq++ // invalidate current timers
 		if pd.wd > 0 && !combo {
-			modtimer(&pd.wt, pd.wd, 0, netpollWriteDeadline, pd.makeArg(), pd.wseq)
+			modtimer(&pd.wt, pd.wd, 0, netpollWriteDeadline, pd, pd.wseq)
 		} else {
 			deltimer(&pd.wt)
 			pd.wt.f = nil
@@ -352,13 +316,8 @@ func poll_runtime_pollUnblock(pd *pollDesc) {
 	}
 }
 
-// netpollready is called by the platform-specific netpoll function.
-// It declares that the fd associated with pd is ready for I/O.
-// The toRun argument is used to build a list of goroutines to return
-// from netpoll. The mode argument is 'r', 'w', or 'r'+'w' to indicate
-// whether the fd is ready for reading or writing or both.
-//
-// This may run while the world is stopped, so write barriers are not allowed.
+// make pd ready, newly runnable goroutines (if any) are added to toRun.
+// May run during STW, so write barriers are not allowed.
 //go:nowritebarrier
 func netpollready(toRun *gList, pd *pollDesc, mode int32) {
 	var rg, wg *g
@@ -378,18 +337,18 @@ func netpollready(toRun *gList, pd *pollDesc, mode int32) {
 
 func netpollcheckerr(pd *pollDesc, mode int32) int {
 	if pd.closing {
-		return pollErrClosing
+		return 1 // ErrFileClosing or ErrNetClosing
 	}
 	if (mode == 'r' && pd.rd < 0) || (mode == 'w' && pd.wd < 0) {
-		return pollErrTimeout
+		return 2 // ErrTimeout
 	}
 	// Report an event scanning error only on a read event.
 	// An error on a write event will be captured in a subsequent
 	// write call that is able to report a more specific error.
 	if mode == 'r' && pd.everr {
-		return pollErrNotPollable
+		return 3 // ErrNotPollable
 	}
-	return pollNoError
+	return 0
 }
 
 func netpollblockcommit(gp *g, gpp unsafe.Pointer) bool {
@@ -416,7 +375,7 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 		gpp = &pd.wg
 	}
 
-	// set the gpp semaphore to pdWait
+	// set the gpp semaphore to WAIT
 	for {
 		old := *gpp
 		if old == pdReady {
@@ -431,13 +390,13 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 		}
 	}
 
-	// need to recheck error states after setting gpp to pdWait
+	// need to recheck error states after setting gpp to WAIT
 	// this is necessary because runtime_pollUnblock/runtime_pollSetDeadline/deadlineimpl
 	// do the opposite: store to closing/rd/wd, membarrier, load of rg/wg
 	if waitio || netpollcheckerr(pd, mode) == 0 {
 		gopark(netpollblockcommit, unsafe.Pointer(gpp), waitReasonIOWait, traceEvGoBlockNet, 5)
 	}
-	// be careful to not lose concurrent pdReady notification
+	// be careful to not lose concurrent READY notification
 	old := atomic.Xchguintptr(gpp, 0)
 	if old > pdWait {
 		throw("runtime: corrupted polldesc")
@@ -457,7 +416,7 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 			return nil
 		}
 		if old == 0 && !ioready {
-			// Only set pdReady for ioready. runtime_pollWait
+			// Only set READY for ioready. runtime_pollWait
 			// will check for timeout/cancel before waiting.
 			return nil
 		}
@@ -466,7 +425,7 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 			new = pdReady
 		}
 		if atomic.Casuintptr(gpp, old, new) {
-			if old == pdWait {
+			if old == pdReady || old == pdWait {
 				old = 0
 			}
 			return (*g)(unsafe.Pointer(old))
@@ -545,24 +504,6 @@ func (c *pollCache) alloc() *pollDesc {
 	}
 	pd := c.first
 	c.first = pd.link
-	lockInit(&pd.lock, lockRankPollDesc)
 	unlock(&c.lock)
 	return pd
 }
-
-// makeArg converts pd to an interface{}.
-// makeArg does not do any allocation. Normally, such
-// a conversion requires an allocation because pointers to
-// go:notinheap types (which pollDesc is) must be stored
-// in interfaces indirectly. See issue 42076.
-func (pd *pollDesc) makeArg() (i interface{}) {
-	x := (*eface)(unsafe.Pointer(&i))
-	x._type = pdType
-	x.data = unsafe.Pointer(&pd.self)
-	return
-}
-
-var (
-	pdEface interface{} = (*pollDesc)(nil)
-	pdType  *_type      = efaceOf(&pdEface)._type
-)

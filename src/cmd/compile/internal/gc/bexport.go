@@ -43,13 +43,10 @@ func (p *exporter) markType(t *types.Type) {
 	// the user already needs some way to construct values of
 	// those types.
 	switch t.Etype {
-	case TPTR, TARRAY, TSLICE:
+	case TPTR, TARRAY, TSLICE, TCHAN:
+		// TODO(mdempsky): Skip marking element type for
+		// send-only channels?
 		p.markType(t.Elem())
-
-	case TCHAN:
-		if t.ChanDir().CanRecv() {
-			p.markType(t.Elem())
-		}
 
 	case TMAP:
 		p.markType(t.Key())
@@ -127,7 +124,7 @@ const (
 )
 
 // untype returns the "pseudo" untyped type for a Ctype (import/export use only).
-// (we can't use a pre-initialized array because we must be sure all types are
+// (we can't use an pre-initialized array because we must be sure all types are
 // set up)
 func untype(ctype Ctype) *types.Type {
 	switch ctype {

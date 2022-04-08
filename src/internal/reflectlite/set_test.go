@@ -39,8 +39,6 @@ var implementsTests = []struct {
 	{new(notASTExpr), new(ast.Expr), false},
 	{new(ast.Expr), new(notASTExpr), false},
 	{new(*notAnExpr), new(notASTExpr), true},
-	{new(mapError), new(error), true},
-	{new(*mapError), new(error), true},
 }
 
 type notAnExpr struct{}
@@ -54,13 +52,6 @@ type notASTExpr interface {
 	End() token.Pos
 	exprNode()
 }
-
-type mapError map[string]string
-
-func (mapError) Error() string { return "mapError" }
-
-var _ error = mapError{}
-var _ error = new(mapError)
 
 func TestImplements(t *testing.T) {
 	for _, tt := range implementsTests {

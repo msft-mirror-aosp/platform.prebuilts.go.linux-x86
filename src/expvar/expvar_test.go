@@ -489,13 +489,12 @@ func BenchmarkRealworldExpvarUsage(b *testing.B) {
 		b.Fatalf("Listen failed: %v", err)
 	}
 	defer ln.Close()
-	done := make(chan bool, 1)
+	done := make(chan bool)
 	go func() {
 		for p := 0; p < P; p++ {
 			s, err := ln.Accept()
 			if err != nil {
 				b.Errorf("Accept failed: %v", err)
-				done <- false
 				return
 			}
 			servers[p] = s
@@ -505,14 +504,11 @@ func BenchmarkRealworldExpvarUsage(b *testing.B) {
 	for p := 0; p < P; p++ {
 		c, err := net.Dial("tcp", ln.Addr().String())
 		if err != nil {
-			<-done
 			b.Fatalf("Dial failed: %v", err)
 		}
 		clients[p] = c
 	}
-	if !<-done {
-		b.FailNow()
-	}
+	<-done
 
 	b.StartTimer()
 

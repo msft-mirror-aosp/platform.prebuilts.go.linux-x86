@@ -251,7 +251,7 @@ func main() {
 		if c == "" && (i == "fgood" || i == "fbad") {
 			return
 		}
-		// Integral float constant is ok.
+		// Integral float constat is ok.
 		if c == "c" && n == "" && i == "fgood" {
 			if pass == 0 {
 				fmt.Fprintf(b, "\tuse(%s[%s])\n", pae, cni)

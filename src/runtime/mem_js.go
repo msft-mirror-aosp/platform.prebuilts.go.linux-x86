@@ -7,6 +7,7 @@
 package runtime
 
 import (
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -51,23 +52,18 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 		return nil
 	}
 
-	// Round up the initial reserveEnd to 64 KiB so that
-	// reservations are always aligned to the page size.
-	initReserveEnd := alignUp(lastmoduledatap.end, physPageSize)
-	if reserveEnd < initReserveEnd {
-		reserveEnd = initReserveEnd
+	if reserveEnd < lastmoduledatap.end {
+		reserveEnd = lastmoduledatap.end
 	}
 	v = unsafe.Pointer(reserveEnd)
-	reserveEnd += alignUp(n, physPageSize)
+	reserveEnd += n
 
 	current := currentMemory()
-	// reserveEnd is always at a page boundary.
-	needed := int32(reserveEnd / physPageSize)
+	needed := int32(reserveEnd/sys.DefaultPhysPageSize + 1)
 	if current < needed {
 		if growMemory(needed-current) == -1 {
 			return nil
 		}
-		resetMemoryDataView()
 	}
 
 	return v
@@ -75,10 +71,6 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 
 func currentMemory() int32
 func growMemory(pages int32) int32
-
-// resetMemoryDataView signals the JS front-end that WebAssembly's memory.grow instruction has been used.
-// This allows the front-end to replace the old DataView object with a new one.
-func resetMemoryDataView()
 
 func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
 	mSysStatInc(sysStat, n)

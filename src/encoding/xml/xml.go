@@ -286,10 +286,7 @@ func (d *Decoder) Token() (Token, error) {
 		t = d.nextToken
 		d.nextToken = nil
 	} else if t, err = d.rawToken(); err != nil {
-		switch {
-		case err == io.EOF && d.t != nil:
-			err = nil
-		case err == io.EOF && d.stk != nil && d.stk.kind != stkEOF:
+		if err == io.EOF && d.stk != nil && d.stk.kind != stkEOF {
 			err = d.syntaxError("unexpected EOF")
 		}
 		return t, err
@@ -960,7 +957,7 @@ func (d *Decoder) ungetc(b byte) {
 	d.offset--
 }
 
-var entity = map[string]rune{
+var entity = map[string]int{
 	"lt":   '<',
 	"gt":   '>',
 	"amp":  '&',
@@ -1055,7 +1052,7 @@ Input:
 					d.buf.WriteByte(';')
 					n, err := strconv.ParseUint(s, base, 64)
 					if err == nil && n <= unicode.MaxRune {
-						text = string(rune(n))
+						text = string(n)
 						haveText = true
 					}
 				}

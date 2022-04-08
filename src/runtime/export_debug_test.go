@@ -20,7 +20,7 @@ import (
 //
 // On success, InjectDebugCall returns the panic value of fn or nil.
 // If fn did not panic, its results will be available in args.
-func InjectDebugCall(gp *g, fn, args interface{}, tkill func(tid int) error, returnOnUnsafePoint bool) (interface{}, error) {
+func InjectDebugCall(gp *g, fn, args interface{}, tkill func(tid int) error) (interface{}, error) {
 	if gp.lockedm == 0 {
 		return nil, plainError("goroutine not locked to thread")
 	}
@@ -48,9 +48,6 @@ func InjectDebugCall(gp *g, fn, args interface{}, tkill func(tid int) error, ret
 
 	h := new(debugCallHandler)
 	h.gp = gp
-	// gp may not be running right now, but we can still get the M
-	// it will run on since it's locked.
-	h.mp = gp.lockedm.ptr()
 	h.fv, h.argp, h.argSize = fv, argp, argSize
 	h.handleF = h.handle // Avoid allocating closure during signal
 
@@ -67,16 +64,9 @@ func InjectDebugCall(gp *g, fn, args interface{}, tkill func(tid int) error, ret
 		notetsleepg(&h.done, -1)
 		if h.err != "" {
 			switch h.err {
-			case "call not at safe point":
-				if returnOnUnsafePoint {
-					// This is for TestDebugCallUnsafePoint.
-					return nil, h.err
-				}
-				fallthrough
-			case "retry _Grunnable", "executing on Go runtime stack", "call from within the Go runtime":
+			case "retry _Grunnable", "executing on Go runtime stack":
 				// These are transient states. Try to get out of them.
 				if i < 100 {
-					usleep(100)
 					Gosched()
 					continue
 				}
@@ -89,7 +79,6 @@ func InjectDebugCall(gp *g, fn, args interface{}, tkill func(tid int) error, ret
 
 type debugCallHandler struct {
 	gp      *g
-	mp      *m
 	fv      *funcval
 	argp    unsafe.Pointer
 	argSize uintptr
@@ -106,8 +95,8 @@ type debugCallHandler struct {
 func (h *debugCallHandler) inject(info *siginfo, ctxt *sigctxt, gp2 *g) bool {
 	switch h.gp.atomicstatus {
 	case _Grunning:
-		if getg().m != h.mp {
-			println("trap on wrong M", getg().m, h.mp)
+		if getg().m != h.gp.m {
+			println("trap on wrong M", getg().m, h.gp.m)
 			return false
 		}
 		// Push current PC on the stack.
@@ -139,8 +128,8 @@ func (h *debugCallHandler) inject(info *siginfo, ctxt *sigctxt, gp2 *g) bool {
 
 func (h *debugCallHandler) handle(info *siginfo, ctxt *sigctxt, gp2 *g) bool {
 	// Sanity check.
-	if getg().m != h.mp {
-		println("trap on wrong M", getg().m, h.mp)
+	if getg().m != h.gp.m {
+		println("trap on wrong M", getg().m, h.gp.m)
 		return false
 	}
 	f := findfunc(uintptr(ctxt.rip()))

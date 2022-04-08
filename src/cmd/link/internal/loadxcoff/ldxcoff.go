@@ -9,7 +9,6 @@ import (
 	"cmd/internal/bio"
 	"cmd/internal/objabi"
 	"cmd/internal/sys"
-	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
 	"errors"
 	"fmt"
@@ -19,7 +18,7 @@ import (
 // ldSection is an XCOFF section with its symbols.
 type ldSection struct {
 	xcoff.Section
-	sym loader.Sym
+	sym *sym.Symbol
 }
 
 // TODO(brainman): maybe just add ReadAt method to bio.Reader instead of creating xcoffBiobuf
@@ -39,12 +38,13 @@ func (f *xcoffBiobuf) ReadAt(p []byte, off int64) (int, error) {
 	return n, nil
 }
 
-// loads the Xcoff file pn from f.
-// Symbols are written into loader, and a slice of the text symbols is returned.
-func Load(l *loader.Loader, arch *sys.Arch, localSymVersion int, input *bio.Reader, pkg string, length int64, pn string) (textp []loader.Sym, err error) {
-	errorf := func(str string, args ...interface{}) ([]loader.Sym, error) {
+// Load loads the Xcoff file pn from f.
+// Symbols are written into syms, and a slice of the text symbols is returned.
+func Load(arch *sys.Arch, syms *sym.Symbols, input *bio.Reader, pkg string, length int64, pn string) (textp []*sym.Symbol, err error) {
+	errorf := func(str string, args ...interface{}) ([]*sym.Symbol, error) {
 		return nil, fmt.Errorf("loadxcoff: %v: %v", pn, fmt.Sprintf(str, args...))
 	}
+	localSymVersion := syms.IncVersion()
 
 	var ldSections []*ldSection
 
@@ -62,35 +62,34 @@ func Load(l *loader.Loader, arch *sys.Arch, localSymVersion int, input *bio.Read
 		lds := new(ldSection)
 		lds.Section = *sect
 		name := fmt.Sprintf("%s(%s)", pkg, lds.Name)
-		symbol := l.LookupOrCreateSym(name, localSymVersion)
-		s := l.MakeSymbolUpdater(symbol)
+		s := syms.Lookup(name, localSymVersion)
 
 		switch lds.Type {
 		default:
 			return errorf("unrecognized section type 0x%x", lds.Type)
 		case xcoff.STYP_TEXT:
-			s.SetType(sym.STEXT)
+			s.Type = sym.STEXT
 		case xcoff.STYP_DATA:
-			s.SetType(sym.SNOPTRDATA)
+			s.Type = sym.SNOPTRDATA
 		case xcoff.STYP_BSS:
-			s.SetType(sym.SNOPTRBSS)
+			s.Type = sym.SNOPTRBSS
 		}
 
-		s.SetSize(int64(lds.Size))
-		if s.Type() != sym.SNOPTRBSS {
+		s.Size = int64(lds.Size)
+		if s.Type != sym.SNOPTRBSS {
 			data, err := lds.Section.Data()
 			if err != nil {
 				return nil, err
 			}
-			s.SetData(data)
+			s.P = data
 		}
 
-		lds.sym = symbol
+		lds.sym = s
 		ldSections = append(ldSections, lds)
 	}
 
 	// sx = symbol from file
-	// s = symbol for loader
+	// s = symbol for syms
 	for _, sx := range f.Symbols {
 		// get symbol type
 		stype, errmsg := getSymbolType(f, sx)
@@ -101,14 +100,14 @@ func Load(l *loader.Loader, arch *sys.Arch, localSymVersion int, input *bio.Read
 			continue
 		}
 
-		s := l.LookupOrCreateSym(sx.Name, 0)
+		s := syms.Lookup(sx.Name, 0)
 
 		// Text symbol
-		if l.SymType(s) == sym.STEXT {
-			if l.AttrOnList(s) {
-				return errorf("symbol %s listed multiple times", l.SymName(s))
+		if s.Type == sym.STEXT {
+			if s.Attr.OnList() {
+				return errorf("symbol %s listed multiple times", s.Name)
 			}
-			l.SetAttrOnList(s, true)
+			s.Attr |= sym.AttrOnList
 			textp = append(textp, s)
 		}
 	}
@@ -119,16 +118,15 @@ func Load(l *loader.Loader, arch *sys.Arch, localSymVersion int, input *bio.Read
 		if sect.Type != xcoff.STYP_TEXT && sect.Type != xcoff.STYP_DATA {
 			continue
 		}
-		sb := l.MakeSymbolUpdater(sect.sym)
-		for _, rx := range sect.Relocs {
-			rSym := l.LookupOrCreateSym(rx.Symbol.Name, 0)
+		rs := make([]sym.Reloc, sect.Nreloc)
+		for i, rx := range sect.Relocs {
+			r := &rs[i]
+
+			r.Sym = syms.Lookup(rx.Symbol.Name, 0)
 			if uint64(int32(rx.VirtualAddress)) != rx.VirtualAddress {
 				return errorf("virtual address of a relocation is too big: 0x%x", rx.VirtualAddress)
 			}
-			rOff := int32(rx.VirtualAddress)
-			var rSize uint8
-			var rType objabi.RelocType
-			var rAdd int64
+			r.Off = int32(rx.VirtualAddress)
 			switch rx.Type {
 			default:
 				return errorf("section %s: unknown relocation of type 0x%x", sect.Name, rx.Type)
@@ -138,28 +136,27 @@ func Load(l *loader.Loader, arch *sys.Arch, localSymVersion int, input *bio.Read
 				if rx.Length != 64 {
 					return errorf("section %s: relocation R_POS has length different from 64: %d", sect.Name, rx.Length)
 				}
-				rSize = 8
-				rType = objabi.R_CONST
-				rAdd = int64(rx.Symbol.Value)
+				r.Siz = 8
+				r.Type = objabi.R_CONST
+				r.Add = int64(rx.Symbol.Value)
 
 			case xcoff.R_RBR:
-				rSize = 4
-				rType = objabi.R_CALLPOWER
-				rAdd = 0
+				r.Siz = 4
+				r.Type = objabi.R_CALLPOWER
+				r.Add = 0 //
+
 			}
-			r, _ := sb.AddRel(rType)
-			r.SetOff(rOff)
-			r.SetSiz(rSize)
-			r.SetSym(rSym)
-			r.SetAdd(rAdd)
 		}
+		s := sect.sym
+		s.R = rs
+		s.R = s.R[:sect.Nreloc]
 	}
 	return textp, nil
 
 }
 
 // Convert symbol xcoff type to sym.SymKind
-// Returns nil if this shouldn't be added into loader (like .file or .dw symbols )
+// Returns nil if this shouldn't be added into syms (like .file or .dw symbols )
 func getSymbolType(f *xcoff.File, s *xcoff.Symbol) (stype sym.SymKind, err string) {
 	// .file symbol
 	if s.SectionNumber == -2 {

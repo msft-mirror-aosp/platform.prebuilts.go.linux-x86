@@ -27,32 +27,11 @@ func Rnd(o int64, r int64) int64 {
 // expandiface computes the method set for interface type t by
 // expanding embedded interfaces.
 func expandiface(t *types.Type) {
-	seen := make(map[*types.Sym]*types.Field)
-	var methods []*types.Field
-
-	addMethod := func(m *types.Field, explicit bool) {
-		switch prev := seen[m.Sym]; {
-		case prev == nil:
-			seen[m.Sym] = m
-		case langSupported(1, 14, t.Pkg()) && !explicit && types.Identical(m.Type, prev.Type):
-			return
-		default:
-			yyerrorl(m.Pos, "duplicate method %s", m.Sym.Name)
-		}
-		methods = append(methods, m)
-	}
-
-	for _, m := range t.Methods().Slice() {
-		if m.Sym == nil {
-			continue
-		}
-
-		checkwidth(m.Type)
-		addMethod(m, true)
-	}
-
+	var fields []*types.Field
 	for _, m := range t.Methods().Slice() {
 		if m.Sym != nil {
+			fields = append(fields, m)
+			checkwidth(m.Type)
 			continue
 		}
 
@@ -64,7 +43,7 @@ func expandiface(t *types.Type) {
 			// include the broken embedded type when
 			// printing t.
 			// TODO(mdempsky): Revisit this.
-			methods = append(methods, m)
+			fields = append(fields, m)
 			continue
 		}
 
@@ -77,22 +56,26 @@ func expandiface(t *types.Type) {
 			f.Sym = t1.Sym
 			f.Type = t1.Type
 			f.SetBroke(t1.Broke())
-			addMethod(f, false)
+			fields = append(fields, f)
 		}
 	}
-
-	sort.Sort(methcmp(methods))
-
-	if int64(len(methods)) >= thearch.MAXWIDTH/int64(Widthptr) {
-		yyerror("interface too large")
-	}
-	for i, m := range methods {
-		m.Offset = int64(i) * int64(Widthptr)
-	}
+	sort.Sort(methcmp(fields))
 
 	// Access fields directly to avoid recursively calling dowidth
 	// within Type.Fields().
-	t.Extra.(*types.Interface).Fields.Set(methods)
+	t.Extra.(*types.Interface).Fields.Set(fields)
+}
+
+func offmod(t *types.Type) {
+	o := int32(0)
+	for _, f := range t.Fields().Slice() {
+		f.Offset = int64(o)
+		o += int32(Widthptr)
+		if int64(o) >= thearch.MAXWIDTH {
+			yyerror("interface too large")
+			o = int32(Widthptr)
+		}
+	}
 }
 
 func widstruct(errtype *types.Type, t *types.Type, o int64, flag int) int64 {
@@ -178,11 +161,6 @@ func widstruct(errtype *types.Type, t *types.Type, o int64, flag int) int64 {
 // have not already been calculated, it calls Fatal.
 // This is used to prevent data races in the back end.
 func dowidth(t *types.Type) {
-	// Calling dowidth when typecheck tracing enabled is not safe.
-	// See issue #33658.
-	if enableTrace && skipDowidthForTracing {
-		return
-	}
 	if Widthptr == 0 {
 		Fatalf("dowidth without betypeinit")
 	}
@@ -194,7 +172,16 @@ func dowidth(t *types.Type) {
 	if t.Width == -2 {
 		if !t.Broke() {
 			t.SetBroke(true)
-			yyerrorl(asNode(t.Nod).Pos, "invalid recursive type %v", t)
+			// t.Nod should not be nil here, but in some cases is appears to be
+			// (see issue #23823). For now (temporary work-around) at a minimum
+			// don't crash and provide a meaningful error message.
+			// TODO(gri) determine the correct fix during a regular devel cycle
+			// (see issue #31872).
+			if t.Nod == nil {
+				yyerror("invalid recursive type %v", t)
+			} else {
+				yyerrorl(asNode(t.Nod).Pos, "invalid recursive type %v", t)
+			}
 		}
 
 		t.Width = 0
@@ -222,7 +209,7 @@ func dowidth(t *types.Type) {
 	}
 
 	// defer checkwidth calls until after we're done
-	defercheckwidth()
+	defercalc++
 
 	lno := lineno
 	if asNode(t.Nod) != nil {
@@ -319,14 +306,21 @@ func dowidth(t *types.Type) {
 		Fatalf("dowidth any")
 
 	case TSTRING:
-		if sizeofString == 0 {
+		if sizeof_String == 0 {
 			Fatalf("early dowidth string")
 		}
-		w = sizeofString
+		w = int64(sizeof_String)
 		t.Align = uint8(Widthptr)
 
 	case TARRAY:
 		if t.Elem() == nil {
+			break
+		}
+		if t.IsDDDArray() {
+			if !t.Broke() {
+				yyerror("use of [...] array outside of array literal")
+				t.SetBroke(true)
+			}
 			break
 		}
 
@@ -344,7 +338,7 @@ func dowidth(t *types.Type) {
 		if t.Elem() == nil {
 			break
 		}
-		w = sizeofSlice
+		w = int64(sizeof_Array)
 		checkwidth(t.Elem())
 		t.Align = uint8(Widthptr)
 
@@ -387,9 +381,21 @@ func dowidth(t *types.Type) {
 		t.Align = uint8(w)
 	}
 
+	if t.Etype == TINTER {
+		// We defer calling these functions until after
+		// setting t.Width and t.Align so the recursive calls
+		// to dowidth within t.Fields() will succeed.
+		checkdupfields("method", t)
+		offmod(t)
+	}
+
 	lineno = lno
 
-	resumecheckwidth()
+	if defercalc == 1 {
+		resumecheckwidth()
+	} else {
+		defercalc--
+	}
 }
 
 // when a type's width should be known, we call checkwidth
@@ -434,18 +440,24 @@ func checkwidth(t *types.Type) {
 }
 
 func defercheckwidth() {
-	defercalc++
+	// we get out of sync on syntax errors, so don't be pedantic.
+	if defercalc != 0 && nerrors == 0 {
+		Fatalf("defercheckwidth")
+	}
+	defercalc = 1
 }
 
 func resumecheckwidth() {
-	if defercalc == 1 {
-		for len(deferredTypeStack) > 0 {
-			t := deferredTypeStack[len(deferredTypeStack)-1]
-			deferredTypeStack = deferredTypeStack[:len(deferredTypeStack)-1]
-			t.SetDeferwidth(false)
-			dowidth(t)
-		}
+	if defercalc == 0 {
+		Fatalf("resumecheckwidth")
 	}
 
-	defercalc--
+	for len(deferredTypeStack) > 0 {
+		t := deferredTypeStack[len(deferredTypeStack)-1]
+		deferredTypeStack = deferredTypeStack[:len(deferredTypeStack)-1]
+		t.SetDeferwidth(false)
+		dowidth(t)
+	}
+
+	defercalc = 0
 }

@@ -19,7 +19,6 @@ wait
 stdout 'foo\nbar'
 
 # The end of the test should interrupt or kill any remaining background
-# programs, but that should not cause the test to fail if it does not
-# care about the exit status of those programs.
-[!exec:sleep] stop
-? exec sleep 86400 &
+# programs.
+[!exec:sleep] skip
+! exec sleep 86400 &

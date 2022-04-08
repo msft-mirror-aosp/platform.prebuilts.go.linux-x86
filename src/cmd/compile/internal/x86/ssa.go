@@ -9,7 +9,6 @@ import (
 	"math"
 
 	"cmd/compile/internal/gc"
-	"cmd/compile/internal/logopt"
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
@@ -19,8 +18,8 @@ import (
 // markMoves marks any MOVXconst ops that need to avoid clobbering flags.
 func ssaMarkMoves(s *gc.SSAGenState, b *ssa.Block) {
 	flive := b.FlagsLiveAtEnd
-	for _, c := range b.ControlValues() {
-		flive = c.Type.IsFlags() || flive
+	if b.Control != nil && b.Control.Type.IsFlags() {
+		flive = true
 	}
 	for i := len(b.Values) - 1; i >= 0; i-- {
 		v := b.Values[i]
@@ -199,7 +198,7 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		if v.Op == ssa.Op386DIVL || v.Op == ssa.Op386DIVW ||
 			v.Op == ssa.Op386MODL || v.Op == ssa.Op386MODW {
 
-			if ssa.DivisionNeedsFixUp(v) {
+			if ssa.NeedsFixUp(v) {
 				var c *obj.Prog
 				switch v.Op {
 				case ssa.Op386DIVL, ssa.Op386MODL:
@@ -846,9 +845,6 @@ func ssaGenValue(s *gc.SSAGenState, v *ssa.Value) {
 		p.To.Type = obj.TYPE_MEM
 		p.To.Reg = v.Args[0].Reg()
 		gc.AddAux(&p.To, v)
-		if logopt.Enabled() {
-			logopt.LogOpt(v.Pos, "nilcheck", "genssa", v.Block.Func.Name)
-		}
 		if gc.Debug_checknil != 0 && v.Pos.Line() > 1 { // v.Pos.Line()==1 in generated wrappers
 			gc.Warnl(v.Pos, "generated nil check")
 		}
@@ -885,11 +881,11 @@ var blockJump = [...]struct {
 	ssa.Block386NAN: {x86.AJPS, x86.AJPC},
 }
 
-var eqfJumps = [2][2]gc.IndexJump{
+var eqfJumps = [2][2]gc.FloatingEQNEJump{
 	{{Jump: x86.AJNE, Index: 1}, {Jump: x86.AJPS, Index: 1}}, // next == b.Succs[0]
 	{{Jump: x86.AJNE, Index: 1}, {Jump: x86.AJPC, Index: 0}}, // next == b.Succs[1]
 }
-var nefJumps = [2][2]gc.IndexJump{
+var nefJumps = [2][2]gc.FloatingEQNEJump{
 	{{Jump: x86.AJNE, Index: 0}, {Jump: x86.AJPC, Index: 1}}, // next == b.Succs[0]
 	{{Jump: x86.AJNE, Index: 0}, {Jump: x86.AJPS, Index: 0}}, // next == b.Succs[1]
 }
@@ -929,10 +925,10 @@ func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
 		p.To.Sym = b.Aux.(*obj.LSym)
 
 	case ssa.Block386EQF:
-		s.CombJump(b, next, &eqfJumps)
+		s.FPJump(b, next, &eqfJumps)
 
 	case ssa.Block386NEF:
-		s.CombJump(b, next, &nefJumps)
+		s.FPJump(b, next, &nefJumps)
 
 	case ssa.Block386EQ, ssa.Block386NE,
 		ssa.Block386LT, ssa.Block386GE,
@@ -956,6 +952,6 @@ func ssaGenBlock(s *gc.SSAGenState, b, next *ssa.Block) {
 			}
 		}
 	default:
-		b.Fatalf("branch not implemented: %s", b.LongString())
+		b.Fatalf("branch not implemented: %s. Control: %s", b.LongString(), b.Control.LongString())
 	}
 }

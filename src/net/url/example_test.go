@@ -82,31 +82,13 @@ func ExampleParseQuery() {
 }
 
 func ExampleURL_EscapedPath() {
-	u, err := url.Parse("http://example.com/x/y%2Fz")
+	u, err := url.Parse("http://example.com/path with spaces")
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Path:", u.Path)
-	fmt.Println("RawPath:", u.RawPath)
-	fmt.Println("EscapedPath:", u.EscapedPath())
+	fmt.Println(u.EscapedPath())
 	// Output:
-	// Path: /x/y/z
-	// RawPath: /x/y%2Fz
-	// EscapedPath: /x/y%2Fz
-}
-
-func ExampleURL_EscapedFragment() {
-	u, err := url.Parse("http://example.com/#x/y%2Fz")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Fragment:", u.Fragment)
-	fmt.Println("RawFragment:", u.RawFragment)
-	fmt.Println("EscapedFragment:", u.EscapedFragment())
-	// Output:
-	// Fragment: x/y/z
-	// RawFragment: x/y%2Fz
-	// EscapedFragment: x/y%2Fz
+	// /path%20with%20spaces
 }
 
 func ExampleURL_Hostname() {
@@ -221,21 +203,6 @@ func ExampleURL_UnmarshalBinary() {
 	fmt.Printf("%s\n", u)
 	// Output:
 	// https://example.org/foo
-}
-
-func ExampleURL_Redacted() {
-	u := &url.URL{
-		Scheme: "https",
-		User:   url.UserPassword("user", "password"),
-		Host:   "example.com",
-		Path:   "foo/bar",
-	}
-	fmt.Println(u.Redacted())
-	u.User = url.UserPassword("me", "newerPassword")
-	fmt.Println(u.Redacted())
-	// Output:
-	// https://user:xxxxx@example.com/foo/bar
-	// https://me:xxxxx@example.com/foo/bar
 }
 
 func ExampleURL_RequestURI() {

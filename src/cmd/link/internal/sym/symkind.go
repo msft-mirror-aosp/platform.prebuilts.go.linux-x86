@@ -1,5 +1,5 @@
 // Derived from Inferno utils/6l/l.h and related files.
-// https://bitbucket.org/inferno-os/inferno-os/src/master/utils/6l/l.h
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/6l/l.h
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -94,7 +94,6 @@ const (
 	SXCOFFTOC
 	SBSS
 	SNOPTRBSS
-	SLIBFUZZER_EXTRA_COUNTER
 	STLSBSS
 	SXREF
 	SMACHOSYMSTR
@@ -105,14 +104,13 @@ const (
 	SCONST
 	SDYNIMPORT
 	SHOSTOBJ
-	SUNDEFEXT // Undefined symbol for resolution by external linker
 
 	// Sections for debugging information
 	SDWARFSECT
 	SDWARFINFO
 	SDWARFRANGE
 	SDWARFLOC
-	SDWARFLINES
+	SDWARFMISC // Not really a section; informs/affects other DWARF section generation
 
 	// ABI aliases (these never appear in the output)
 	SABIALIAS
@@ -132,9 +130,8 @@ var AbiSymKindToSymKind = [...]SymKind{
 	SDWARFINFO,
 	SDWARFRANGE,
 	SDWARFLOC,
-	SDWARFLINES,
+	SDWARFMISC,
 	SABIALIAS,
-	SLIBFUZZER_EXTRA_COUNTER,
 }
 
 // ReadOnly are the symbol kinds that form read-only sections. In some
@@ -160,9 +157,4 @@ var RelROMap = map[SymKind]SymKind{
 	SGCBITS:   SGCBITSRELRO,
 	SRODATA:   SRODATARELRO,
 	SFUNCTAB:  SFUNCTABRELRO,
-}
-
-// IsData returns true if the type is a data type.
-func (t SymKind) IsData() bool {
-	return t == SDATA || t == SNOPTRDATA || t == SBSS || t == SNOPTRBSS
 }

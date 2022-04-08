@@ -6,7 +6,6 @@ package main
 
 import (
 	"fmt"
-	"internal/obscuretestdata"
 	"internal/testenv"
 	"io/ioutil"
 	"os"
@@ -58,8 +57,8 @@ func TestNonGoExecs(t *testing.T) {
 	testfiles := []string{
 		"debug/elf/testdata/gcc-386-freebsd-exec",
 		"debug/elf/testdata/gcc-amd64-linux-exec",
-		"debug/macho/testdata/gcc-386-darwin-exec.base64",   // golang.org/issue/34986
-		"debug/macho/testdata/gcc-amd64-darwin-exec.base64", // golang.org/issue/34986
+		"debug/macho/testdata/gcc-386-darwin-exec",
+		"debug/macho/testdata/gcc-amd64-darwin-exec",
 		// "debug/pe/testdata/gcc-amd64-mingw-exec", // no symbols!
 		"debug/pe/testdata/gcc-386-mingw-exec",
 		"debug/plan9obj/testdata/amd64-plan9-exec",
@@ -68,16 +67,6 @@ func TestNonGoExecs(t *testing.T) {
 	}
 	for _, f := range testfiles {
 		exepath := filepath.Join(runtime.GOROOT(), "src", f)
-		if strings.HasSuffix(f, ".base64") {
-			tf, err := obscuretestdata.DecodeToTempFile(exepath)
-			if err != nil {
-				t.Errorf("obscuretestdata.DecodeToTempFile(%s): %v", exepath, err)
-				continue
-			}
-			defer os.Remove(tf)
-			exepath = tf
-		}
-
 		cmd := exec.Command(testnmpath, exepath)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -170,7 +159,7 @@ func testGoExec(t *testing.T, iscgo, isexternallinker bool) {
 				return true
 			}
 		}
-		if runtime.GOOS == "windows" {
+		if runtime.GOOS == "windows" && runtime.GOARCH == "arm" {
 			return true
 		}
 		return false

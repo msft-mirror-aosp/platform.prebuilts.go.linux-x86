@@ -26,7 +26,11 @@ import (
 // import.
 func skipSpecialPlatforms(t *testing.T) {
 	switch platform := runtime.GOOS + "-" + runtime.GOARCH; platform {
-	case "darwin-arm64":
+	case "nacl-amd64p32",
+		"nacl-386",
+		"nacl-arm",
+		"darwin-arm",
+		"darwin-arm64":
 		t.Skipf("no compiled packages available for import on %s", platform)
 	}
 }
@@ -136,7 +140,7 @@ func TestImportTestdata(t *testing.T) {
 }
 
 func TestVersionHandling(t *testing.T) {
-	skipSpecialPlatforms(t)
+	skipSpecialPlatforms(t) // we really only need to exclude nacl platforms, but this is fine
 
 	// This package only handles gc export data.
 	if runtime.Compiler != "gc" {
@@ -175,20 +179,10 @@ func TestVersionHandling(t *testing.T) {
 		// test that export data can be imported
 		_, err := Import(fset, make(map[string]*types.Package), pkgpath, dir, nil)
 		if err != nil {
-			// ok to fail if it fails with a no longer supported error for select files
-			if strings.Contains(err.Error(), "no longer supported") {
-				switch name {
-				case "test_go1.7_0.a", "test_go1.7_1.a",
-					"test_go1.8_4.a", "test_go1.8_5.a",
-					"test_go1.11_6b.a", "test_go1.11_999b.a":
-					continue
-				}
-				// fall through
-			}
 			// ok to fail if it fails with a newer version error for select files
 			if strings.Contains(err.Error(), "newer version") {
 				switch name {
-				case "test_go1.11_999i.a":
+				case "test_go1.11_999b.a", "test_go1.11_999i.a":
 					continue
 				}
 				// fall through
@@ -256,7 +250,7 @@ var importedObjectTests = []struct {
 	{"math.Pi", "const Pi untyped float"},
 	{"math.Sin", "func Sin(x float64) float64"},
 	{"go/ast.NotNilFilter", "func NotNilFilter(_ string, v reflect.Value) bool"},
-	{"go/internal/gcimporter.FindPkg", "func FindPkg(path string, srcDir string) (filename string, id string)"},
+	{"go/internal/gcimporter.BImportData", "func BImportData(fset *go/token.FileSet, imports map[string]*go/types.Package, data []byte, path string) (_ int, pkg *go/types.Package, err error)"},
 
 	// interfaces
 	{"context.Context", "type Context interface{Deadline() (deadline time.Time, ok bool); Done() <-chan struct{}; Err() error; Value(key interface{}) interface{}}"},

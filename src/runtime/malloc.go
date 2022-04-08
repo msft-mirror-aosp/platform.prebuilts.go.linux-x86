@@ -19,7 +19,7 @@
 //	fixalloc: a free-list allocator for fixed-size off-heap objects,
 //		used to manage storage used by the allocator.
 //	mheap: the malloc heap, managed at page (8192-byte) granularity.
-//	mspan: a run of in-use pages managed by the mheap.
+//	mspan: a run of pages managed by the mheap.
 //	mcentral: collects all spans of a given size class.
 //	mcache: a per-P cache of mspans with free space.
 //	mstats: allocation statistics.
@@ -56,16 +56,20 @@
 //	   it is placed on the mcentral free list for the mspan's size
 //	   class.
 //
-//	3. Otherwise, if all objects in the mspan are free, the mspan's
-//	   pages are returned to the mheap and the mspan is now dead.
+//	3. Otherwise, if all objects in the mspan are free, the mspan
+//	   is now "idle", so it is returned to the mheap and no longer
+//	   has a size class.
+//	   This may coalesce it with adjacent idle mspans.
+//
+//	4. If an mspan remains idle for long enough, return its pages
+//	   to the operating system.
 //
 // Allocating and freeing a large object uses the mheap
 // directly, bypassing the mcache and mcentral.
 //
-// If mspan.needzero is false, then free object slots in the mspan are
-// already zeroed. Otherwise if needzero is true, objects are zeroed as
-// they are allocated. There are various benefits to delaying zeroing
-// this way:
+// Free object slots in an mspan are zeroed only if mspan.needzero is
+// false. If needzero is true, objects are zeroed as they are
+// allocated. There are various benefits to delaying zeroing this way:
 //
 //	1. Stack frame allocation can avoid zeroing altogether.
 //
@@ -193,21 +197,17 @@ const (
 	// exceed Go's 48 bit limit, it's extremely unlikely in
 	// practice.
 	//
+	// On aix/ppc64, the limits is increased to 1<<60 to accept addresses
+	// returned by mmap syscall. These are in range:
+	//  0x0a00000000000000 - 0x0afffffffffffff
+	//
 	// On 32-bit platforms, we accept the full 32-bit address
 	// space because doing so is cheap.
 	// mips32 only has access to the low 2GB of virtual memory, so
 	// we further limit it to 31 bits.
 	//
-	// On darwin/arm64, although 64-bit pointers are presumably
-	// available, pointers are truncated to 33 bits. Furthermore,
-	// only the top 4 GiB of the address space are actually available
-	// to the application, but we allow the whole 33 bits anyway for
-	// simplicity.
-	// TODO(mknyszek): Consider limiting it to 32 bits and using
-	// arenaBaseOffset to offset into the top 4 GiB.
-	//
 	// WebAssembly currently has a limit of 4GB linear memory.
-	heapAddrBits = (_64bit*(1-sys.GoarchWasm)*(1-sys.GoosDarwin*sys.GoarchArm64))*48 + (1-_64bit+sys.GoarchWasm)*(32-(sys.GoarchMips+sys.GoarchMipsle)) + 33*sys.GoosDarwin*sys.GoarchArm64
+	heapAddrBits = (_64bit*(1-sys.GoarchWasm)*(1-sys.GoosAix))*48 + (1-_64bit+sys.GoarchWasm)*(32-(sys.GoarchMips+sys.GoarchMipsle)) + 60*sys.GoosAix
 
 	// maxAlloc is the maximum size of an allocation. On 64-bit,
 	// it's theoretically possible to allocate 1<<heapAddrBits bytes. On
@@ -226,6 +226,7 @@ const (
 	//       Platform  Addr bits  Arena size  L1 entries   L2 entries
 	// --------------  ---------  ----------  ----------  -----------
 	//       */64-bit         48        64MB           1    4M (32MB)
+	//     aix/64-bit         60       256MB        4096    4M (32MB)
 	// windows/64-bit         48         4MB          64    1M  (8MB)
 	//       */32-bit         32         4MB           1  1024  (4KB)
 	//     */mips(le)         31         4MB           1   512  (2KB)
@@ -247,7 +248,7 @@ const (
 	// logHeapArenaBytes is log_2 of heapArenaBytes. For clarity,
 	// prefer using heapArenaBytes where possible (we need the
 	// constant to compute some other constants).
-	logHeapArenaBytes = (6+20)*(_64bit*(1-sys.GoosWindows)*(1-sys.GoarchWasm)) + (2+20)*(_64bit*sys.GoosWindows) + (2+20)*(1-_64bit) + (2+20)*sys.GoarchWasm
+	logHeapArenaBytes = (6+20)*(_64bit*(1-sys.GoosWindows)*(1-sys.GoosAix)*(1-sys.GoarchWasm)) + (2+20)*(_64bit*sys.GoosWindows) + (2+20)*(1-_64bit) + (8+20)*sys.GoosAix + (2+20)*sys.GoarchWasm
 
 	// heapArenaBitmapBytes is the size of each heap arena's bitmap.
 	heapArenaBitmapBytes = heapArenaBytes / (sys.PtrSize * 8 / 2)
@@ -267,7 +268,10 @@ const (
 	// We use the L1 map on 64-bit Windows because the arena size
 	// is small, but the address space is still 48 bits, and
 	// there's a high cost to having a large L2.
-	arenaL1Bits = 6 * (_64bit * sys.GoosWindows)
+	//
+	// We use the L1 map on aix/ppc64 to keep the same L2 value
+	// as on Linux.
+	arenaL1Bits = 6*(_64bit*sys.GoosWindows) + 12*sys.GoosAix
 
 	// arenaL2Bits is the number of bits of the arena number
 	// covered by the second level arena index.
@@ -294,17 +298,9 @@ const (
 	// bits. This offset lets us handle "negative" addresses (or
 	// high addresses if viewed as unsigned).
 	//
-	// On aix/ppc64, this offset allows to keep the heapAddrBits to
-	// 48. Otherwize, it would be 60 in order to handle mmap addresses
-	// (in range 0x0a00000000000000 - 0x0afffffffffffff). But in this
-	// case, the memory reserved in (s *pageAlloc).init for chunks
-	// is causing important slowdowns.
-	//
 	// On other platforms, the user address space is contiguous
 	// and starts at 0, so no offset is necessary.
-	arenaBaseOffset = 0xffff800000000000*sys.GoarchAmd64 + 0x0a00000000000000*sys.GoosAix
-	// A typed version of this constant that will make it into DWARF (for viewcore).
-	arenaBaseOffsetUintptr = uintptr(arenaBaseOffset)
+	arenaBaseOffset uintptr = sys.GoarchAmd64 * (1 << 47)
 
 	// Max number of threads to run garbage collection.
 	// 2, 3, and 4 are all plausible maximums depending
@@ -437,10 +433,6 @@ func mallocinit() {
 		// The OS init code failed to fetch the physical page size.
 		throw("failed to get system page size")
 	}
-	if physPageSize > maxPhysPageSize {
-		print("system page size (", physPageSize, ") is larger than maximum page size (", maxPhysPageSize, ")\n")
-		throw("bad system page size")
-	}
 	if physPageSize < minPhysPageSize {
 		print("system page size (", physPageSize, ") is smaller than minimum page size (", minPhysPageSize, ")\n")
 		throw("bad system page size")
@@ -453,13 +445,6 @@ func mallocinit() {
 		print("system huge page size (", physHugePageSize, ") must be a power of 2\n")
 		throw("bad system huge page size")
 	}
-	if physHugePageSize > maxPhysHugePageSize {
-		// physHugePageSize is greater than the maximum supported huge page size.
-		// Don't throw here, like in the other cases, since a system configured
-		// in this way isn't wrong, we just don't have the code to support them.
-		// Instead, silently set the huge page size to zero.
-		physHugePageSize = 0
-	}
 	if physHugePageSize != 0 {
 		// Since physHugePageSize is a power of 2, it suffices to increase
 		// physHugePageShift until 1<<physHugePageShift == physHugePageSize.
@@ -467,21 +452,11 @@ func mallocinit() {
 			physHugePageShift++
 		}
 	}
-	if pagesPerArena%pagesPerSpanRoot != 0 {
-		print("pagesPerArena (", pagesPerArena, ") is not divisible by pagesPerSpanRoot (", pagesPerSpanRoot, ")\n")
-		throw("bad pagesPerSpanRoot")
-	}
-	if pagesPerArena%pagesPerReclaimerChunk != 0 {
-		print("pagesPerArena (", pagesPerArena, ") is not divisible by pagesPerReclaimerChunk (", pagesPerReclaimerChunk, ")\n")
-		throw("bad pagesPerReclaimerChunk")
-	}
 
 	// Initialize the heap.
 	mheap_.init()
-	mcache0 = allocmcache()
-	lockInit(&gcBitsArenas.lock, lockRankGcBitsArenas)
-	lockInit(&proflock, lockRankProf)
-	lockInit(&globalAlloc.mutex, lockRankGlobalAlloc)
+	_g_ := getg()
+	_g_.m.mcache = allocmcache()
 
 	// Create initial arena growth hints.
 	if sys.PtrSize == 8 {
@@ -515,7 +490,6 @@ func mallocinit() {
 		// allocation at 0x40 << 32 because when using 4k pages with 3-level
 		// translation buffers, the user address space is limited to 39 bits
 		// On darwin/arm64, the address space is even smaller.
-		//
 		// On AIX, mmaps starts at 0x0A00000000000000 for 64-bit.
 		// processes.
 		for i := 0x7f; i >= 0; i-- {
@@ -594,7 +568,7 @@ func mallocinit() {
 		if mheap_.heapArenaAlloc.next <= p && p < mheap_.heapArenaAlloc.end {
 			p = mheap_.heapArenaAlloc.end
 		}
-		p = alignUp(p+(256<<10), heapArenaBytes)
+		p = round(p+(256<<10), heapArenaBytes)
 		// Because we're worried about fragmentation on
 		// 32-bit, we try to make a large initial reservation.
 		arenaSizes := []uintptr{
@@ -606,7 +580,7 @@ func mallocinit() {
 			a, size := sysReserveAligned(unsafe.Pointer(p), arenaSize, heapArenaBytes)
 			if a != nil {
 				mheap_.arena.init(uintptr(a), size)
-				p = mheap_.arena.end // For hint below
+				p = uintptr(a) + size // For hint below
 				break
 			}
 		}
@@ -627,7 +601,7 @@ func mallocinit() {
 //
 // h must be locked.
 func (h *mheap) sysAlloc(n uintptr) (v unsafe.Pointer, size uintptr) {
-	n = alignUp(n, heapArenaBytes)
+	n = round(n, heapArenaBytes)
 
 	// First, try the arena pre-reservation.
 	v = h.arena.alloc(n, heapArenaBytes, &memstats.heap_sys)
@@ -810,7 +784,7 @@ retry:
 		// re-reserve the aligned sub-region. This may race,
 		// so we may have to try again.
 		sysFree(unsafe.Pointer(p), size+align, nil)
-		p = alignUp(p, align)
+		p = round(p, align)
 		p2 := sysReserve(unsafe.Pointer(p), size)
 		if p != uintptr(p2) {
 			// Must have raced. Try again.
@@ -824,7 +798,7 @@ retry:
 		return p2, size
 	default:
 		// Trim off the unaligned parts.
-		pAligned := alignUp(p, align)
+		pAligned := round(p, align)
 		sysFree(unsafe.Pointer(p), pAligned-p, nil)
 		end := pAligned + size
 		endLen := (p + size + align) - end
@@ -965,20 +939,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 
 	shouldhelpgc := false
 	dataSize := size
-	var c *mcache
-	if mp.p != 0 {
-		c = mp.p.ptr().mcache
-	} else {
-		// We will be called without a P while bootstrapping,
-		// in which case we use mcache0, which is set in mallocinit.
-		// mcache0 is cleared when bootstrapping is complete,
-		// by procresize.
-		c = mcache0
-		if c == nil {
-			throw("malloc called with no P")
-		}
-	}
-	var span *mspan
+	c := gomcache()
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.ptrdata == 0
 	if size <= maxSmallSize {
@@ -1015,11 +976,11 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			off := c.tinyoffset
 			// Align tiny pointer for required (conservative) alignment.
 			if size&7 == 0 {
-				off = alignUp(off, 8)
+				off = round(off, 8)
 			} else if size&3 == 0 {
-				off = alignUp(off, 4)
+				off = round(off, 4)
 			} else if size&1 == 0 {
-				off = alignUp(off, 2)
+				off = round(off, 2)
 			}
 			if off+size <= maxTinySize && c.tiny != 0 {
 				// The object fits into existing tiny block.
@@ -1031,10 +992,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 				return x
 			}
 			// Allocate a new maxTinySize block.
-			span = c.alloc[tinySpanClass]
+			span := c.alloc[tinySpanClass]
 			v := nextFreeFast(span)
 			if v == 0 {
-				v, span, shouldhelpgc = c.nextFree(tinySpanClass)
+				v, _, shouldhelpgc = c.nextFree(tinySpanClass)
 			}
 			x = unsafe.Pointer(v)
 			(*[2]uint64)(x)[0] = 0
@@ -1049,13 +1010,13 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 		} else {
 			var sizeclass uint8
 			if size <= smallSizeMax-8 {
-				sizeclass = size_to_class8[divRoundUp(size, smallSizeDiv)]
+				sizeclass = size_to_class8[(size+smallSizeDiv-1)/smallSizeDiv]
 			} else {
-				sizeclass = size_to_class128[divRoundUp(size-smallSizeMax, largeSizeDiv)]
+				sizeclass = size_to_class128[(size-smallSizeMax+largeSizeDiv-1)/largeSizeDiv]
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span = c.alloc[spc]
+			span := c.alloc[spc]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(spc)
@@ -1066,14 +1027,15 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			}
 		}
 	} else {
+		var s *mspan
 		shouldhelpgc = true
 		systemstack(func() {
-			span = largeAlloc(size, needzero, noscan)
+			s = largeAlloc(size, needzero, noscan)
 		})
-		span.freeindex = 1
-		span.allocCount = 1
-		x = unsafe.Pointer(span.base())
-		size = span.elemsize
+		s.freeindex = 1
+		s.allocCount = 1
+		x = unsafe.Pointer(s.base())
+		size = s.elemsize
 	}
 
 	var scanSize uintptr
@@ -1114,7 +1076,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	// This may be racing with GC so do it atomically if there can be
 	// a race marking the bit.
 	if gcphase != _GCoff {
-		gcmarknewobject(span, uintptr(x), size, scanSize)
+		gcmarknewobject(uintptr(x), size, scanSize)
 	}
 
 	if raceenabled {
@@ -1173,15 +1135,9 @@ func largeAlloc(size uintptr, needzero bool, noscan bool) *mspan {
 	// pays the debt down to npage pages.
 	deductSweepCredit(npages*_PageSize, npages)
 
-	spc := makeSpanClass(0, noscan)
-	s := mheap_.alloc(npages, spc, needzero)
+	s := mheap_.alloc(npages, makeSpanClass(0, noscan), true, needzero)
 	if s == nil {
 		throw("out of memory")
-	}
-	if go115NewMCentralImpl {
-		// Put the large span in the mcentral swept list so that it's
-		// visible to the background sweeper.
-		mheap_.central[spc].mcentral.fullSwept(mheap_.sweepgen).push(s)
 	}
 	s.limit = s.base() + size
 	heapBitsForAddr(s.base()).initSpan(s)
@@ -1223,16 +1179,7 @@ func reflect_unsafe_NewArray(typ *_type, n int) unsafe.Pointer {
 }
 
 func profilealloc(mp *m, x unsafe.Pointer, size uintptr) {
-	var c *mcache
-	if mp.p != 0 {
-		c = mp.p.ptr().mcache
-	} else {
-		c = mcache0
-		if c == nil {
-			throw("profilealloc called with no P")
-		}
-	}
-	c.next_sample = nextSample()
+	mp.mcache.next_sample = nextSample()
 	mProf_Malloc(x, size)
 }
 
@@ -1366,7 +1313,7 @@ func persistentalloc1(size, align uintptr, sysStat *uint64) *notInHeap {
 		lock(&globalAlloc.mutex)
 		persistent = &globalAlloc.persistentAlloc
 	}
-	persistent.off = alignUp(persistent.off, align)
+	persistent.off = round(persistent.off, align)
 	if persistent.off+size > persistentChunkSize || persistent.base == nil {
 		persistent.base = (*notInHeap)(sysAlloc(persistentChunkSize, &memstats.other_sys))
 		if persistent.base == nil {
@@ -1384,7 +1331,7 @@ func persistentalloc1(size, align uintptr, sysStat *uint64) *notInHeap {
 				break
 			}
 		}
-		persistent.off = alignUp(sys.PtrSize, align)
+		persistent.off = round(sys.PtrSize, align)
 	}
 	p := persistent.base.add(persistent.off)
 	persistent.off += size
@@ -1425,24 +1372,17 @@ type linearAlloc struct {
 }
 
 func (l *linearAlloc) init(base, size uintptr) {
-	if base+size < base {
-		// Chop off the last byte. The runtime isn't prepared
-		// to deal with situations where the bounds could overflow.
-		// Leave that memory reserved, though, so we don't map it
-		// later.
-		size -= 1
-	}
 	l.next, l.mapped = base, base
 	l.end = base + size
 }
 
 func (l *linearAlloc) alloc(size, align uintptr, sysStat *uint64) unsafe.Pointer {
-	p := alignUp(l.next, align)
+	p := round(l.next, align)
 	if p+size > l.end {
 		return nil
 	}
 	l.next = p + size
-	if pEnd := alignUp(l.next-1, physPageSize); pEnd > l.mapped {
+	if pEnd := round(l.next-1, physPageSize); pEnd > l.mapped {
 		// Transition from Reserved to Prepared to Ready.
 		sysMap(unsafe.Pointer(l.mapped), pEnd-l.mapped, sysStat)
 		sysUsed(unsafe.Pointer(l.mapped), pEnd-l.mapped)

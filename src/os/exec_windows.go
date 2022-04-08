@@ -6,11 +6,11 @@ package os
 
 import (
 	"errors"
-	"internal/syscall/windows"
 	"runtime"
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 func (p *Process) wait() (ps *ProcessState, err error) {
@@ -98,7 +98,8 @@ func findProcess(pid int) (p *Process, err error) {
 }
 
 func init() {
-	cmd := windows.UTF16PtrToString(syscall.GetCommandLine())
+	p := syscall.GetCommandLine()
+	cmd := syscall.UTF16ToString((*[0xffff]uint16)(unsafe.Pointer(p))[:])
 	if len(cmd) == 0 {
 		arg0, _ := Executable()
 		Args = []string{arg0}

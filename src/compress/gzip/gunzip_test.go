@@ -7,7 +7,6 @@ package gzip
 import (
 	"bytes"
 	"compress/flate"
-	"encoding/base64"
 	"io"
 	"io/ioutil"
 	"os"
@@ -414,16 +413,11 @@ func TestDecompressor(t *testing.T) {
 }
 
 func TestIssue6550(t *testing.T) {
-	// Apple’s notarization service will recursively attempt to decompress
-	// files in order to find binaries to notarize. Since the service is
-	// unable to decompress this file, it may reject the entire toolchain. Use a
-	// base64-encoded version to avoid this.
-	// See golang.org/issue/34986
-	f, err := os.Open("testdata/issue6550.gz.base64")
+	f, err := os.Open("testdata/issue6550.gz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	gzip, err := NewReader(base64.NewDecoder(base64.StdEncoding, f))
+	gzip, err := NewReader(f)
 	if err != nil {
 		t.Fatalf("NewReader(testdata/issue6550.gz): %v", err)
 	}

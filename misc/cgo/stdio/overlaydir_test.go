@@ -21,9 +21,12 @@ func overlayDir(dstRoot, srcRoot string) error {
 		return err
 	}
 
-	srcRoot, err := filepath.Abs(srcRoot)
+	symBase, err := filepath.Rel(srcRoot, dstRoot)
 	if err != nil {
-		return err
+		symBase, err = filepath.Abs(srcRoot)
+		if err != nil {
+			return err
+		}
 	}
 
 	return filepath.Walk(srcRoot, func(srcPath string, info os.FileInfo, err error) error {
@@ -49,11 +52,11 @@ func overlayDir(dstRoot, srcRoot string) error {
 		// Always copy directories (don't symlink them).
 		// If we add a file in the overlay, we don't want to add it in the original.
 		if info.IsDir() {
-			return os.MkdirAll(dstPath, perm|0200)
+			return os.Mkdir(dstPath, perm)
 		}
 
 		// If the OS supports symlinks, use them instead of copying bytes.
-		if err := os.Symlink(srcPath, dstPath); err == nil {
+		if err := os.Symlink(filepath.Join(symBase, suffix), dstPath); err == nil {
 			return nil
 		}
 

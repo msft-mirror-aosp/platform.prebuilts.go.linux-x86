@@ -40,10 +40,10 @@ var (
 	errInvalidDNSResponse        = errors.New("invalid DNS response")
 	errNoAnswerFromDNSServer     = errors.New("no answer from DNS server")
 
-	// errServerTemporarilyMisbehaving is like errServerMisbehaving, except
+	// errServerTemporarlyMisbehaving is like errServerMisbehaving, except
 	// that when it gets translated to a DNSError, the IsTemporary field
 	// gets set to true.
-	errServerTemporarilyMisbehaving = errors.New("server misbehaving")
+	errServerTemporarlyMisbehaving = errors.New("server misbehaving")
 )
 
 func newRequest(q dnsmessage.Question) (id uint16, udpReq, tcpReq []byte, err error) {
@@ -206,7 +206,7 @@ func checkHeader(p *dnsmessage.Parser, h dnsmessage.Header) error {
 		// the server is behaving incorrectly or
 		// having temporary trouble.
 		if h.RCode == dnsmessage.RCodeServerFailure {
-			return errServerTemporarilyMisbehaving
+			return errServerTemporarlyMisbehaving
 		}
 		return errServerMisbehaving
 	}
@@ -278,7 +278,7 @@ func (r *Resolver) tryOneName(ctx context.Context, cfg *dnsConfig, name string, 
 					Name:   name,
 					Server: server,
 				}
-				if err == errServerTemporarilyMisbehaving {
+				if err == errServerTemporarlyMisbehaving {
 					dnsErr.IsTemporary = true
 				}
 				if err == errNoSuchHost {
@@ -765,14 +765,6 @@ func (r *Resolver) goLookupPTR(ctx context.Context, addr string) ([]string, erro
 			}
 		}
 		if h.Type != dnsmessage.TypePTR {
-			err := p.SkipAnswer()
-			if err != nil {
-				return nil, &DNSError{
-					Err:    "cannot marshal DNS message",
-					Name:   addr,
-					Server: server,
-				}
-			}
 			continue
 		}
 		ptr, err := p.PTRResource()

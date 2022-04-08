@@ -60,6 +60,10 @@ var declare_typegen int
 // declare records that Node n declares symbol n.Sym in the specified
 // declaration context.
 func declare(n *Node, ctxt Class) {
+	if ctxt == PDISCARD {
+		return
+	}
+
 	if n.isBlank() {
 		return
 	}
@@ -203,6 +207,7 @@ func newnoname(s *types.Sym) *Node {
 	}
 	n := nod(ONONAME, nil, nil)
 	n.Sym = s
+	n.SetAddable(true)
 	n.Xoffset = 0
 	return n
 }
@@ -278,9 +283,10 @@ func oldname(s *types.Sym) *Node {
 			// Do not have a closure var for the active closure yet; make one.
 			c = newname(s)
 			c.SetClass(PAUTOHEAP)
-			c.Name.SetIsClosureVar(true)
+			c.SetIsClosureVar(true)
 			c.SetIsDDD(n.IsDDD())
 			c.Name.Defn = n
+			c.SetAddable(false)
 
 			// Link into list of active closure variables.
 			// Popped from list in func closurebody.
@@ -538,7 +544,7 @@ func structfield(n *Node) *types.Field {
 	f.Sym = n.Sym
 
 	if n.Left != nil {
-		n.Left = typecheck(n.Left, ctxType)
+		n.Left = typecheck(n.Left, Etype)
 		n.Type = n.Left.Type
 		n.Left = nil
 	}
@@ -570,10 +576,10 @@ func structfield(n *Node) *types.Field {
 
 // checkdupfields emits errors for duplicately named fields or methods in
 // a list of struct or interface types.
-func checkdupfields(what string, fss ...[]*types.Field) {
+func checkdupfields(what string, ts ...*types.Type) {
 	seen := make(map[*types.Sym]bool)
-	for _, fs := range fss {
-		for _, f := range fs {
+	for _, t := range ts {
+		for _, f := range t.Fields().Slice() {
 			if f.Sym == nil || f.Sym.IsBlank() {
 				continue
 			}
@@ -590,6 +596,14 @@ func checkdupfields(what string, fss ...[]*types.Field) {
 // a type for struct/interface/arglist
 func tostruct(l []*Node) *types.Type {
 	t := types.New(TSTRUCT)
+	tostruct0(t, l)
+	return t
+}
+
+func tostruct0(t *types.Type, l []*Node) {
+	if t == nil || !t.IsStruct() {
+		Fatalf("struct expected")
+	}
 
 	fields := make([]*types.Field, len(l))
 	for i, n := range l {
@@ -601,13 +615,11 @@ func tostruct(l []*Node) *types.Type {
 	}
 	t.SetFields(fields)
 
-	checkdupfields("field", t.FieldSlice())
+	checkdupfields("field", t)
 
 	if !t.Broke() {
 		checkwidth(t)
 	}
-
-	return t
 }
 
 func tofunargs(l []*Node, funarg types.Funarg) *types.Type {
@@ -656,7 +668,7 @@ func interfacefield(n *Node) *types.Field {
 	// Otherwise, Left is InterfaceTypeName.
 
 	if n.Left != nil {
-		n.Left = typecheck(n.Left, ctxType)
+		n.Left = typecheck(n.Left, Etype)
 		n.Type = n.Left.Type
 		n.Left = nil
 	}
@@ -678,6 +690,15 @@ func tointerface(l []*Node) *types.Type {
 		return types.Types[TINTER]
 	}
 	t := types.New(TINTER)
+	tointerface0(t, l)
+	return t
+}
+
+func tointerface0(t *types.Type, l []*Node) {
+	if t == nil || !t.IsInterface() {
+		Fatalf("interface expected")
+	}
+
 	var fields []*types.Field
 	for _, n := range l {
 		f := interfacefield(n)
@@ -687,7 +708,6 @@ func tointerface(l []*Node) *types.Type {
 		fields = append(fields, f)
 	}
 	t.SetInterface(fields)
-	return t
 }
 
 func fakeRecv() *Node {
@@ -710,6 +730,14 @@ func isifacemethod(f *types.Type) bool {
 // turn a parsed function declaration into a type
 func functype(this *Node, in, out []*Node) *types.Type {
 	t := types.New(TFUNC)
+	functype0(t, this, in, out)
+	return t
+}
+
+func functype0(t *types.Type, this *Node, in, out []*Node) {
+	if t == nil || t.Etype != TFUNC {
+		Fatalf("function type expected")
+	}
 
 	var rcvr []*Node
 	if this != nil {
@@ -719,20 +747,22 @@ func functype(this *Node, in, out []*Node) *types.Type {
 	t.FuncType().Params = tofunargs(in, types.FunargParams)
 	t.FuncType().Results = tofunargs(out, types.FunargResults)
 
-	checkdupfields("argument", t.Recvs().FieldSlice(), t.Params().FieldSlice(), t.Results().FieldSlice())
+	checkdupfields("argument", t.Recvs(), t.Params(), t.Results())
 
 	if t.Recvs().Broke() || t.Results().Broke() || t.Params().Broke() {
 		t.SetBroke(true)
 	}
 
 	t.FuncType().Outnamed = t.NumResults() > 0 && origSym(t.Results().Field(0).Sym) != nil
-
-	return t
 }
 
 func functypefield(this *types.Field, in, out []*types.Field) *types.Type {
 	t := types.New(TFUNC)
+	functypefield0(t, this, in, out)
+	return t
+}
 
+func functypefield0(t *types.Type, this *types.Field, in, out []*types.Field) {
 	var rcvr []*types.Field
 	if this != nil {
 		rcvr = []*types.Field{this}
@@ -742,8 +772,6 @@ func functypefield(this *types.Field, in, out []*types.Field) *types.Type {
 	t.FuncType().Results = tofunargsfield(out, types.FunargResults)
 
 	t.FuncType().Outnamed = t.NumResults() > 0 && origSym(t.Results().Field(0).Sym) != nil
-
-	return t
 }
 
 // origSym returns the original symbol written by the user.
@@ -992,7 +1020,7 @@ func dclfunc(sym *types.Sym, tfn *Node) *Node {
 	fn.Func.Nname.Name.Param.Ntype = tfn
 	declare(fn.Func.Nname, PFUNC)
 	funchdr(fn)
-	fn.Func.Nname.Name.Param.Ntype = typecheck(fn.Func.Nname.Name.Param.Ntype, ctxType)
+	fn.Func.Nname.Name.Param.Ntype = typecheck(fn.Func.Nname.Name.Param.Ntype, Etype)
 	return fn
 }
 

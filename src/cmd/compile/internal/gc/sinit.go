@@ -71,7 +71,7 @@ func (s *InitSchedule) staticcopy(l *Node, r *Node) bool {
 		return false
 	}
 	if r.Class() == PFUNC {
-		pfuncsym(l, r)
+		gdata(l, r, Widthptr)
 		return true
 	}
 	if r.Class() != PEXTERN || r.Sym.Pkg != localpkg {
@@ -81,9 +81,6 @@ func (s *InitSchedule) staticcopy(l *Node, r *Node) bool {
 		return false
 	}
 	if r.Name.Defn.Op != OAS {
-		return false
-	}
-	if r.Type.IsString() { // perhaps overwritten by cmd/link -X (#34675)
 		return false
 	}
 	orig := r
@@ -107,12 +104,13 @@ func (s *InitSchedule) staticcopy(l *Node, r *Node) bool {
 		if isZero(r) {
 			return true
 		}
-		litsym(l, r, int(l.Type.Width))
+		gdata(l, r, int(l.Type.Width))
 		return true
 
 	case OADDR:
-		if a := r.Left; a.Op == ONAME {
-			addrsym(l, a)
+		switch r.Left.Op {
+		case ONAME:
+			gdata(l, r, int(l.Type.Width))
 			return true
 		}
 
@@ -120,14 +118,21 @@ func (s *InitSchedule) staticcopy(l *Node, r *Node) bool {
 		switch r.Left.Op {
 		case OARRAYLIT, OSLICELIT, OSTRUCTLIT, OMAPLIT:
 			// copy pointer
-			addrsym(l, s.inittemps[r])
+			gdata(l, nod(OADDR, s.inittemps[r], nil), int(l.Type.Width))
 			return true
 		}
 
 	case OSLICELIT:
 		// copy slice
 		a := s.inittemps[r]
-		slicesym(l, a, r.Right.Int64())
+
+		n := l.copy()
+		n.Xoffset = l.Xoffset + int64(array_array)
+		gdata(n, nod(OADDR, a, nil), Widthptr)
+		n.Xoffset = l.Xoffset + int64(array_nel)
+		gdata(n, r.Right, Widthptr)
+		n.Xoffset = l.Xoffset + int64(array_cap)
+		gdata(n, r.Right, Widthptr)
 		return true
 
 	case OARRAYLIT, OSTRUCTLIT:
@@ -139,7 +144,7 @@ func (s *InitSchedule) staticcopy(l *Node, r *Node) bool {
 			n.Xoffset = l.Xoffset + e.Xoffset
 			n.Type = e.Expr.Type
 			if e.Expr.Op == OLITERAL {
-				litsym(n, e.Expr, int(n.Type.Width))
+				gdata(n, e.Expr, int(n.Type.Width))
 				continue
 			}
 			ll := n.sepcopy()
@@ -174,13 +179,15 @@ func (s *InitSchedule) staticassign(l *Node, r *Node) bool {
 		if isZero(r) {
 			return true
 		}
-		litsym(l, r, int(l.Type.Width))
+		gdata(l, r, int(l.Type.Width))
 		return true
 
 	case OADDR:
 		var nam Node
 		if stataddr(&nam, r.Left) {
-			addrsym(l, &nam)
+			n := *r
+			n.Left = &nam
+			gdata(l, &n, int(l.Type.Width))
 			return true
 		}
 		fallthrough
@@ -192,7 +199,7 @@ func (s *InitSchedule) staticassign(l *Node, r *Node) bool {
 			a := staticname(r.Left.Type)
 
 			s.inittemps[r] = a
-			addrsym(l, a)
+			gdata(l, nod(OADDR, a, nil), int(l.Type.Width))
 
 			// Init underlying literal.
 			if !s.staticassign(a, r.Left) {
@@ -204,8 +211,8 @@ func (s *InitSchedule) staticassign(l *Node, r *Node) bool {
 
 	case OSTR2BYTES:
 		if l.Class() == PEXTERN && r.Left.Op == OLITERAL {
-			sval := strlit(r.Left)
-			slicebytes(l, sval)
+			sval := r.Left.Val().U.(string)
+			slicebytes(l, sval, len(sval))
 			return true
 		}
 
@@ -214,10 +221,16 @@ func (s *InitSchedule) staticassign(l *Node, r *Node) bool {
 		// Init slice.
 		bound := r.Right.Int64()
 		ta := types.NewArray(r.Type.Elem(), bound)
-		ta.SetNoalg(true)
 		a := staticname(ta)
 		s.inittemps[r] = a
-		slicesym(l, a, bound)
+		n := l.copy()
+		n.Xoffset = l.Xoffset + int64(array_array)
+		gdata(n, nod(OADDR, a, nil), Widthptr)
+		n.Xoffset = l.Xoffset + int64(array_nel)
+		gdata(n, r.Right, Widthptr)
+		n.Xoffset = l.Xoffset + int64(array_cap)
+		gdata(n, r.Right, Widthptr)
+
 		// Fall through to init underlying array.
 		l = a
 		fallthrough
@@ -232,7 +245,7 @@ func (s *InitSchedule) staticassign(l *Node, r *Node) bool {
 			n.Xoffset = l.Xoffset + e.Xoffset
 			n.Type = e.Expr.Type
 			if e.Expr.Op == OLITERAL {
-				litsym(n, e.Expr, int(n.Type.Width))
+				gdata(n, e.Expr, int(n.Type.Width))
 				continue
 			}
 			setlineno(e.Expr)
@@ -254,7 +267,7 @@ func (s *InitSchedule) staticassign(l *Node, r *Node) bool {
 			}
 			// Closures with no captured variables are globals,
 			// so the assignment can be done at link time.
-			pfuncsym(l, r.Func.Closure.Func.Nname)
+			gdata(l, r.Func.Closure.Func.Nname, Widthptr)
 			return true
 		}
 		closuredebugruntimecheck(r)
@@ -288,7 +301,7 @@ func (s *InitSchedule) staticassign(l *Node, r *Node) bool {
 		n := l.copy()
 
 		// Emit itab, advance offset.
-		addrsym(n, itab.Left) // itab is an OADDR node
+		gdata(n, itab, Widthptr)
 		n.Xoffset += int64(Widthptr)
 
 		// Emit data.
@@ -311,7 +324,9 @@ func (s *InitSchedule) staticassign(l *Node, r *Node) bool {
 			if !s.staticassign(a, val) {
 				s.append(nod(OAS, a, val))
 			}
-			addrsym(n, a)
+			ptr := nod(OADDR, a, nil)
+			n.Type = types.NewPtr(val.Type)
+			gdata(n, ptr, Widthptr)
 		}
 
 		return true
@@ -354,7 +369,7 @@ func (c initContext) String() string {
 var statuniqgen int // name generator for static temps
 
 // staticname returns a name backed by a static data symbol.
-// Callers should call n.MarkReadonly on the
+// Callers should call n.Name.SetReadonly(true) on the
 // returned node for readonly nodes.
 func staticname(t *types.Type) *Node {
 	// Don't use lookupN; it interns the resulting string, but these are all unique.
@@ -370,7 +385,7 @@ func isLiteral(n *Node) bool {
 }
 
 func (n *Node) isSimpleName() bool {
-	return n.Op == ONAME && n.Class() != PAUTOHEAP && n.Class() != PEXTERN
+	return n.Op == ONAME && n.Addable() && n.Class() != PAUTOHEAP && n.Class() != PEXTERN
 }
 
 func litas(l *Node, r *Node, init *Nodes) {
@@ -480,7 +495,7 @@ func isStaticCompositeLiteral(n *Node) bool {
 // literal components of composite literals.
 // Dynamic initialization represents non-literals and
 // non-literal components of composite literals.
-// LocalCode initialization represents initialization
+// LocalCode initializion represents initialization
 // that occurs purely in generated code local to the function of use.
 // Initialization code is sometimes generated in passes,
 // first static then dynamic.
@@ -528,9 +543,6 @@ func fixedlit(ctxt initContext, kind initKind, n *Node, var_ *Node, init *Nodes)
 
 	for _, r := range n.List.Slice() {
 		a, value := splitnode(r)
-		if a == nblank && candiscard(value) {
-			continue
-		}
 
 		switch value.Op {
 		case OSLICELIT:
@@ -567,16 +579,6 @@ func fixedlit(ctxt initContext, kind initKind, n *Node, var_ *Node, init *Nodes)
 	}
 }
 
-func isSmallSliceLit(n *Node) bool {
-	if n.Op != OSLICELIT {
-		return false
-	}
-
-	r := n.Right
-
-	return smallintconst(r) && (n.Type.Elem().Width == 0 || r.Int64() <= smallArrayBytes/n.Type.Elem().Width)
-}
-
 func slicelit(ctxt initContext, n *Node, var_ *Node, init *Nodes) {
 	// make an array type corresponding the number of elements we have
 	t := types.NewArray(n.Type.Elem(), n.Right.Int64())
@@ -595,7 +597,18 @@ func slicelit(ctxt initContext, n *Node, var_ *Node, init *Nodes) {
 		if !stataddr(&nam, var_) || nam.Class() != PEXTERN {
 			Fatalf("slicelit: %v", var_)
 		}
-		slicesym(&nam, vstat, t.NumElem())
+
+		var v Node
+		v.Type = types.Types[TINT]
+		setintconst(&v, t.NumElem())
+
+		nam.Xoffset += int64(array_array)
+		gdata(&nam, nod(OADDR, vstat, nil), Widthptr)
+		nam.Xoffset += int64(array_nel) - int64(array_array)
+		gdata(&nam, &v, Widthptr)
+		nam.Xoffset += int64(array_cap) - int64(array_nel)
+		gdata(&nam, &v, Widthptr)
+
 		return
 	}
 
@@ -623,10 +636,10 @@ func slicelit(ctxt initContext, n *Node, var_ *Node, init *Nodes) {
 	var vstat *Node
 
 	mode := getdyn(n, true)
-	if mode&initConst != 0 && !isSmallSliceLit(n) {
+	if mode&initConst != 0 {
 		vstat = staticname(t)
 		if ctxt == inInitFunction {
-			vstat.MarkReadonly()
+			vstat.Name.SetReadonly(true)
 		}
 		fixedlit(ctxt, initKindStatic, n, vstat, init)
 	}
@@ -763,17 +776,15 @@ func maplit(n *Node, m *Node, init *Nodes) {
 		tk := types.NewArray(n.Type.Key(), int64(len(entries)))
 		te := types.NewArray(n.Type.Elem(), int64(len(entries)))
 
-		tk.SetNoalg(true)
-		te.SetNoalg(true)
-
+		// TODO(josharian): suppress alg generation for these types?
 		dowidth(tk)
 		dowidth(te)
 
 		// make and initialize static arrays
 		vstatk := staticname(tk)
-		vstatk.MarkReadonly()
+		vstatk.Name.SetReadonly(true)
 		vstate := staticname(te)
-		vstate.MarkReadonly()
+		vstate.Name.SetReadonly(true)
 
 		datak := nod(OARRAYLIT, nil, nil)
 		datae := nod(OARRAYLIT, nil, nil)
@@ -895,7 +906,7 @@ func anylit(n *Node, var_ *Node, init *Nodes) {
 		if var_.isSimpleName() && n.List.Len() > 4 {
 			// lay out static data
 			vstat := staticname(t)
-			vstat.MarkReadonly()
+			vstat.Name.SetReadonly(true)
 
 			ctxt := inInitFunction
 			if n.Op == OARRAYLIT {
@@ -994,7 +1005,7 @@ func stataddr(nam *Node, n *Node) bool {
 	switch n.Op {
 	case ONAME:
 		*nam = *n
-		return true
+		return n.Addable()
 
 	case ODOT:
 		if !stataddr(nam, n.Left) {
@@ -1155,10 +1166,10 @@ func genAsStatic(as *Node) {
 
 	switch {
 	case as.Right.Op == OLITERAL:
-		litsym(&nam, as.Right, int(as.Right.Type.Width))
 	case as.Right.Op == ONAME && as.Right.Class() == PFUNC:
-		pfuncsym(&nam, as.Right)
 	default:
 		Fatalf("genAsStatic: rhs %v", as.Right)
 	}
+
+	gdata(&nam, as.Right, int(as.Right.Type.Width))
 }

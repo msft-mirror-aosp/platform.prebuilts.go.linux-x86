@@ -1,4 +1,4 @@
-// +build !nacl,!js,!android
+// +build !nacl,!js,!android,!darwin darwin,!arm
 // run
 
 // Copyright 2016 The Go Authors. All rights reserved.

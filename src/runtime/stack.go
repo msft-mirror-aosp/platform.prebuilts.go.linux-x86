@@ -5,7 +5,6 @@
 package runtime
 
 import (
-	"internal/cpu"
 	"runtime/internal/atomic"
 	"runtime/internal/sys"
 	"unsafe"
@@ -91,7 +90,7 @@ const (
 
 	// The stack guard is a pointer this many bytes above the
 	// bottom of the stack.
-	_StackGuard = 928*sys.StackGuardMultiplier + _StackSystem
+	_StackGuard = 880*sys.StackGuardMultiplier + _StackSystem
 
 	// After a stack split check the SP is allowed to be this
 	// many bytes below the stack guard. This saves an instruction
@@ -138,16 +137,9 @@ const (
 // Stacks are assigned an order according to size.
 //     order = log_2(size/FixedStack)
 // There is a free list for each order.
-var stackpool [_NumStackOrders]struct {
-	item stackpoolItem
-	_    [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
-}
-
-//go:notinheap
-type stackpoolItem struct {
-	mu   mutex
-	span mSpanList
-}
+// TODO: one lock per order?
+var stackpool [_NumStackOrders]mSpanList
+var stackpoolmu mutex
 
 // Global pool of large stack spans.
 var stackLarge struct {
@@ -160,12 +152,10 @@ func stackinit() {
 		throw("cache size must be a multiple of page size")
 	}
 	for i := range stackpool {
-		stackpool[i].item.span.init()
-		lockInit(&stackpool[i].item.mu, lockRankStackpool)
+		stackpool[i].init()
 	}
 	for i := range stackLarge.free {
 		stackLarge.free[i].init()
-		lockInit(&stackLarge.lock, lockRankStackLarge)
 	}
 }
 
@@ -180,11 +170,10 @@ func stacklog2(n uintptr) int {
 }
 
 // Allocates a stack from the free pool. Must be called with
-// stackpool[order].item.mu held.
+// stackpoolmu held.
 func stackpoolalloc(order uint8) gclinkptr {
-	list := &stackpool[order].item.span
+	list := &stackpool[order]
 	s := list.first
-	lockWithRankMayAcquire(&mheap_.lock, lockRankMheap)
 	if s == nil {
 		// no free stacks. Allocate another span worth.
 		s = mheap_.allocManual(_StackCacheSize>>_PageShift, &memstats.stacks_inuse)
@@ -219,15 +208,15 @@ func stackpoolalloc(order uint8) gclinkptr {
 	return x
 }
 
-// Adds stack x to the free pool. Must be called with stackpool[order].item.mu held.
+// Adds stack x to the free pool. Must be called with stackpoolmu held.
 func stackpoolfree(x gclinkptr, order uint8) {
 	s := spanOfUnchecked(uintptr(x))
-	if s.state.get() != mSpanManual {
+	if s.state != mSpanManual {
 		throw("freeing stack not in a stack span")
 	}
 	if s.manualFreeList.ptr() == nil {
 		// s will now have a free stack
-		stackpool[order].item.span.insert(s)
+		stackpool[order].insert(s)
 	}
 	x.ptr().next = s.manualFreeList
 	s.manualFreeList = x
@@ -248,7 +237,7 @@ func stackpoolfree(x gclinkptr, order uint8) {
 		//    pointer into a free span.
 		//
 		// By not freeing, we prevent step #4 until GC is done.
-		stackpool[order].item.span.remove(s)
+		stackpool[order].remove(s)
 		s.manualFreeList = 0
 		osStackFree(s)
 		mheap_.freeManual(s, &memstats.stacks_inuse)
@@ -268,14 +257,14 @@ func stackcacherefill(c *mcache, order uint8) {
 	// Grab half of the allowed capacity (to prevent thrashing).
 	var list gclinkptr
 	var size uintptr
-	lock(&stackpool[order].item.mu)
+	lock(&stackpoolmu)
 	for size < _StackCacheSize/2 {
 		x := stackpoolalloc(order)
 		x.ptr().next = list
 		list = x
 		size += _FixedStack << order
 	}
-	unlock(&stackpool[order].item.mu)
+	unlock(&stackpoolmu)
 	c.stackcache[order].list = list
 	c.stackcache[order].size = size
 }
@@ -287,14 +276,14 @@ func stackcacherelease(c *mcache, order uint8) {
 	}
 	x := c.stackcache[order].list
 	size := c.stackcache[order].size
-	lock(&stackpool[order].item.mu)
+	lock(&stackpoolmu)
 	for size > _StackCacheSize/2 {
 		y := x.ptr().next
 		stackpoolfree(x, order)
 		x = y
 		size -= _FixedStack << order
 	}
-	unlock(&stackpool[order].item.mu)
+	unlock(&stackpoolmu)
 	c.stackcache[order].list = x
 	c.stackcache[order].size = size
 }
@@ -304,8 +293,8 @@ func stackcache_clear(c *mcache) {
 	if stackDebug >= 1 {
 		print("stackcache clear\n")
 	}
+	lock(&stackpoolmu)
 	for order := uint8(0); order < _NumStackOrders; order++ {
-		lock(&stackpool[order].item.mu)
 		x := c.stackcache[order].list
 		for x.ptr() != nil {
 			y := x.ptr().next
@@ -314,8 +303,8 @@ func stackcache_clear(c *mcache) {
 		}
 		c.stackcache[order].list = 0
 		c.stackcache[order].size = 0
-		unlock(&stackpool[order].item.mu)
 	}
+	unlock(&stackpoolmu)
 }
 
 // stackalloc allocates an n byte stack.
@@ -340,7 +329,7 @@ func stackalloc(n uint32) stack {
 	}
 
 	if debug.efence != 0 || stackFromSystem != 0 {
-		n = uint32(alignUp(uintptr(n), physPageSize))
+		n = uint32(round(uintptr(n), physPageSize))
 		v := sysAlloc(uintptr(n), &memstats.stacks_sys)
 		if v == nil {
 			throw("out of memory (stackalloc)")
@@ -360,16 +349,16 @@ func stackalloc(n uint32) stack {
 			n2 >>= 1
 		}
 		var x gclinkptr
-		if stackNoCache != 0 || thisg.m.p == 0 || thisg.m.preemptoff != "" {
-			// thisg.m.p == 0 can happen in the guts of exitsyscall
-			// or procresize. Just get a stack from the global pool.
+		c := thisg.m.mcache
+		if stackNoCache != 0 || c == nil || thisg.m.preemptoff != "" {
+			// c == nil can happen in the guts of exitsyscall or
+			// procresize. Just get a stack from the global pool.
 			// Also don't touch stackcache during gc
 			// as it's flushed concurrently.
-			lock(&stackpool[order].item.mu)
+			lock(&stackpoolmu)
 			x = stackpoolalloc(order)
-			unlock(&stackpool[order].item.mu)
+			unlock(&stackpoolmu)
 		} else {
-			c := thisg.m.p.ptr().mcache
 			x = c.stackcache[order].list
 			if x.ptr() == nil {
 				stackcacherefill(c, order)
@@ -391,8 +380,6 @@ func stackalloc(n uint32) stack {
 			stackLarge.free[log2npage].remove(s)
 		}
 		unlock(&stackLarge.lock)
-
-		lockWithRankMayAcquire(&mheap_.lock, lockRankMheap)
 
 		if s == nil {
 			// Allocate a new stack from the heap.
@@ -457,12 +444,12 @@ func stackfree(stk stack) {
 			n2 >>= 1
 		}
 		x := gclinkptr(v)
-		if stackNoCache != 0 || gp.m.p == 0 || gp.m.preemptoff != "" {
-			lock(&stackpool[order].item.mu)
+		c := gp.m.mcache
+		if stackNoCache != 0 || c == nil || gp.m.preemptoff != "" {
+			lock(&stackpoolmu)
 			stackpoolfree(x, order)
-			unlock(&stackpool[order].item.mu)
+			unlock(&stackpoolmu)
 		} else {
-			c := gp.m.p.ptr().mcache
 			if c.stackcache[order].size >= _StackCacheSize {
 				stackcacherelease(c, order)
 			}
@@ -472,7 +459,7 @@ func stackfree(stk stack) {
 		}
 	} else {
 		s := spanOfUnchecked(uintptr(v))
-		if s.state.get() != mSpanManual {
+		if s.state != mSpanManual {
 			println(hex(s.base()), v)
 			throw("bad span state")
 		}
@@ -556,7 +543,6 @@ func adjustpointer(adjinfo *adjustinfo, vpp unsafe.Pointer) {
 }
 
 // Information from the compiler about the layout of stack frames.
-// Note: this type must agree with reflect.bitVector.
 type bitvector struct {
 	n        int32 // # of bits
 	bytedata *uint8
@@ -633,7 +619,7 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 		print("    adjusting ", funcname(f), " frame=[", hex(frame.sp), ",", hex(frame.fp), "] pc=", hex(frame.pc), " continpc=", hex(frame.continpc), "\n")
 	}
 	if f.funcID == funcID_systemstack_switch {
-		// A special routine at the bottom of stack of a goroutine that does a systemstack call.
+		// A special routine at the bottom of stack of a goroutine that does an systemstack call.
 		// We will allow it to be copied even though we don't
 		// have full GC info for it (because it is written in asm).
 		return true
@@ -742,8 +728,6 @@ func adjustdefers(gp *g, adjinfo *adjustinfo) {
 		adjustpointer(adjinfo, unsafe.Pointer(&d.sp))
 		adjustpointer(adjinfo, unsafe.Pointer(&d._panic))
 		adjustpointer(adjinfo, unsafe.Pointer(&d.link))
-		adjustpointer(adjinfo, unsafe.Pointer(&d.varp))
-		adjustpointer(adjinfo, unsafe.Pointer(&d.fd))
 	}
 
 	// Adjust defer argument blocks the same way we adjust active stack frames.
@@ -792,19 +776,14 @@ func syncadjustsudogs(gp *g, used uintptr, adjinfo *adjustinfo) uintptr {
 	}
 
 	// Lock channels to prevent concurrent send/receive.
+	// It's important that we *only* do this for async
+	// copystack; otherwise, gp may be in the middle of
+	// putting itself on wait queues and this would
+	// self-deadlock.
 	var lastc *hchan
 	for sg := gp.waiting; sg != nil; sg = sg.waitlink {
 		if sg.c != lastc {
-			// There is a ranking cycle here between gscan bit and
-			// hchan locks. Normally, we only allow acquiring hchan
-			// locks and then getting a gscan bit. In this case, we
-			// already have the gscan bit. We allow acquiring hchan
-			// locks here as a special case, since a deadlock can't
-			// happen because the G involved must already be
-			// suspended. So, we get a special hchan lock rank here
-			// that is lower than gscan, but doesn't allow acquiring
-			// any other locks other than hchan.
-			lockWithRank(&sg.c.lock, lockRankHchanLeaf)
+			lock(&sg.c.lock)
 		}
 		lastc = sg.c
 	}
@@ -837,7 +816,12 @@ func syncadjustsudogs(gp *g, used uintptr, adjinfo *adjustinfo) uintptr {
 
 // Copies gp's stack to a new stack of a different size.
 // Caller must have changed gp status to Gcopystack.
-func copystack(gp *g, newsize uintptr) {
+//
+// If sync is true, this is a self-triggered stack growth and, in
+// particular, no other G may be writing to gp's stack (e.g., via a
+// channel operation). If sync is false, copystack protects against
+// concurrent channel operations.
+func copystack(gp *g, newsize uintptr, sync bool) {
 	if gp.syscallsp != 0 {
 		throw("stack growth not allowed in system call")
 	}
@@ -863,23 +847,15 @@ func copystack(gp *g, newsize uintptr) {
 
 	// Adjust sudogs, synchronizing with channel ops if necessary.
 	ncopy := used
-	if !gp.activeStackChans {
-		if newsize < old.hi-old.lo && atomic.Load8(&gp.parkingOnChan) != 0 {
-			// It's not safe for someone to shrink this stack while we're actively
-			// parking on a channel, but it is safe to grow since we do that
-			// ourselves and explicitly don't want to synchronize with channels
-			// since we could self-deadlock.
-			throw("racy sudog adjustment due to parking on channel")
-		}
+	if sync {
 		adjustsudogs(gp, &adjinfo)
 	} else {
-		// sudogs may be pointing in to the stack and gp has
-		// released channel locks, so other goroutines could
-		// be writing to gp's stack. Find the highest such
-		// pointer so we can handle everything there and below
-		// carefully. (This shouldn't be far from the bottom
-		// of the stack, so there's little cost in handling
-		// everything below it carefully.)
+		// sudogs can point in to the stack. During concurrent
+		// shrinking, these areas may be written to. Find the
+		// highest such pointer so we can handle everything
+		// there and below carefully. (This shouldn't be far
+		// from the bottom of the stack, so there's little
+		// cost in handling everything below it carefully.)
 		adjinfo.sghi = findsghi(gp, old)
 
 		// Synchronize with channel ops and copy the part of
@@ -930,7 +906,7 @@ func round2(x int32) int32 {
 // Stack growth is multiplicative, for constant amortized cost.
 //
 // g->atomicstatus will be Grunning or Gscanrunning upon entry.
-// If the scheduler is trying to stop this g, then it will set preemptStop.
+// If the GC is trying to stop this g then it will set preemptscan to true.
 //
 // This must be nowritebarrierrec because it can be called as part of
 // stack growth from other nowritebarrierrec functions, but the
@@ -997,7 +973,7 @@ func newstack() {
 	// it needs a lock held by the goroutine), that small preemption turns
 	// into a real deadlock.
 	if preempt {
-		if !canPreemptM(thisg.m) {
+		if thisg.m.locks != 0 || thisg.m.mallocing != 0 || thisg.m.preemptoff != "" || thisg.m.p.ptr().status != _Prunning {
 			// Let the goroutine keep running for now.
 			// gp->preempt is set, so it will be preempted next time.
 			gp.stackguard0 = gp.stack.lo + _StackGuard
@@ -1031,39 +1007,42 @@ func newstack() {
 		if thisg.m.p == 0 && thisg.m.locks == 0 {
 			throw("runtime: g is running but p is not")
 		}
-
-		if gp.preemptShrink {
-			// We're at a synchronous safe point now, so
-			// do the pending stack shrink.
-			gp.preemptShrink = false
-			shrinkstack(gp)
-		}
-
-		if gp.preemptStop {
-			preemptPark(gp) // never returns
+		// Synchronize with scang.
+		casgstatus(gp, _Grunning, _Gwaiting)
+		if gp.preemptscan {
+			for !castogscanstatus(gp, _Gwaiting, _Gscanwaiting) {
+				// Likely to be racing with the GC as
+				// it sees a _Gwaiting and does the
+				// stack scan. If so, gcworkdone will
+				// be set and gcphasework will simply
+				// return.
+			}
+			if !gp.gcscandone {
+				// gcw is safe because we're on the
+				// system stack.
+				gcw := &gp.m.p.ptr().gcw
+				scanstack(gp, gcw)
+				gp.gcscandone = true
+			}
+			gp.preemptscan = false
+			gp.preempt = false
+			casfrom_Gscanstatus(gp, _Gscanwaiting, _Gwaiting)
+			// This clears gcscanvalid.
+			casgstatus(gp, _Gwaiting, _Grunning)
+			gp.stackguard0 = gp.stack.lo + _StackGuard
+			gogo(&gp.sched) // never return
 		}
 
 		// Act like goroutine called runtime.Gosched.
+		casgstatus(gp, _Gwaiting, _Grunning)
 		gopreempt_m(gp) // never return
 	}
 
 	// Allocate a bigger segment and move the stack.
 	oldsize := gp.stack.hi - gp.stack.lo
 	newsize := oldsize * 2
-
-	// Make sure we grow at least as much as needed to fit the new frame.
-	// (This is just an optimization - the caller of morestack will
-	// recheck the bounds on return.)
-	if f := findfunc(gp.sched.pc); f.valid() {
-		max := uintptr(funcMaxSPDelta(f))
-		for newsize-oldsize < max+_StackGuard {
-			newsize *= 2
-		}
-	}
-
 	if newsize > maxstacksize {
 		print("runtime: goroutine stack exceeds ", maxstacksize, "-byte limit\n")
-		print("runtime: sp=", hex(sp), " stack=[", hex(gp.stack.lo), ", ", hex(gp.stack.hi), "]\n")
 		throw("stack overflow")
 	}
 
@@ -1073,7 +1052,7 @@ func newstack() {
 
 	// The concurrent GC will not scan the stack while we are doing the copy since
 	// the gp is in a Gcopystack status.
-	copystack(gp, newsize)
+	copystack(gp, newsize, true)
 	if stackDebug >= 1 {
 		print("stack grow done\n")
 	}
@@ -1098,50 +1077,16 @@ func gostartcallfn(gobuf *gobuf, fv *funcval) {
 	gostartcall(gobuf, fn, unsafe.Pointer(fv))
 }
 
-// isShrinkStackSafe returns whether it's safe to attempt to shrink
-// gp's stack. Shrinking the stack is only safe when we have precise
-// pointer maps for all frames on the stack.
-func isShrinkStackSafe(gp *g) bool {
-	// We can't copy the stack if we're in a syscall.
-	// The syscall might have pointers into the stack and
-	// often we don't have precise pointer maps for the innermost
-	// frames.
-	//
-	// We also can't copy the stack if we're at an asynchronous
-	// safe-point because we don't have precise pointer maps for
-	// all frames.
-	//
-	// We also can't *shrink* the stack in the window between the
-	// goroutine calling gopark to park on a channel and
-	// gp.activeStackChans being set.
-	return gp.syscallsp == 0 && !gp.asyncSafePoint && atomic.Load8(&gp.parkingOnChan) == 0
-}
-
 // Maybe shrink the stack being used by gp.
-//
-// gp must be stopped and we must own its stack. It may be in
-// _Grunning, but only if this is our own user G.
+// Called at garbage collection time.
+// gp must be stopped, but the world need not be.
 func shrinkstack(gp *g) {
+	gstatus := readgstatus(gp)
 	if gp.stack.lo == 0 {
 		throw("missing stack in shrinkstack")
 	}
-	if s := readgstatus(gp); s&_Gscan == 0 {
-		// We don't own the stack via _Gscan. We could still
-		// own it if this is our own user G and we're on the
-		// system stack.
-		if !(gp == getg().m.curg && getg() != getg().m.curg && s == _Grunning) {
-			// We don't own the stack.
-			throw("bad status in shrinkstack")
-		}
-	}
-	if !isShrinkStackSafe(gp) {
-		throw("shrinkstack at bad time")
-	}
-	// Check for self-shrinks while in a libcall. These may have
-	// pointers into the stack disguised as uintptrs, but these
-	// code paths should all be nosplit.
-	if gp == getg().m.curg && gp.m.libcallsp != 0 {
-		throw("shrinking stack in libcall")
+	if gstatus&_Gscan == 0 {
+		throw("bad status in shrinkstack")
 	}
 
 	if debug.gcshrinkstackoff > 0 {
@@ -1171,20 +1116,29 @@ func shrinkstack(gp *g) {
 		return
 	}
 
+	// We can't copy the stack if we're in a syscall.
+	// The syscall might have pointers into the stack.
+	if gp.syscallsp != 0 {
+		return
+	}
+	if sys.GoosWindows != 0 && gp.m != nil && gp.m.libcallsp != 0 {
+		return
+	}
+
 	if stackDebug > 0 {
 		print("shrinking stack ", oldsize, "->", newsize, "\n")
 	}
 
-	copystack(gp, newsize)
+	copystack(gp, newsize, false)
 }
 
 // freeStackSpans frees unused stack spans at the end of GC.
 func freeStackSpans() {
+	lock(&stackpoolmu)
 
 	// Scan stack pools for empty stack spans.
 	for order := range stackpool {
-		lock(&stackpool[order].item.mu)
-		list := &stackpool[order].item.span
+		list := &stackpool[order]
 		for s := list.first; s != nil; {
 			next := s.next
 			if s.allocCount == 0 {
@@ -1195,8 +1149,9 @@ func freeStackSpans() {
 			}
 			s = next
 		}
-		unlock(&stackpool[order].item.mu)
 	}
+
+	unlock(&stackpoolmu)
 
 	// Free large stack spans.
 	lock(&stackLarge.lock)
@@ -1248,8 +1203,29 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 		minsize = sys.MinFrameSize
 	}
 	if size > minsize {
+		var stkmap *stackmap
 		stackid := pcdata
-		stkmap := (*stackmap)(funcdata(f, _FUNCDATA_LocalsPointerMaps))
+		if f.funcID != funcID_debugCallV1 {
+			stkmap = (*stackmap)(funcdata(f, _FUNCDATA_LocalsPointerMaps))
+		} else {
+			// debugCallV1's stack map is the register map
+			// at its call site.
+			callerPC := frame.lr
+			caller := findfunc(callerPC)
+			if !caller.valid() {
+				println("runtime: debugCallV1 called by unknown caller", hex(callerPC))
+				throw("bad debugCallV1")
+			}
+			stackid = int32(-1)
+			if callerPC != caller.entry {
+				callerPC--
+				stackid = pcdatavalue(caller, _PCDATA_RegMapIndex, callerPC, cache)
+			}
+			if stackid == -1 {
+				stackid = 0 // in prologue
+			}
+			stkmap = (*stackmap)(funcdata(caller, _FUNCDATA_RegPointerMaps))
+		}
 		if stkmap == nil || stkmap.n <= 0 {
 			print("runtime: frame ", funcname(f), " untyped locals ", hex(frame.varp-size), "+", hex(size), "\n")
 			throw("missing stackmap")

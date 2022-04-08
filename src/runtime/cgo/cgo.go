@@ -11,7 +11,8 @@ package cgo
 
 /*
 
-#cgo darwin,!arm64 LDFLAGS: -lpthread
+#cgo darwin,!arm,!arm64 LDFLAGS: -lpthread
+#cgo darwin,arm LDFLAGS: -framework CoreFoundation
 #cgo darwin,arm64 LDFLAGS: -framework CoreFoundation
 #cgo dragonfly LDFLAGS: -lpthread
 #cgo freebsd LDFLAGS: -lpthread
@@ -21,9 +22,6 @@ package cgo
 #cgo openbsd LDFLAGS: -lpthread
 #cgo aix LDFLAGS: -Wl,-berok
 #cgo solaris LDFLAGS: -lxnet
-
-// Issue 35247.
-#cgo darwin CFLAGS: -Wno-nullability-completeness
 
 #cgo CFLAGS: -Wall -Werror
 

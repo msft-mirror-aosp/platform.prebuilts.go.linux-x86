@@ -32,7 +32,7 @@ func GetRandom(p []byte, flags GetRandomFlag) (n int, err error) {
 	if atomic.LoadInt32(&randomUnsupported) != 0 {
 		return 0, syscall.ENOSYS
 	}
-	r1, _, errno := syscall.Syscall(getrandomTrap,
+	r1, _, errno := syscall.Syscall(randomTrap,
 		uintptr(unsafe.Pointer(&p[0])),
 		uintptr(len(p)),
 		uintptr(flags))

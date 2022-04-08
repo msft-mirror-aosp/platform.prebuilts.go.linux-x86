@@ -36,7 +36,6 @@ type opInfo struct {
 	usesScratch       bool      // this op requires scratch memory space
 	hasSideEffects    bool      // for "reasons", not to be eliminated.  E.g., atomic store, #19182.
 	zeroWidth         bool      // op never translates into any machine code. example: copy, which may sometimes translate to machine code, is not zero-width.
-	unsafePoint       bool      // this op is an unsafe point, i.e. not safe for async preemption
 	symEffect         SymEffect // effect this op has on symbol in aux
 	scale             uint8     // amd64/386 indexed load scale
 }
@@ -77,21 +76,15 @@ const (
 	auxInt128               // auxInt represents a 128-bit integer.  Always 0.
 	auxFloat32              // auxInt is a float32 (encoded with math.Float64bits)
 	auxFloat64              // auxInt is a float64 (encoded with math.Float64bits)
-	auxFlagConstant         // auxInt is a flagConstant
 	auxString               // aux is a string
-	auxSym                  // aux is a symbol (a *gc.Node for locals, an *obj.LSym for globals, or nil for none)
+	auxSym                  // aux is a symbol (a *gc.Node for locals or an *obj.LSym for globals)
 	auxSymOff               // aux is a symbol, auxInt is an offset
 	auxSymValAndOff         // aux is a symbol, auxInt is a ValAndOff
 	auxTyp                  // aux is a type
 	auxTypSize              // aux is a type, auxInt is a size, must have Aux.(Type).Size() == AuxInt
 	auxCCop                 // aux is a ssa.Op that represents a flags-to-bool conversion (e.g. LessThan)
 
-	// architecture specific aux types
-	auxARM64BitField     // aux is an arm64 bitfield lsb and width packed into auxInt
-	auxS390XRotateParams // aux is a s390x rotate parameters object encoding start bit, end bit and rotate amount
-	auxS390XCCMask       // aux is a s390x 4-bit condition code mask
-	auxS390XCCMaskInt8   // aux is a s390x 4-bit condition code mask, auxInt is a int8 immediate
-	auxS390XCCMaskUint8  // aux is a s390x 4-bit condition code mask, auxInt is a uint8 immediate
+	auxSymInt32 // aux is a symbol, auxInt is a 32-bit integer
 )
 
 // A SymEffect describes the effect that an SSA Value has on the variable
@@ -108,16 +101,6 @@ const (
 	SymNone SymEffect = 0
 )
 
-// A Sym represents a symbolic offset from a base register.
-// Currently a Sym can be one of 3 things:
-//  - a *gc.Node, for an offset from SP (the stack pointer)
-//  - a *obj.LSym, for an offset from SB (the global pointer)
-//  - nil, for no offset
-type Sym interface {
-	String() string
-	CanBeAnSSASym()
-}
-
 // A ValAndOff is used by the several opcodes. It holds
 // both a value and a pointer offset.
 // A ValAndOff is intended to be encoded into an AuxInt field.
@@ -126,14 +109,12 @@ type Sym interface {
 // The low 32 bits hold a pointer offset.
 type ValAndOff int64
 
-func (x ValAndOff) Val() int64   { return int64(x) >> 32 }
-func (x ValAndOff) Val32() int32 { return int32(int64(x) >> 32) }
-func (x ValAndOff) Val16() int16 { return int16(int64(x) >> 32) }
-func (x ValAndOff) Val8() int8   { return int8(int64(x) >> 32) }
-
-func (x ValAndOff) Off() int64   { return int64(int32(x)) }
-func (x ValAndOff) Off32() int32 { return int32(x) }
-
+func (x ValAndOff) Val() int64 {
+	return int64(x) >> 32
+}
+func (x ValAndOff) Off() int64 {
+	return int64(int32(x))
+}
 func (x ValAndOff) Int64() int64 {
 	return int64(x)
 }
@@ -172,17 +153,21 @@ func makeValAndOff(val, off int64) int64 {
 	}
 	return ValAndOff(val<<32 + int64(uint32(off))).Int64()
 }
-func makeValAndOff32(val, off int32) ValAndOff {
-	return ValAndOff(int64(val)<<32 + int64(uint32(off)))
+
+// offOnly returns the offset half of ValAndOff vo.
+// It is intended for use in rewrite rules.
+func offOnly(vo int64) int64 {
+	return ValAndOff(vo).Off()
+}
+
+// valOnly returns the value half of ValAndOff vo.
+// It is intended for use in rewrite rules.
+func valOnly(vo int64) int64 {
+	return ValAndOff(vo).Val()
 }
 
 func (x ValAndOff) canAdd(off int64) bool {
 	newoff := x.Off() + off
-	return newoff == int64(int32(newoff))
-}
-
-func (x ValAndOff) canAdd32(off int32) bool {
-	newoff := x.Off() + int64(off)
 	return newoff == int64(int32(newoff))
 }
 
@@ -192,24 +177,6 @@ func (x ValAndOff) add(off int64) int64 {
 	}
 	return makeValAndOff(x.Val(), x.Off()+off)
 }
-
-func (x ValAndOff) addOffset32(off int32) ValAndOff {
-	if !x.canAdd32(off) {
-		panic("invalid ValAndOff.add")
-	}
-	return ValAndOff(makeValAndOff(x.Val(), x.Off()+int64(off)))
-}
-
-func (x ValAndOff) addOffset64(off int64) ValAndOff {
-	if !x.canAdd(off) {
-		panic("invalid ValAndOff.add")
-	}
-	return ValAndOff(makeValAndOff(x.Val(), x.Off()+off))
-}
-
-// int128 is a type that stores a 128-bit constant.
-// The only allowed constant right now is 0, so we can cheat quite a bit.
-type int128 int64
 
 type BoundsKind uint8
 

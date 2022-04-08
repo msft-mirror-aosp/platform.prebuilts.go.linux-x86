@@ -33,10 +33,7 @@
 
 package profile
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
 type buffer struct {
 	field int // field tag
@@ -238,7 +235,7 @@ func decodeField(b *buffer, data []byte) ([]byte, error) {
 		b.u64 = uint64(le32(data[:4]))
 		data = data[4:]
 	default:
-		return nil, fmt.Errorf("unknown wire type: %d", b.typ)
+		return nil, errors.New("unknown wire type: " + string(b.typ))
 	}
 
 	return data, nil

@@ -4,10 +4,6 @@
 
 package gc
 
-import (
-	"math/bits"
-)
-
 const (
 	wordBits  = 32
 	wordMask  = wordBits - 1
@@ -112,9 +108,28 @@ func (bv bvec) Next(i int32) int32 {
 
 	// Find 1 bit.
 	w := bv.b[i>>wordShift] >> uint(i&wordMask)
-	i += int32(bits.TrailingZeros32(w))
+
+	for w&1 == 0 {
+		w >>= 1
+		i++
+	}
 
 	return i
+}
+
+// Len returns the minimum number of bits required to represent bv.
+// The result is 0 if no bits are set in bv.
+func (bv bvec) Len() int32 {
+	for wi := len(bv.b) - 1; wi >= 0; wi-- {
+		if w := bv.b[wi]; w != 0 {
+			for i := wordBits - 1; i >= 0; i-- {
+				if w>>uint(i) != 0 {
+					return int32(wi)*wordBits + int32(i) + 1
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func (bv bvec) IsEmpty() bool {

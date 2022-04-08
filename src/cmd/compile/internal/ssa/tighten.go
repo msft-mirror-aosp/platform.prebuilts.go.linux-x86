@@ -87,7 +87,7 @@ func tighten(f *Func) {
 					}
 				}
 			}
-			for _, c := range b.ControlValues() {
+			if c := b.Control; c != nil {
 				if !canMove[c.ID] {
 					continue
 				}

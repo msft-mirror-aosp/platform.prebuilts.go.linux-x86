@@ -107,24 +107,15 @@ func (pd *pollDesc) pollable() bool {
 	return pd.runtimeCtx != 0
 }
 
-// Error values returned by runtime_pollReset and runtime_pollWait.
-// These must match the values in runtime/netpoll.go.
-const (
-	pollNoError        = 0
-	pollErrClosing     = 1
-	pollErrTimeout     = 2
-	pollErrNotPollable = 3
-)
-
 func convertErr(res int, isFile bool) error {
 	switch res {
-	case pollNoError:
+	case 0:
 		return nil
-	case pollErrClosing:
+	case 1:
 		return errClosing(isFile)
-	case pollErrTimeout:
-		return ErrDeadlineExceeded
-	case pollErrNotPollable:
+	case 2:
+		return ErrTimeout
+	case 3:
 		return ErrNotPollable
 	}
 	println("unreachable: ", res)

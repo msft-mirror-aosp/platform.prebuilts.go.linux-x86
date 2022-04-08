@@ -1,4 +1,4 @@
-// errorcheck -0 -+ -p=runtime -m
+// errorcheck -0 -+ -p=runtime -m -newescape=true
 
 // Copyright 2019 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style

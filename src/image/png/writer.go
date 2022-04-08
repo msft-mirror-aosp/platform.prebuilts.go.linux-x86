@@ -426,11 +426,10 @@ func (e *encoder) writeImage(w io.Writer, m image.Image, cb int, level int) erro
 
 			var a uint8
 			var c int
-			pixelsPerByte := 8 / bitsPerPixel
 			for x := b.Min.X; x < b.Max.X; x++ {
 				a = a<<uint(bitsPerPixel) | pi.ColorIndexAt(x, y)
 				c++
-				if c == pixelsPerByte {
+				if c == 8/bitsPerPixel {
 					cr[0][i] = a
 					i += 1
 					a = 0
@@ -438,7 +437,7 @@ func (e *encoder) writeImage(w io.Writer, m image.Image, cb int, level int) erro
 				}
 			}
 			if c != 0 {
-				for c != pixelsPerByte {
+				for c != 8/bitsPerPixel {
 					a = a << uint(bitsPerPixel)
 					c++
 				}

@@ -52,14 +52,14 @@ func autotmpname(n int) string {
 // make a new Node off the books
 func tempAt(pos src.XPos, curfn *Node, t *types.Type) *Node {
 	if curfn == nil {
-		Fatalf("no curfn for tempAt")
+		Fatalf("no curfn for tempname")
 	}
 	if curfn.Func.Closure != nil && curfn.Op == OCLOSURE {
-		Dump("tempAt", curfn)
-		Fatalf("adding tempAt to wrong closure function")
+		Dump("tempname", curfn)
+		Fatalf("adding tempname to wrong closure function")
 	}
 	if t == nil {
-		Fatalf("tempAt called with nil type")
+		Fatalf("tempname called with nil type")
 	}
 
 	s := &types.Sym{

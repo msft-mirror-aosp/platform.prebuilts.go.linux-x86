@@ -10,8 +10,6 @@ import (
 	"bytes"
 	"cmd/internal/bio"
 	"cmd/internal/objabi"
-	"cmd/internal/sys"
-	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
 	"encoding/json"
 	"fmt"
@@ -112,6 +110,7 @@ func ldpkg(ctxt *Link, f *bio.Reader, lib *sym.Library, length int64, filename s
 			return
 		}
 		p1 += p0
+
 		loadcgo(ctxt, filename, objabi.PathToPrefix(lib.Pkg), data[p0:p1])
 	}
 }
@@ -124,37 +123,6 @@ func loadcgo(ctxt *Link, file string, pkg string, p string) {
 		return
 	}
 
-	// Find cgo_export symbols. They are roots in the deadcode pass.
-	for _, f := range directives {
-		switch f[0] {
-		case "cgo_export_static", "cgo_export_dynamic":
-			if len(f) < 2 || len(f) > 3 {
-				continue
-			}
-			local := f[1]
-			switch ctxt.BuildMode {
-			case BuildModeCShared, BuildModeCArchive, BuildModePlugin:
-				if local == "main" {
-					continue
-				}
-			}
-			local = expandpkg(local, pkg)
-			if f[0] == "cgo_export_static" {
-				ctxt.cgo_export_static[local] = true
-			} else {
-				ctxt.cgo_export_dynamic[local] = true
-			}
-		}
-	}
-
-	// Record the directives. We'll process them later after Symbols are created.
-	ctxt.cgodata = append(ctxt.cgodata, cgodata{file, pkg, directives})
-}
-
-// Set symbol attributes or flags based on cgo directives.
-// Any newly discovered HOSTOBJ syms are added to 'hostObjSyms'.
-func setCgoAttr(ctxt *Link, lookup func(string, int) loader.Sym, file string, pkg string, directives [][]string, hostObjSyms map[loader.Sym]struct{}) {
-	l := ctxt.loader
 	for _, f := range directives {
 		switch f[0] {
 		case "cgo_import_dynamic":
@@ -196,17 +164,13 @@ func setCgoAttr(ctxt *Link, lookup func(string, int) loader.Sym, file string, pk
 			if i := strings.Index(remote, "#"); i >= 0 {
 				remote, q = remote[:i], remote[i+1:]
 			}
-			s := lookup(local, 0)
-			st := l.SymType(s)
-			if st == 0 || st == sym.SXREF || st == sym.SBSS || st == sym.SNOPTRBSS || st == sym.SHOSTOBJ {
-				l.SetSymDynimplib(s, lib)
-				l.SetSymExtname(s, remote)
-				l.SetSymDynimpvers(s, q)
-				if st != sym.SHOSTOBJ {
-					su := l.MakeSymbolUpdater(s)
-					su.SetType(sym.SDYNIMPORT)
-				} else {
-					hostObjSyms[s] = struct{}{}
+			s := ctxt.Syms.Lookup(local, 0)
+			if s.Type == 0 || s.Type == sym.SXREF || s.Type == sym.SHOSTOBJ {
+				s.SetDynimplib(lib)
+				s.SetExtname(remote)
+				s.SetDynimpvers(q)
+				if s.Type != sym.SHOSTOBJ {
+					s.Type = sym.SDYNIMPORT
 				}
 				havedynamic = 1
 			}
@@ -219,11 +183,9 @@ func setCgoAttr(ctxt *Link, lookup func(string, int) loader.Sym, file string, pk
 			}
 			local := f[1]
 
-			s := lookup(local, 0)
-			su := l.MakeSymbolUpdater(s)
-			su.SetType(sym.SHOSTOBJ)
-			su.SetSize(0)
-			hostObjSyms[s] = struct{}{}
+			s := ctxt.Syms.Lookup(local, 0)
+			s.Type = sym.SHOSTOBJ
+			s.Size = 0
 			continue
 
 		case "cgo_export_static", "cgo_export_dynamic":
@@ -242,42 +204,36 @@ func setCgoAttr(ctxt *Link, lookup func(string, int) loader.Sym, file string, pk
 			// functions. Link.loadlib will resolve any
 			// ABI aliases we find here (since we may not
 			// yet know it's an alias).
-			s := lookup(local, 0)
-
-			if l.SymType(s) == sym.SHOSTOBJ {
-				hostObjSyms[s] = struct{}{}
-			}
+			s := ctxt.Syms.Lookup(local, 0)
 
 			switch ctxt.BuildMode {
 			case BuildModeCShared, BuildModeCArchive, BuildModePlugin:
-				if s == lookup("main", 0) {
+				if s == ctxt.Syms.Lookup("main", 0) {
 					continue
 				}
 			}
 
 			// export overrides import, for openbsd/cgo.
 			// see issue 4878.
-			if l.SymDynimplib(s) != "" {
-				l.SetSymDynimplib(s, "")
-				l.SetSymDynimpvers(s, "")
-				l.SetSymExtname(s, "")
-				var su *loader.SymbolBuilder
-				su = l.MakeSymbolUpdater(s)
-				su.SetType(0)
+			if s.Dynimplib() != "" {
+				s.ResetDyninfo()
+				s.SetExtname("")
+				s.Type = 0
 			}
 
-			if !(l.AttrCgoExportStatic(s) || l.AttrCgoExportDynamic(s)) {
-				l.SetSymExtname(s, remote)
-			} else if l.SymExtname(s) != remote {
-				fmt.Fprintf(os.Stderr, "%s: conflicting cgo_export directives: %s as %s and %s\n", os.Args[0], l.SymName(s), l.SymExtname(s), remote)
+			if !s.Attr.CgoExport() {
+				s.SetExtname(remote)
+				dynexp = append(dynexp, s)
+			} else if s.Extname() != remote {
+				fmt.Fprintf(os.Stderr, "%s: conflicting cgo_export directives: %s as %s and %s\n", os.Args[0], s.Name, s.Extname(), remote)
 				nerrors++
 				return
 			}
 
 			if f[0] == "cgo_export_static" {
-				l.SetAttrCgoExportStatic(s, true)
+				s.Attr |= sym.AttrCgoExportStatic
 			} else {
-				l.SetAttrCgoExportDynamic(s, true)
+				s.Attr |= sym.AttrCgoExportDynamic
 			}
 			continue
 
@@ -308,7 +264,6 @@ func setCgoAttr(ctxt *Link, lookup func(string, int) loader.Sym, file string, pk
 		fmt.Fprintf(os.Stderr, "%s: %s: invalid cgo directive: %q\n", os.Args[0], file, f)
 		nerrors++
 	}
-	return
 }
 
 var seenlib = make(map[string]bool)
@@ -320,96 +275,72 @@ func adddynlib(ctxt *Link, lib string) {
 	seenlib[lib] = true
 
 	if ctxt.IsELF {
-		dsu := ctxt.loader.MakeSymbolUpdater(ctxt.DynStr2)
-		if dsu.Size() == 0 {
-			dsu.Addstring("")
+		s := ctxt.Syms.Lookup(".dynstr", 0)
+		if s.Size == 0 {
+			Addstring(s, "")
 		}
-		du := ctxt.loader.MakeSymbolUpdater(ctxt.Dynamic2)
-		Elfwritedynent2(ctxt.Arch, du, DT_NEEDED, uint64(dsu.Addstring(lib)))
+		Elfwritedynent(ctxt, ctxt.Syms.Lookup(".dynamic", 0), DT_NEEDED, uint64(Addstring(s, lib)))
 	} else {
 		Errorf(nil, "adddynlib: unsupported binary format")
 	}
 }
 
-func Adddynsym2(ldr *loader.Loader, target *Target, syms *ArchSyms, s loader.Sym) {
-	if ldr.SymDynid(s) >= 0 || target.LinkMode == LinkExternal {
+func Adddynsym(ctxt *Link, s *sym.Symbol) {
+	if s.Dynid >= 0 || ctxt.LinkMode == LinkExternal {
 		return
 	}
 
-	if target.IsELF {
-		elfadddynsym2(ldr, target, syms, s)
-	} else if target.HeadType == objabi.Hdarwin {
-		ldr.Errorf(s, "adddynsym: missed symbol (Extname=%s)", ldr.SymExtname(s))
-	} else if target.HeadType == objabi.Hwindows {
+	if ctxt.IsELF {
+		elfadddynsym(ctxt, s)
+	} else if ctxt.HeadType == objabi.Hdarwin {
+		Errorf(s, "adddynsym: missed symbol (Extname=%s)", s.Extname())
+	} else if ctxt.HeadType == objabi.Hwindows {
 		// already taken care of
 	} else {
-		ldr.Errorf(s, "adddynsym: unsupported binary format")
+		Errorf(s, "adddynsym: unsupported binary format")
 	}
 }
 
-func fieldtrack(arch *sys.Arch, l *loader.Loader) {
+func fieldtrack(ctxt *Link) {
+	// record field tracking references
 	var buf bytes.Buffer
-	for i := loader.Sym(1); i < loader.Sym(l.NSym()); i++ {
-		if name := l.SymName(i); strings.HasPrefix(name, "go.track.") {
-			bld := l.MakeSymbolUpdater(i)
-			bld.SetSpecial(true)
-			bld.SetNotInSymbolTable(true)
-			if bld.Reachable() {
-				buf.WriteString(name[9:])
-				for p := l.Reachparent[i]; p != 0; p = l.Reachparent[p] {
+	for _, s := range ctxt.Syms.Allsym {
+		if strings.HasPrefix(s.Name, "go.track.") {
+			s.Attr |= sym.AttrSpecial // do not lay out in data segment
+			s.Attr |= sym.AttrNotInSymbolTable
+			if s.Attr.Reachable() {
+				buf.WriteString(s.Name[9:])
+				for p := ctxt.Reachparent[s]; p != nil; p = ctxt.Reachparent[p] {
 					buf.WriteString("\t")
-					buf.WriteString(l.SymName(p))
+					buf.WriteString(p.Name)
 				}
 				buf.WriteString("\n")
-
-				bld.SetType(sym.SCONST)
-				bld.SetValue(0)
 			}
+
+			s.Type = sym.SCONST
+			s.Value = 0
 		}
 	}
-	l.Reachparent = nil // we are done with it
+
 	if *flagFieldTrack == "" {
 		return
 	}
-	s := l.Lookup(*flagFieldTrack, 0)
-	if s == 0 || !l.AttrReachable(s) {
+	s := ctxt.Syms.ROLookup(*flagFieldTrack, 0)
+	if s == nil || !s.Attr.Reachable() {
 		return
 	}
-	bld := l.MakeSymbolUpdater(s)
-	bld.SetType(sym.SDATA)
-	addstrdata(arch, l, *flagFieldTrack, buf.String())
+	s.Type = sym.SDATA
+	addstrdata(ctxt, *flagFieldTrack, buf.String())
 }
 
 func (ctxt *Link) addexport() {
-	// Track undefined external symbols during external link.
-	if ctxt.LinkMode == LinkExternal {
-		for _, s := range ctxt.Textp2 {
-			if ctxt.loader.AttrSpecial(s) || ctxt.loader.AttrSubSymbol(s) {
-				continue
-			}
-			relocs := ctxt.loader.Relocs(s)
-			for i := 0; i < relocs.Count(); i++ {
-				if rs := relocs.At2(i).Sym(); rs != 0 {
-					if ctxt.loader.SymType(rs) == sym.Sxxx && !ctxt.loader.AttrLocal(rs) {
-						// sanity check
-						if len(ctxt.loader.Data(rs)) != 0 {
-							panic("expected no data on undef symbol")
-						}
-						su := ctxt.loader.MakeSymbolUpdater(rs)
-						su.SetType(sym.SUNDEFEXT)
-					}
-				}
-			}
-		}
-	}
-
 	// TODO(aix)
 	if ctxt.HeadType == objabi.Hdarwin || ctxt.HeadType == objabi.Haix {
 		return
 	}
 
-	for _, exp := range ctxt.dynexp2 {
-		Adddynsym2(ctxt.loader, &ctxt.Target, &ctxt.ArchSyms, exp)
+	for _, exp := range dynexp {
+		Adddynsym(ctxt, exp)
 	}
 	for _, lib := range dynlib {
 		adddynlib(ctxt, lib)

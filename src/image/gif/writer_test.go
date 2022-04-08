@@ -52,7 +52,7 @@ func averageDelta(m0, m1 image.Image) int64 {
 }
 
 // averageDeltaBounds returns the average delta in RGB space. The average delta is
-// calculated in the specified bounds.
+// calulated in the specified bounds.
 func averageDeltaBound(m0, m1 image.Image, b0, b1 image.Rectangle) int64 {
 	var sum, n int64
 	for y := b0.Min.Y; y < b0.Max.Y; y++ {
@@ -657,6 +657,7 @@ func TestEncodeWrappedImage(t *testing.T) {
 }
 
 func BenchmarkEncode(b *testing.B) {
+	bo := image.Rect(0, 0, 640, 480)
 	rnd := rand.New(rand.NewSource(123))
 
 	// Restrict to a 256-color paletted image to avoid quantization path.
@@ -670,8 +671,10 @@ func BenchmarkEncode(b *testing.B) {
 		}
 	}
 	img := image.NewPaletted(image.Rect(0, 0, 640, 480), palette)
-	for i := range img.Pix {
-		img.Pix[i] = uint8(rnd.Intn(256))
+	for y := bo.Min.Y; y < bo.Max.Y; y++ {
+		for x := bo.Min.X; x < bo.Max.X; x++ {
+			img.Set(x, y, palette[rnd.Intn(256)])
+		}
 	}
 
 	b.SetBytes(640 * 480 * 4)

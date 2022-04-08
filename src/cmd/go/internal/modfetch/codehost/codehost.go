@@ -73,10 +73,11 @@ type Repo interface {
 	// ReadZip downloads a zip file for the subdir subdirectory
 	// of the given revision to a new file in a given temporary directory.
 	// It should refuse to read more than maxSize bytes.
-	// It returns a ReadCloser for a streamed copy of the zip file.
-	// All files in the zip file are expected to be
+	// It returns a ReadCloser for a streamed copy of the zip file,
+	// along with the actual subdirectory (possibly shorter than subdir)
+	// contained in the zip file. All files in the zip file are expected to be
 	// nested in a single top-level directory, whose name is not specified.
-	ReadZip(rev, subdir string, maxSize int64) (zip io.ReadCloser, err error)
+	ReadZip(rev, subdir string, maxSize int64) (zip io.ReadCloser, actualSubdir string, err error)
 
 	// RecentTag returns the most recent tag on rev or one of its predecessors
 	// with the given prefix and major version.
@@ -153,11 +154,15 @@ func ShortenSHA1(rev string) string {
 	return rev
 }
 
+// WorkRoot is the root of the cached work directory.
+// It is set by cmd/go/internal/modload.InitMod.
+var WorkRoot string
+
 // WorkDir returns the name of the cached work directory to use for the
 // given repository type and name.
 func WorkDir(typ, name string) (dir, lockfile string, err error) {
-	if cfg.GOMODCACHE == "" {
-		return "", "", fmt.Errorf("neither GOPATH nor GOMODCACHE are set")
+	if WorkRoot == "" {
+		return "", "", fmt.Errorf("codehost.WorkRoot not set")
 	}
 
 	// We name the work directory for the SHA256 hash of the type and name.
@@ -169,7 +174,7 @@ func WorkDir(typ, name string) (dir, lockfile string, err error) {
 		return "", "", fmt.Errorf("codehost.WorkDir: type cannot contain colon")
 	}
 	key := typ + ":" + name
-	dir = filepath.Join(cfg.GOMODCACHE, "cache/vcs", fmt.Sprintf("%x", sha256.Sum256([]byte(key))))
+	dir = filepath.Join(WorkRoot, fmt.Sprintf("%x", sha256.Sum256([]byte(key))))
 
 	if cfg.BuildX {
 		fmt.Fprintf(os.Stderr, "mkdir -p %s # %s %s\n", filepath.Dir(dir), typ, name)

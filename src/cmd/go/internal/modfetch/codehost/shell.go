@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"cmd/go/internal/cfg"
 	"cmd/go/internal/modfetch/codehost"
 )
 
@@ -30,7 +29,7 @@ func usage() {
 }
 
 func main() {
-	cfg.GOMODCACHE = "/tmp/vcswork"
+	codehost.WorkRoot = "/tmp/vcswork"
 	log.SetFlags(0)
 	log.SetPrefix("shell: ")
 	flag.Usage = usage
@@ -110,7 +109,7 @@ func main() {
 			if subdir == "-" {
 				subdir = ""
 			}
-			rc, err := repo.ReadZip(f[1], subdir, 10<<20)
+			rc, _, err := repo.ReadZip(f[1], subdir, 10<<20)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "?%s\n", err)
 				continue

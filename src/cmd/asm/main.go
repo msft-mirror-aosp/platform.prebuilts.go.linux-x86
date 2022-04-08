@@ -40,32 +40,18 @@ func main() {
 	}
 	ctxt.Flag_dynlink = *flags.Dynlink
 	ctxt.Flag_shared = *flags.Shared || *flags.Dynlink
-	ctxt.Flag_go115newobj = *flags.Go115Newobj
-	ctxt.IsAsm = true
-	switch *flags.Spectre {
-	default:
-		log.Printf("unknown setting -spectre=%s", *flags.Spectre)
-		os.Exit(2)
-	case "":
-		// nothing
-	case "index":
-		// known to compiler; ignore here so people can use
-		// the same list with -gcflags=-spectre=LIST and -asmflags=-spectrre=LIST
-	case "all", "ret":
-		ctxt.Retpoline = true
-	}
-
 	ctxt.Bso = bufio.NewWriter(os.Stdout)
 	defer ctxt.Bso.Flush()
 
 	architecture.Init(ctxt)
 
 	// Create object file, write header.
-	buf, err := bio.Create(*flags.OutputFile)
+	out, err := os.Create(*flags.OutputFile)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer buf.Close()
+	defer bio.MustClose(out)
+	buf := bufio.NewWriter(bio.MustWriter(out))
 
 	if !*flags.SymABIs {
 		fmt.Fprintf(buf, "go object %s %s %s\n", objabi.GOOS, objabi.GOARCH, objabi.Version)
@@ -88,7 +74,7 @@ func main() {
 			pList.Firstpc, ok = parser.Parse()
 			// reports errors to parser.Errorf
 			if ok {
-				obj.Flushplist(ctxt, pList, nil, *flags.Importpath)
+				obj.Flushplist(ctxt, pList, nil, "")
 			}
 		}
 		if !ok {
@@ -97,7 +83,6 @@ func main() {
 		}
 	}
 	if ok && !*flags.SymABIs {
-		ctxt.NumberSyms(true)
 		obj.WriteObjFile(ctxt, buf, "")
 	}
 	if !ok || diag {
@@ -106,8 +91,9 @@ func main() {
 		} else {
 			log.Print("assembly failed")
 		}
-		buf.Close()
+		out.Close()
 		os.Remove(*flags.OutputFile)
 		os.Exit(1)
 	}
+	buf.Flush()
 }

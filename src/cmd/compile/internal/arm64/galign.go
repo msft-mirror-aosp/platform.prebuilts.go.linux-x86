@@ -17,6 +17,7 @@ func Init(arch *gc.Arch) {
 
 	arch.PadFrame = padframe
 	arch.ZeroRange = zerorange
+	arch.ZeroAuto = zeroAuto
 	arch.Ginsnop = ginsnop
 	arch.Ginsnopdefer = ginsnop
 

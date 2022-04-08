@@ -60,9 +60,8 @@ type SymbolicLinkReparseBuffer struct {
 
 // Path returns path stored in rb.
 func (rb *SymbolicLinkReparseBuffer) Path() string {
-	n1 := rb.SubstituteNameOffset / 2
-	n2 := (rb.SubstituteNameOffset + rb.SubstituteNameLength) / 2
-	return syscall.UTF16ToString((*[0xffff]uint16)(unsafe.Pointer(&rb.PathBuffer[0]))[n1:n2:n2])
+	p := (*[0xffff]uint16)(unsafe.Pointer(&rb.PathBuffer[0]))
+	return syscall.UTF16ToString(p[rb.SubstituteNameOffset/2 : (rb.SubstituteNameOffset+rb.SubstituteNameLength)/2])
 }
 
 type MountPointReparseBuffer struct {
@@ -84,7 +83,6 @@ type MountPointReparseBuffer struct {
 
 // Path returns path stored in rb.
 func (rb *MountPointReparseBuffer) Path() string {
-	n1 := rb.SubstituteNameOffset / 2
-	n2 := (rb.SubstituteNameOffset + rb.SubstituteNameLength) / 2
-	return syscall.UTF16ToString((*[0xffff]uint16)(unsafe.Pointer(&rb.PathBuffer[0]))[n1:n2:n2])
+	p := (*[0xffff]uint16)(unsafe.Pointer(&rb.PathBuffer[0]))
+	return syscall.UTF16ToString(p[rb.SubstituteNameOffset/2 : (rb.SubstituteNameOffset+rb.SubstituteNameLength)/2])
 }

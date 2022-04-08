@@ -153,7 +153,7 @@ import (
 //
 // JSON cannot represent cyclic data structures and Marshal does not
 // handle them. Passing cyclic structures to Marshal will result in
-// an error.
+// an infinite recursion.
 //
 func Marshal(v interface{}) ([]byte, error) {
 	e := newEncodeState()
@@ -164,6 +164,7 @@ func Marshal(v interface{}) ([]byte, error) {
 	}
 	buf := append([]byte(nil), e.Bytes()...)
 
+	e.Reset()
 	encodeStatePool.Put(e)
 
 	return buf, nil
@@ -261,22 +262,14 @@ func (e *InvalidUTF8Error) Error() string {
 
 // A MarshalerError represents an error from calling a MarshalJSON or MarshalText method.
 type MarshalerError struct {
-	Type       reflect.Type
-	Err        error
-	sourceFunc string
+	Type reflect.Type
+	Err  error
 }
 
 func (e *MarshalerError) Error() string {
-	srcFunc := e.sourceFunc
-	if srcFunc == "" {
-		srcFunc = "MarshalJSON"
-	}
-	return "json: error calling " + srcFunc +
-		" for type " + e.Type.String() +
-		": " + e.Err.Error()
+	return "json: error calling MarshalJSON for type " + e.Type.String() + ": " + e.Err.Error()
 }
 
-// Unwrap returns the underlying error.
 func (e *MarshalerError) Unwrap() error { return e.Err }
 
 var hex = "0123456789abcdef"
@@ -285,17 +278,7 @@ var hex = "0123456789abcdef"
 type encodeState struct {
 	bytes.Buffer // accumulated output
 	scratch      [64]byte
-
-	// Keep track of what pointers we've seen in the current recursive call
-	// path, to avoid cycles that could lead to a stack overflow. Only do
-	// the relatively expensive map operations if ptrLevel is larger than
-	// startDetectingCyclesAfter, so that we skip the work if we're within a
-	// reasonable amount of nested pointers deep.
-	ptrLevel uint
-	ptrSeen  map[interface{}]struct{}
 }
-
-const startDetectingCyclesAfter = 1000
 
 var encodeStatePool sync.Pool
 
@@ -303,13 +286,9 @@ func newEncodeState() *encodeState {
 	if v := encodeStatePool.Get(); v != nil {
 		e := v.(*encodeState)
 		e.Reset()
-		if len(e.ptrSeen) > 0 {
-			panic("ptrEncoder.encode should have emptied ptrSeen via defers")
-		}
-		e.ptrLevel = 0
 		return e
 	}
-	return &encodeState{ptrSeen: make(map[interface{}]struct{})}
+	return new(encodeState)
 }
 
 // jsonError is an error wrapper type for internal use only.
@@ -413,21 +392,18 @@ var (
 // newTypeEncoder constructs an encoderFunc for a type.
 // The returned encoder only checks CanAddr when allowAddr is true.
 func newTypeEncoder(t reflect.Type, allowAddr bool) encoderFunc {
-	// If we have a non-pointer value whose type implements
-	// Marshaler with a value receiver, then we're better off taking
-	// the address of the value - otherwise we end up with an
-	// allocation as we cast the value to an interface.
-	if t.Kind() != reflect.Ptr && allowAddr && reflect.PtrTo(t).Implements(marshalerType) {
-		return newCondAddrEncoder(addrMarshalerEncoder, newTypeEncoder(t, false))
-	}
 	if t.Implements(marshalerType) {
 		return marshalerEncoder
 	}
-	if t.Kind() != reflect.Ptr && allowAddr && reflect.PtrTo(t).Implements(textMarshalerType) {
-		return newCondAddrEncoder(addrTextMarshalerEncoder, newTypeEncoder(t, false))
+	if t.Kind() != reflect.Ptr && allowAddr && reflect.PtrTo(t).Implements(marshalerType) {
+		return newCondAddrEncoder(addrMarshalerEncoder, newTypeEncoder(t, false))
 	}
+
 	if t.Implements(textMarshalerType) {
 		return textMarshalerEncoder
+	}
+	if t.Kind() != reflect.Ptr && allowAddr && reflect.PtrTo(t).Implements(textMarshalerType) {
+		return newCondAddrEncoder(addrTextMarshalerEncoder, newTypeEncoder(t, false))
 	}
 
 	switch t.Kind() {
@@ -480,7 +456,7 @@ func marshalerEncoder(e *encodeState, v reflect.Value, opts encOpts) {
 		err = compact(&e.Buffer, b, opts.escapeHTML)
 	}
 	if err != nil {
-		e.error(&MarshalerError{v.Type(), err, "MarshalJSON"})
+		e.error(&MarshalerError{v.Type(), err})
 	}
 }
 
@@ -497,7 +473,7 @@ func addrMarshalerEncoder(e *encodeState, v reflect.Value, opts encOpts) {
 		err = compact(&e.Buffer, b, opts.escapeHTML)
 	}
 	if err != nil {
-		e.error(&MarshalerError{v.Type(), err, "MarshalJSON"})
+		e.error(&MarshalerError{v.Type(), err})
 	}
 }
 
@@ -506,14 +482,10 @@ func textMarshalerEncoder(e *encodeState, v reflect.Value, opts encOpts) {
 		e.WriteString("null")
 		return
 	}
-	m, ok := v.Interface().(encoding.TextMarshaler)
-	if !ok {
-		e.WriteString("null")
-		return
-	}
+	m := v.Interface().(encoding.TextMarshaler)
 	b, err := m.MarshalText()
 	if err != nil {
-		e.error(&MarshalerError{v.Type(), err, "MarshalText"})
+		e.error(&MarshalerError{v.Type(), err})
 	}
 	e.stringBytes(b, opts.escapeHTML)
 }
@@ -527,7 +499,7 @@ func addrTextMarshalerEncoder(e *encodeState, v reflect.Value, opts encOpts) {
 	m := va.Interface().(encoding.TextMarshaler)
 	b, err := m.MarshalText()
 	if err != nil {
-		e.error(&MarshalerError{v.Type(), err, "MarshalText"})
+		e.error(&MarshalerError{v.Type(), err})
 	}
 	e.stringBytes(b, opts.escapeHTML)
 }
@@ -625,85 +597,18 @@ func stringEncoder(e *encodeState, v reflect.Value, opts encOpts) {
 		if !isValidNumber(numStr) {
 			e.error(fmt.Errorf("json: invalid number literal %q", numStr))
 		}
-		if opts.quoted {
-			e.WriteByte('"')
-		}
 		e.WriteString(numStr)
-		if opts.quoted {
-			e.WriteByte('"')
-		}
 		return
 	}
 	if opts.quoted {
-		e2 := newEncodeState()
-		// Since we encode the string twice, we only need to escape HTML
-		// the first time.
-		e2.string(v.String(), opts.escapeHTML)
-		e.stringBytes(e2.Bytes(), false)
-		encodeStatePool.Put(e2)
+		sb, err := Marshal(v.String())
+		if err != nil {
+			e.error(err)
+		}
+		e.string(string(sb), opts.escapeHTML)
 	} else {
 		e.string(v.String(), opts.escapeHTML)
 	}
-}
-
-// isValidNumber reports whether s is a valid JSON number literal.
-func isValidNumber(s string) bool {
-	// This function implements the JSON numbers grammar.
-	// See https://tools.ietf.org/html/rfc7159#section-6
-	// and https://www.json.org/img/number.png
-
-	if s == "" {
-		return false
-	}
-
-	// Optional -
-	if s[0] == '-' {
-		s = s[1:]
-		if s == "" {
-			return false
-		}
-	}
-
-	// Digits
-	switch {
-	default:
-		return false
-
-	case s[0] == '0':
-		s = s[1:]
-
-	case '1' <= s[0] && s[0] <= '9':
-		s = s[1:]
-		for len(s) > 0 && '0' <= s[0] && s[0] <= '9' {
-			s = s[1:]
-		}
-	}
-
-	// . followed by 1 or more digits.
-	if len(s) >= 2 && s[0] == '.' && '0' <= s[1] && s[1] <= '9' {
-		s = s[2:]
-		for len(s) > 0 && '0' <= s[0] && s[0] <= '9' {
-			s = s[1:]
-		}
-	}
-
-	// e or E followed by an optional - or + and
-	// 1 or more digits.
-	if len(s) >= 2 && (s[0] == 'e' || s[0] == 'E') {
-		s = s[1:]
-		if s[0] == '+' || s[0] == '-' {
-			s = s[1:]
-			if s == "" {
-				return false
-			}
-		}
-		for len(s) > 0 && '0' <= s[0] && s[0] <= '9' {
-			s = s[1:]
-		}
-	}
-
-	// Make sure we are at the end.
-	return s == ""
 }
 
 func interfaceEncoder(e *encodeState, v reflect.Value, opts encOpts) {
@@ -787,7 +692,7 @@ func (me mapEncoder) encode(e *encodeState, v reflect.Value, opts encOpts) {
 	for i, v := range keys {
 		sv[i].v = v
 		if err := sv[i].resolve(); err != nil {
-			e.error(fmt.Errorf("json: encoding error for type %q: %q", v.Type().String(), err.Error()))
+			e.error(&MarshalerError{v.Type(), err})
 		}
 	}
 	sort.Slice(sv, func(i, j int) bool { return sv[i].s < sv[j].s })
@@ -902,18 +807,7 @@ func (pe ptrEncoder) encode(e *encodeState, v reflect.Value, opts encOpts) {
 		e.WriteString("null")
 		return
 	}
-	if e.ptrLevel++; e.ptrLevel > startDetectingCyclesAfter {
-		// We're a large number of nested ptrEncoder.encode calls deep;
-		// start checking if we've run into a pointer cycle.
-		ptr := v.Interface()
-		if _, ok := e.ptrSeen[ptr]; ok {
-			e.error(&UnsupportedValueError{v, fmt.Sprintf("encountered a cycle via %s", v.Type())})
-		}
-		e.ptrSeen[ptr] = struct{}{}
-		defer delete(e.ptrSeen, ptr)
-	}
 	pe.elemEnc(e, v.Elem(), opts)
-	e.ptrLevel--
 }
 
 func newPtrEncoder(t reflect.Type) encoderFunc {
@@ -978,9 +872,6 @@ func (w *reflectWithString) resolve() error {
 		return nil
 	}
 	if tm, ok := w.v.Interface().(encoding.TextMarshaler); ok {
-		if w.v.Kind() == reflect.Ptr && w.v.IsNil() {
-			return nil
-		}
 		buf, err := tm.MarshalText()
 		w.s = string(buf)
 		return err

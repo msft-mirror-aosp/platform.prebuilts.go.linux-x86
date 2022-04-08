@@ -42,20 +42,20 @@ gettargets() {
 }
 
 selectedtargets() {
-	gettargets | egrep -v 'android-arm|darwin-arm64' | egrep "$pattern"
+	gettargets | egrep -v 'android-arm|darwin-arm' | egrep "$pattern"
 }
 
-# put linux first in the target list to get all the architectures up front.
-linux_targets() {
-	selectedtargets | grep 'linux' | sort
+# put linux, nacl first in the target list to get all the architectures up front.
+linux_nacl_targets() {
+	selectedtargets | egrep 'linux|nacl' | sort
 }
 
-non_linux_targets() {
-	selectedtargets | grep -v 'linux' | sort
+non_linux_nacl_targets() {
+	selectedtargets | egrep -v 'linux|nacl' | sort
 }
 
 # Note words in $targets are separated by both newlines and spaces.
-targets="$(linux_targets) $(non_linux_targets)"
+targets="$(linux_nacl_targets) $(non_linux_nacl_targets)"
 
 failed=false
 for target in $targets

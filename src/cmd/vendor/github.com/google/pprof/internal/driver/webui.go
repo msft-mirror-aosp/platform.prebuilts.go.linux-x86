@@ -334,7 +334,7 @@ func dotToSvg(dot []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Fix dot bug related to unquoted ampersands.
+	// Fix dot bug related to unquoted amperands.
 	svg := bytes.Replace(out.Bytes(), []byte("&;"), []byte("&amp;;"), -1)
 
 	// Cleanup for embedding by dropping stuff before the <svg> start.

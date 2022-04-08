@@ -12,7 +12,7 @@ func typecheckselect(sel *Node) {
 	lno := setlineno(sel)
 	typecheckslice(sel.Ninit.Slice(), ctxStmt)
 	for _, ncase := range sel.List.Slice() {
-		if ncase.Op != OCASE {
+		if ncase.Op != OXCASE {
 			setlineno(ncase)
 			Fatalf("typecheckselect %v", ncase.Op)
 		}
@@ -60,7 +60,7 @@ func typecheckselect(sel *Node) {
 
 				// convert x, ok = <-c into OSELRECV2(x, <-c) with ntest=ok
 			case OAS2RECV:
-				if n.Right.Op != ORECV {
+				if n.Rlist.First().Op != ORECV {
 					yyerrorl(n.Pos, "select assignment must have receive on right hand side")
 					break
 				}
@@ -68,6 +68,8 @@ func typecheckselect(sel *Node) {
 				n.Op = OSELRECV2
 				n.Left = n.List.First()
 				n.List.Set1(n.List.Second())
+				n.Right = n.Rlist.First()
+				n.Rlist.Set(nil)
 
 				// convert <-c into OSELRECV(N, <-c)
 			case ORECV:
@@ -386,7 +388,7 @@ func scasetype() *types.Type {
 			namedfield("elem", types.Types[TUNSAFEPTR]),
 			namedfield("kind", types.Types[TUINT16]),
 			namedfield("pc", types.Types[TUINTPTR]),
-			namedfield("releasetime", types.Types[TINT64]),
+			namedfield("releasetime", types.Types[TUINT64]),
 		})
 		scase.SetNoalg(true)
 	}

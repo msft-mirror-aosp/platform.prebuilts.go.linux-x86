@@ -1,5 +1,5 @@
 // Inferno utils/6l/obj.c
-// https://bitbucket.org/inferno-os/inferno-os/src/master/utils/6l/obj.c
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/6l/obj.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -32,14 +32,12 @@ package ld
 
 import (
 	"bufio"
-	"cmd/internal/goobj2"
 	"cmd/internal/objabi"
 	"cmd/internal/sys"
-	"cmd/link/internal/benchmark"
+	"cmd/link/internal/sym"
 	"flag"
 	"log"
 	"os"
-	"os/exec"
 	"runtime"
 	"runtime/pprof"
 	"strings"
@@ -48,7 +46,6 @@ import (
 var (
 	pkglistfornote []byte
 	windowsgui     bool // writes a "GUI binary" instead of a "console binary"
-	ownTmpDir      bool // set to true if tmp dir created by linker (e.g. no -tmpdir)
 )
 
 func init() {
@@ -75,7 +72,7 @@ var (
 	flagExtldflags = flag.String("extldflags", "", "pass `flags` to external linker")
 	flagExtar      = flag.String("extar", "", "archive program for buildmode=c-archive")
 
-	flagA           = flag.Bool("a", false, "no-op (deprecated)")
+	flagA           = flag.Bool("a", false, "disassemble output")
 	FlagC           = flag.Bool("c", false, "dump call graph")
 	FlagD           = flag.Bool("d", false, "disable dynamic executable")
 	flagF           = flag.Bool("f", false, "ignore version mismatch")
@@ -89,6 +86,7 @@ var (
 	flagInterpreter = flag.String("I", "", "use `linker` as ELF dynamic linker")
 	FlagDebugTramp  = flag.Int("debugtramp", 0, "debug trampolines")
 	FlagStrictDups  = flag.Int("strictdups", 0, "sanity check duplicate symbol contents during object file reading (1=warn 2=err).")
+
 	FlagRound       = flag.Int("R", -1, "set address rounding `quantum`")
 	FlagTextAddr    = flag.Int64("T", -1, "set text segment `address`")
 	flagEntrySymbol = flag.String("E", "", "set `entry` symbol name")
@@ -96,11 +94,6 @@ var (
 	cpuprofile     = flag.String("cpuprofile", "", "write cpu profile to `file`")
 	memprofile     = flag.String("memprofile", "", "write memory profile to `file`")
 	memprofilerate = flag.Int64("memprofilerate", 0, "set runtime.MemProfileRate to `rate`")
-
-	benchmarkFlag     = flag.String("benchmark", "", "set to 'mem' or 'cpu' to enable phase benchmarking")
-	benchmarkFileFlag = flag.String("benchmarkprofile", "", "emit phase profiles to `base`_phase.{cpu,mem}prof")
-
-	flagGo115Newobj = flag.Bool("go115newobj", true, "use new object file format")
 )
 
 // Main is the main entry point for the linker code.
@@ -140,10 +133,6 @@ func Main(arch *sys.Arch, theArch Arch) {
 
 	objabi.Flagparse(usage)
 
-	if !*flagGo115Newobj {
-		oldlink()
-	}
-
 	switch *flagHeadType {
 	case "":
 	case "windowsgui":
@@ -155,10 +144,10 @@ func Main(arch *sys.Arch, theArch Arch) {
 			usage()
 		}
 	}
-	if ctxt.HeadType == objabi.Hunknown {
-		ctxt.HeadType.Set(objabi.GOOS)
-	}
 
+	if objabi.Fieldtrack_enabled != 0 {
+		ctxt.Reachparent = make(map[*sym.Symbol]*sym.Symbol)
+	}
 	checkStrictDups = *FlagStrictDups
 
 	startProfile()
@@ -179,24 +168,13 @@ func Main(arch *sys.Arch, theArch Arch) {
 
 	interpreter = *flagInterpreter
 
-	// enable benchmarking
-	var bench *benchmark.Metrics
-	if len(*benchmarkFlag) != 0 {
-		if *benchmarkFlag == "mem" {
-			bench = benchmark.New(benchmark.GC, *benchmarkFileFlag)
-		} else if *benchmarkFlag == "cpu" {
-			bench = benchmark.New(benchmark.NoGC, *benchmarkFileFlag)
-		} else {
-			Errorf(nil, "unknown benchmark flag: %q", *benchmarkFlag)
-			usage()
-		}
+	libinit(ctxt) // creates outfile
+
+	if ctxt.HeadType == objabi.Hunknown {
+		ctxt.HeadType.Set(objabi.GOOS)
 	}
 
-	bench.Start("libinit")
-	libinit(ctxt) // creates outfile
-	bench.Start("computeTLSOffset")
 	ctxt.computeTLSOffset()
-	bench.Start("Archinit")
 	thearch.Archinit(ctxt)
 
 	if ctxt.linkShared && !ctxt.IsELF {
@@ -207,7 +185,6 @@ func Main(arch *sys.Arch, theArch Arch) {
 		ctxt.Logf("HEADER = -H%d -T0x%x -R0x%x\n", ctxt.HeadType, uint64(*FlagTextAddr), uint32(*FlagRound))
 	}
 
-	zerofp := goobj2.FingerprintType{}
 	switch ctxt.BuildMode {
 	case BuildModeShared:
 		for i := 0; i < flag.NArg(); i++ {
@@ -221,90 +198,49 @@ func Main(arch *sys.Arch, theArch Arch) {
 			}
 			pkglistfornote = append(pkglistfornote, pkgpath...)
 			pkglistfornote = append(pkglistfornote, '\n')
-			addlibpath(ctxt, "command line", "command line", file, pkgpath, "", zerofp)
+			addlibpath(ctxt, "command line", "command line", file, pkgpath, "")
 		}
 	case BuildModePlugin:
-		addlibpath(ctxt, "command line", "command line", flag.Arg(0), *flagPluginPath, "", zerofp)
+		addlibpath(ctxt, "command line", "command line", flag.Arg(0), *flagPluginPath, "")
 	default:
-		addlibpath(ctxt, "command line", "command line", flag.Arg(0), "main", "", zerofp)
+		addlibpath(ctxt, "command line", "command line", flag.Arg(0), "main", "")
 	}
-	bench.Start("loadlib")
 	ctxt.loadlib()
 
-	bench.Start("deadcode")
-	deadcode(ctxt)
-
-	bench.Start("linksetup")
-	ctxt.linksetup()
-
-	bench.Start("dostrdata")
 	ctxt.dostrdata()
-	if objabi.Fieldtrack_enabled != 0 {
-		bench.Start("fieldtrack")
-		fieldtrack(ctxt.Arch, ctxt.loader)
-	}
-
-	bench.Start("dwarfGenerateDebugInfo")
+	deadcode(ctxt)
 	dwarfGenerateDebugInfo(ctxt)
-
-	bench.Start("callgraph")
+	if objabi.Fieldtrack_enabled != 0 {
+		fieldtrack(ctxt)
+	}
+	ctxt.mangleTypeSym()
 	ctxt.callgraph()
 
-	bench.Start("dostkcheck")
-	ctxt.dostkcheck()
-
-	bench.Start("mangleTypeSym")
-	ctxt.mangleTypeSym()
-
-	if ctxt.IsELF {
-		bench.Start("doelf")
-		ctxt.doelf()
-	}
-	if ctxt.IsDarwin() {
-		bench.Start("domacho")
+	ctxt.doelf()
+	if ctxt.HeadType == objabi.Hdarwin {
 		ctxt.domacho()
 	}
-	if ctxt.IsWindows() {
-		bench.Start("dope")
+	ctxt.dostkcheck()
+	if ctxt.HeadType == objabi.Hwindows {
 		ctxt.dope()
-		bench.Start("windynrelocsyms")
 		ctxt.windynrelocsyms()
 	}
-	if ctxt.IsAIX() {
-		bench.Start("doxcoff")
+	if ctxt.HeadType == objabi.Haix {
 		ctxt.doxcoff()
 	}
 
-	bench.Start("textbuildid")
-	ctxt.textbuildid()
-	bench.Start("addexport")
-	setupdynexp(ctxt)
-	ctxt.setArchSyms(BeforeLoadlibFull)
 	ctxt.addexport()
-	bench.Start("Gentext")
-	thearch.Gentext2(ctxt, ctxt.loader) // trampolines, call stubs, etc.
-
-	bench.Start("textaddress")
+	thearch.Gentext(ctxt) // trampolines, call stubs, etc.
+	ctxt.textbuildid()
 	ctxt.textaddress()
-	bench.Start("typelink")
+	ctxt.pclntab()
+	ctxt.findfunctab()
 	ctxt.typelink()
-	bench.Start("buildinfo")
+	ctxt.symtab()
 	ctxt.buildinfo()
-	bench.Start("pclntab")
-	container := ctxt.pclntab()
-	bench.Start("findfunctab")
-	ctxt.findfunctab(container)
-	bench.Start("dwarfGenerateDebugSyms")
-	dwarfGenerateDebugSyms(ctxt)
-	bench.Start("symtab")
-	symGroupType := ctxt.symtab()
-	bench.Start("dodata")
-	ctxt.dodata2(symGroupType)
-	bench.Start("address")
+	ctxt.dodata()
 	order := ctxt.address()
-	bench.Start("dwarfcompress")
 	dwarfcompress(ctxt)
-	bench.Start("layout")
 	filesize := ctxt.layout(order)
 
 	// Write out the output file.
@@ -313,57 +249,37 @@ func Main(arch *sys.Arch, theArch Arch) {
 	// for which we have computed the size and offset, in a
 	// mmap'd region. The second part writes more content, for
 	// which we don't know the size.
+	var outputMmapped bool
 	if ctxt.Arch.Family != sys.Wasm {
 		// Don't mmap if we're building for Wasm. Wasm file
 		// layout is very different so filesize is meaningless.
-		if err := ctxt.Out.Mmap(filesize); err != nil {
-			panic(err)
-		}
+		err := ctxt.Out.Mmap(filesize)
+		outputMmapped = err == nil
 	}
-	// Asmb will redirect symbols to the output file mmap, and relocations
-	// will be applied directly there.
-	bench.Start("Asmb")
-	ctxt.loader.InitOutData()
-	thearch.Asmb(ctxt, ctxt.loader)
-
-	newreloc := ctxt.IsAMD64() || ctxt.Is386() || ctxt.IsWasm()
-	if newreloc {
-		bench.Start("reloc")
+	if outputMmapped {
+		// Asmb will redirect symbols to the output file mmap, and relocations
+		// will be applied directly there.
+		thearch.Asmb(ctxt)
 		ctxt.reloc()
-		bench.Start("loadlibfull")
-		// We don't need relocations at this point.
-		// An exception is internal linking on Windows, see pe.go:addPEBaseRelocSym
-		// Wasm is another exception, where it applies text relocations in Asmb2.
-		needReloc := (ctxt.IsWindows() && ctxt.IsInternal()) || ctxt.IsWasm()
-		// On AMD64 ELF, we directly use the loader's ExtRelocs, so we don't
-		// need conversion. Otherwise we do.
-		needExtReloc := ctxt.IsExternal() && !(ctxt.IsAMD64() && ctxt.IsELF)
-		ctxt.loadlibfull(symGroupType, needReloc, needExtReloc) // XXX do it here for now
+		ctxt.Out.Munmap()
 	} else {
-		bench.Start("loadlibfull")
-		ctxt.loadlibfull(symGroupType, true, false) // XXX do it here for now
-		bench.Start("reloc")
-		ctxt.reloc2()
+		// If we don't mmap, we need to apply relocations before
+		// writing out.
+		ctxt.reloc()
+		thearch.Asmb(ctxt)
 	}
-	bench.Start("Asmb2")
 	thearch.Asmb2(ctxt)
 
-	bench.Start("Munmap")
-	ctxt.Out.Close() // Close handles Munmapping if necessary.
-
-	bench.Start("undef")
 	ctxt.undef()
-	bench.Start("hostlink")
 	ctxt.hostlink()
+	ctxt.archive()
 	if ctxt.Debugvlog != 0 {
-		ctxt.Logf("%d symbols, %d reachable\n", len(ctxt.loader.Syms), ctxt.loader.NReachableSym())
+		ctxt.Logf("%5.2f cpu time\n", Cputime())
+		ctxt.Logf("%d symbols\n", len(ctxt.Syms.Allsym))
 		ctxt.Logf("%d liveness data\n", liveness)
 	}
-	bench.Start("Flush")
+
 	ctxt.Bso.Flush()
-	bench.Start("archive")
-	ctxt.archive()
-	bench.Report(os.Stdout)
 
 	errorexit()
 }
@@ -414,49 +330,4 @@ func startProfile() {
 			}
 		})
 	}
-}
-
-// Invoke the old linker and exit.
-func oldlink() {
-	linker := os.Args[0]
-	if strings.HasSuffix(linker, "link") {
-		linker = linker[:len(linker)-4] + "oldlink"
-	} else if strings.HasSuffix(linker, "link.exe") {
-		linker = linker[:len(linker)-8] + "oldlink.exe"
-	} else {
-		log.Fatal("cannot find oldlink. arg0=", linker)
-	}
-
-	// Copy args, filter out -go115newobj flag
-	args := make([]string, 0, len(os.Args)-1)
-	skipNext := false
-	for i, a := range os.Args {
-		if i == 0 {
-			continue // skip arg0
-		}
-		if skipNext {
-			skipNext = false
-			continue
-		}
-		if a == "-go115newobj" {
-			skipNext = true
-			continue
-		}
-		if strings.HasPrefix(a, "-go115newobj=") {
-			continue
-		}
-		args = append(args, a)
-	}
-
-	cmd := exec.Command(linker, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err == nil {
-		os.Exit(0)
-	}
-	if _, ok := err.(*exec.ExitError); ok {
-		os.Exit(2) // would be nice to use ExitError.ExitCode(), but that is too new
-	}
-	log.Fatal("invoke oldlink failed:", err)
 }

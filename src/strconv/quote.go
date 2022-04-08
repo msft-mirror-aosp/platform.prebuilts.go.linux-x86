@@ -145,9 +145,8 @@ func AppendQuoteToASCII(dst []byte, s string) []byte {
 }
 
 // QuoteToGraphic returns a double-quoted Go string literal representing s.
-// The returned string leaves Unicode graphic characters, as defined by
-// IsGraphic, unchanged and uses Go escape sequences (\t, \n, \xFF, \u0100)
-// for non-graphic characters.
+// The returned string uses Go escape sequences (\t, \n, \xFF, \u0100) for
+// non-ASCII characters and non-printable characters as defined by IsGraphic.
 func QuoteToGraphic(s string) string {
 	return quoteWith(s, '"', false, true)
 }
@@ -186,9 +185,9 @@ func AppendQuoteRuneToASCII(dst []byte, r rune) []byte {
 }
 
 // QuoteRuneToGraphic returns a single-quoted Go character literal representing
-// the rune. If the rune is not a Unicode graphic character,
-// as defined by IsGraphic, the returned string will use a Go escape sequence
-// (\t, \n, \xFF, \u0100).
+// the rune. The returned string uses Go escape sequences (\t, \n, \xFF,
+// \u0100) for non-ASCII characters and non-printable characters as defined
+// by IsGraphic.
 func QuoteRuneToGraphic(r rune) string {
 	return quoteRuneWith(r, '\'', false, true)
 }

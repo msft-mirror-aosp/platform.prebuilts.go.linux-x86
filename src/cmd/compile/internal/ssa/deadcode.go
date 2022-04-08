@@ -110,13 +110,11 @@ func liveValues(f *Func, reachable []bool) (live []bool, liveOrderStmts []*Value
 		if !reachable[b.ID] {
 			continue
 		}
-		for _, v := range b.ControlValues() {
-			if !live[v.ID] {
-				live[v.ID] = true
-				q = append(q, v)
-				if v.Pos.IsStmt() != src.PosNotStmt {
-					liveOrderStmts = append(liveOrderStmts, v)
-				}
+		if v := b.Control; v != nil && !live[v.ID] {
+			live[v.ID] = true
+			q = append(q, v)
+			if v.Pos.IsStmt() != src.PosNotStmt {
+				liveOrderStmts = append(liveOrderStmts, v)
 			}
 		}
 		for _, v := range b.Values {
@@ -242,9 +240,8 @@ func deadcode(f *Func) {
 			f.NamedValues[name] = values[:j]
 		}
 	}
-	clearNames := f.Names[i:]
-	for j := range clearNames {
-		clearNames[j] = LocalSlot{}
+	for k := len(f.Names) - 1; k >= i; k-- {
+		f.Names[k] = LocalSlot{}
 	}
 	f.Names = f.Names[:i]
 
@@ -255,7 +252,7 @@ func deadcode(f *Func) {
 	for i, b := range f.Blocks {
 		if !reachable[b.ID] {
 			// TODO what if control is statement boundary? Too late here.
-			b.ResetControls()
+			b.SetControl(nil)
 		}
 		for _, v := range b.Values {
 			if !live[v.ID] {
@@ -296,7 +293,12 @@ func deadcode(f *Func) {
 				f.freeValue(v)
 			}
 		}
-		b.truncateValues(i)
+		// aid GC
+		tail := b.Values[i:]
+		for j := range tail {
+			tail[j] = nil
+		}
+		b.Values = b.Values[:i]
 	}
 
 	// Remove dead blocks from WBLoads list.
@@ -307,9 +309,8 @@ func deadcode(f *Func) {
 			i++
 		}
 	}
-	clearWBLoads := f.WBLoads[i:]
-	for j := range clearWBLoads {
-		clearWBLoads[j] = nil
+	for j := i; j < len(f.WBLoads); j++ {
+		f.WBLoads[j] = nil
 	}
 	f.WBLoads = f.WBLoads[:i]
 

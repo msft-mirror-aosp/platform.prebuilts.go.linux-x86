@@ -43,10 +43,10 @@ func HasGoBuild() bool {
 		return false
 	}
 	switch runtime.GOOS {
-	case "android", "js":
+	case "android", "nacl", "js":
 		return false
 	case "darwin":
-		if runtime.GOARCH == "arm64" {
+		if strings.HasPrefix(runtime.GOARCH, "arm") {
 			return false
 		}
 	}
@@ -122,10 +122,10 @@ func GoTool() (string, error) {
 // using os.StartProcess or (more commonly) exec.Command.
 func HasExec() bool {
 	switch runtime.GOOS {
-	case "js":
+	case "nacl", "js":
 		return false
 	case "darwin":
-		if runtime.GOARCH == "arm64" {
+		if strings.HasPrefix(runtime.GOARCH, "arm") {
 			return false
 		}
 	}
@@ -135,8 +135,10 @@ func HasExec() bool {
 // HasSrc reports whether the entire source tree is available under GOROOT.
 func HasSrc() bool {
 	switch runtime.GOOS {
+	case "nacl":
+		return false
 	case "darwin":
-		if runtime.GOARCH == "arm64" {
+		if strings.HasPrefix(runtime.GOARCH, "arm") {
 			return false
 		}
 	}
@@ -173,14 +175,14 @@ func MustHaveExecPath(t testing.TB, path string) {
 // HasExternalNetwork reports whether the current system can use
 // external (non-localhost) networks.
 func HasExternalNetwork() bool {
-	return !testing.Short() && runtime.GOOS != "js"
+	return !testing.Short() && runtime.GOOS != "nacl" && runtime.GOOS != "js"
 }
 
 // MustHaveExternalNetwork checks that the current system can use
 // external (non-localhost) networks.
 // If not, MustHaveExternalNetwork calls t.Skip with an explanation.
 func MustHaveExternalNetwork(t testing.TB) {
-	if runtime.GOOS == "js" {
+	if runtime.GOOS == "nacl" || runtime.GOOS == "js" {
 		t.Skipf("skipping test: no external network on %s", runtime.GOOS)
 	}
 	if testing.Short() {

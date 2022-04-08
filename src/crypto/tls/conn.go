@@ -24,9 +24,8 @@ import (
 // It implements the net.Conn interface.
 type Conn struct {
 	// constant
-	conn        net.Conn
-	isClient    bool
-	handshakeFn func() error // (*Conn).clientHandshake or serverHandshake
+	conn     net.Conn
+	isClient bool
 
 	// handshakeStatus is 1 if the connection is currently transferring
 	// application data (i.e. is not currently processing a handshake).
@@ -61,11 +60,6 @@ type Conn struct {
 	// resumptionSecret is the resumption_master_secret for handling
 	// NewSessionTicket messages. nil if config.SessionTicketsDisabled.
 	resumptionSecret []byte
-
-	// ticketKeys is the set of active session ticket keys for this
-	// connection. The first one is used to encrypt new tickets and
-	// all are tried to decrypt tickets.
-	ticketKeys []ticketKey
 
 	// clientFinishedIsFirst is true if the client sent the first Finished
 	// message during the most recent handshake. This is recorded because
@@ -168,22 +162,9 @@ type halfConn struct {
 	trafficSecret []byte // current TLS 1.3 traffic secret
 }
 
-type permamentError struct {
-	err net.Error
-}
-
-func (e *permamentError) Error() string   { return e.err.Error() }
-func (e *permamentError) Unwrap() error   { return e.err }
-func (e *permamentError) Timeout() bool   { return e.err.Timeout() }
-func (e *permamentError) Temporary() bool { return false }
-
 func (hc *halfConn) setErrorLocked(err error) error {
-	if e, ok := err.(net.Error); ok {
-		hc.err = &permamentError{err: e}
-	} else {
-		hc.err = err
-	}
-	return hc.err
+	hc.err = err
+	return err
 }
 
 // prepareCipherSpec sets the encryption and MAC states
@@ -308,6 +289,22 @@ func extractPadding(payload []byte) (toRemove int, good byte) {
 	return
 }
 
+// extractPaddingSSL30 is a replacement for extractPadding in the case that the
+// protocol version is SSLv3. In this version, the contents of the padding
+// are random and cannot be checked.
+func extractPaddingSSL30(payload []byte) (toRemove int, good byte) {
+	if len(payload) < 1 {
+		return 0, 0
+	}
+
+	paddingLen := int(payload[len(payload)-1]) + 1
+	if paddingLen > len(payload) {
+		return 0, 0
+	}
+
+	return paddingLen, 255
+}
+
 func roundUp(a, b int) int {
 	return a + (b-a%b)%b
 }
@@ -385,7 +382,11 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 			// computing the digest. This makes the MAC roughly constant time as
 			// long as the digest computation is constant time and does not
 			// affect the subsequent write, modulo cache effects.
-			paddingLen, paddingGood = extractPadding(payload)
+			if hc.version == VersionSSL30 {
+				paddingLen, paddingGood = extractPaddingSSL30(payload)
+			} else {
+				paddingLen, paddingGood = extractPadding(payload)
+			}
 		default:
 			panic("unknown cipher type")
 		}
@@ -1046,6 +1047,8 @@ func (c *Conn) readHandshake() (interface{}, error) {
 		m = &certificateVerifyMsg{
 			hasSignatureAlgorithm: c.vers >= VersionTLS12,
 		}
+	case typeNextProtocol:
+		m = new(nextProtoMsg)
 	case typeFinished:
 		m = new(finishedMsg)
 	case typeEncryptedExtensions:
@@ -1083,10 +1086,10 @@ func (c *Conn) Write(b []byte) (int, error) {
 			return 0, errClosed
 		}
 		if atomic.CompareAndSwapInt32(&c.activeCall, x, x+2) {
+			defer atomic.AddInt32(&c.activeCall, -2)
 			break
 		}
 	}
-	defer atomic.AddInt32(&c.activeCall, -2)
 
 	if err := c.Handshake(); err != nil {
 		return 0, err
@@ -1107,7 +1110,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 		return 0, errShutdown
 	}
 
-	// TLS 1.0 is susceptible to a chosen-plaintext
+	// SSL 3.0 and TLS 1.0 are susceptible to a chosen-plaintext
 	// attack when using block mode ciphers due to predictable IVs.
 	// This can be prevented by splitting each Application Data
 	// record into two records, effectively randomizing the IV.
@@ -1117,7 +1120,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 	// https://www.imperialviolet.org/2012/01/15/beastfollowup.html
 
 	var m int
-	if len(b) > 1 && c.vers == VersionTLS10 {
+	if len(b) > 1 && c.vers <= VersionTLS10 {
 		if _, ok := c.out.cipher.(cipher.BlockMode); ok {
 			n, err := c.writeRecordLocked(recordTypeApplicationData, b[:1])
 			if err != nil {
@@ -1339,12 +1342,8 @@ func (c *Conn) closeNotify() error {
 
 // Handshake runs the client or server handshake
 // protocol if it has not yet been run.
-//
-// Most uses of this package need not call Handshake explicitly: the
-// first Read or Write will call it automatically.
-//
-// For control over canceling or setting a timeout on a handshake, use
-// the Dialer's DialContext method.
+// Most uses of this package need not call Handshake
+// explicitly: the first Read or Write will call it automatically.
 func (c *Conn) Handshake() error {
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
@@ -1359,11 +1358,15 @@ func (c *Conn) Handshake() error {
 	c.in.Lock()
 	defer c.in.Unlock()
 
-	c.handshakeErr = c.handshakeFn()
+	if c.isClient {
+		c.handshakeErr = c.clientHandshake()
+	} else {
+		c.handshakeErr = c.serverHandshake()
+	}
 	if c.handshakeErr == nil {
 		c.handshakes++
 	} else {
-		// If an error occurred during the handshake try to flush the
+		// If an error occurred during the hadshake try to flush the
 		// alert that might be left in the buffer.
 		c.flush()
 	}
@@ -1379,34 +1382,35 @@ func (c *Conn) Handshake() error {
 func (c *Conn) ConnectionState() ConnectionState {
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
-	return c.connectionStateLocked()
-}
 
-func (c *Conn) connectionStateLocked() ConnectionState {
 	var state ConnectionState
 	state.HandshakeComplete = c.handshakeComplete()
-	state.Version = c.vers
-	state.NegotiatedProtocol = c.clientProtocol
-	state.DidResume = c.didResume
-	state.NegotiatedProtocolIsMutual = !c.clientProtocolFallback
 	state.ServerName = c.serverName
-	state.CipherSuite = c.cipherSuite
-	state.PeerCertificates = c.peerCertificates
-	state.VerifiedChains = c.verifiedChains
-	state.SignedCertificateTimestamps = c.scts
-	state.OCSPResponse = c.ocspResponse
-	if !c.didResume && c.vers != VersionTLS13 {
-		if c.clientFinishedIsFirst {
-			state.TLSUnique = c.clientFinished[:]
+
+	if state.HandshakeComplete {
+		state.Version = c.vers
+		state.NegotiatedProtocol = c.clientProtocol
+		state.DidResume = c.didResume
+		state.NegotiatedProtocolIsMutual = !c.clientProtocolFallback
+		state.CipherSuite = c.cipherSuite
+		state.PeerCertificates = c.peerCertificates
+		state.VerifiedChains = c.verifiedChains
+		state.SignedCertificateTimestamps = c.scts
+		state.OCSPResponse = c.ocspResponse
+		if !c.didResume && c.vers != VersionTLS13 {
+			if c.clientFinishedIsFirst {
+				state.TLSUnique = c.clientFinished[:]
+			} else {
+				state.TLSUnique = c.serverFinished[:]
+			}
+		}
+		if c.config.Renegotiation != RenegotiateNever {
+			state.ekm = noExportedKeyingMaterial
 		} else {
-			state.TLSUnique = c.serverFinished[:]
+			state.ekm = c.ekm
 		}
 	}
-	if c.config.Renegotiation != RenegotiateNever {
-		state.ekm = noExportedKeyingMaterial
-	} else {
-		state.ekm = c.ekm
-	}
+
 	return state
 }
 

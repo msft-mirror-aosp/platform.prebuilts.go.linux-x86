@@ -18,7 +18,6 @@ path to this file based on the path to the runtime package.
 from __future__ import print_function
 import re
 import sys
-import gdb
 
 print("Loading Go Runtime support.", file=sys.stderr)
 #http://python3porting.com/differences.html
@@ -99,11 +98,11 @@ class SliceValue:
 #  Pretty Printers
 #
 
-# The patterns for matching types are permissive because gdb 8.2 switched to matching on (we think) typedef names instead of C syntax names.
+
 class StringTypePrinter:
 	"Pretty print Go strings."
 
-	pattern = re.compile(r'^(struct string( \*)?|string)$')
+	pattern = re.compile(r'^struct string( \*)?$')
 
 	def __init__(self, val):
 		self.val = val
@@ -119,7 +118,7 @@ class StringTypePrinter:
 class SliceTypePrinter:
 	"Pretty print slices."
 
-	pattern = re.compile(r'^(struct \[\]|\[\])')
+	pattern = re.compile(r'^struct \[\]')
 
 	def __init__(self, val):
 		self.val = val
@@ -128,10 +127,7 @@ class SliceTypePrinter:
 		return 'array'
 
 	def to_string(self):
-		t = str(self.val.type)
-		if (t.startswith("struct ")):
-			return t[len("struct "):]
-		return t
+		return str(self.val.type)[6:]  # skip 'struct '
 
 	def children(self):
 		sval = SliceValue(self.val)
@@ -199,7 +195,7 @@ class ChanTypePrinter:
 	to inspect their contents with this pretty printer.
 	"""
 
-	pattern = re.compile(r'^chan ')
+	pattern = re.compile(r'^struct hchan<.*>$')
 
 	def __init__(self, val):
 		self.val = val
@@ -213,7 +209,7 @@ class ChanTypePrinter:
 	def children(self):
 		# see chan.c chanbuf(). et is the type stolen from hchan<T>::recvq->first->elem
 		et = [x.type for x in self.val['recvq']['first'].type.target().fields() if x.name == 'elem'][0]
-		ptr = (self.val.address["buf"]).cast(et)
+		ptr = (self.val.address + 1).cast(et.pointer())
 		for i in range(self.val["qcount"]):
 			j = (self.val["recvx"] + i) % self.val["dataqsiz"]
 			yield ('[{0}]'.format(i), (ptr + j).dereference())
@@ -233,6 +229,8 @@ def makematcher(klass):
 	return matcher
 
 goobjfile.pretty_printers.extend([makematcher(var) for var in vars().values() if hasattr(var, 'pattern')])
+
+
 #
 #  Utilities
 #

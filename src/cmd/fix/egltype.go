@@ -9,14 +9,13 @@ import (
 )
 
 func init() {
-	register(eglFixDisplay)
-	register(eglFixConfig)
+	register(eglFix)
 }
 
-var eglFixDisplay = fix{
+var eglFix = fix{
 	name:     "egl",
 	date:     "2018-12-15",
-	f:        eglfixDisp,
+	f:        eglfix,
 	desc:     `Fixes initializers of EGLDisplay`,
 	disabled: false,
 }
@@ -26,27 +25,8 @@ var eglFixDisplay = fix{
 // New state:
 //   type EGLDisplay uintptr
 // This fix finds nils initializing these types and replaces the nils with 0s.
-func eglfixDisp(f *ast.File) bool {
+func eglfix(f *ast.File) bool {
 	return typefix(f, func(s string) bool {
 		return s == "C.EGLDisplay"
-	})
-}
-
-var eglFixConfig = fix{
-	name:     "eglconf",
-	date:     "2020-05-30",
-	f:        eglfixConfig,
-	desc:     `Fixes initializers of EGLConfig`,
-	disabled: false,
-}
-
-// Old state:
-//   type EGLConfig unsafe.Pointer
-// New state:
-//   type EGLConfig uintptr
-// This fix finds nils initializing these types and replaces the nils with 0s.
-func eglfixConfig(f *ast.File) bool {
-	return typefix(f, func(s string) bool {
-		return s == "C.EGLConfig"
 	})
 }

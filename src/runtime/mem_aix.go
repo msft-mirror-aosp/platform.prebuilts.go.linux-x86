@@ -63,15 +63,14 @@ func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
 	mSysStatInc(sysStat, n)
 
 	// AIX does not allow mapping a range that is already mapped.
-	// So, call mprotect to change permissions.
-	// Note that sysMap is always called with a non-nil pointer
-	// since it transitions a Reserved memory region to Prepared,
-	// so mprotect is always possible.
-	_, err := mprotect(v, n, _PROT_READ|_PROT_WRITE)
+	// So always unmap first even if it is already unmapped.
+	munmap(v, n)
+	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_FIXED|_MAP_PRIVATE, -1, 0)
+
 	if err == _ENOMEM {
 		throw("runtime: out of memory")
 	}
-	if err != 0 {
+	if p != v || err != 0 {
 		throw("runtime: cannot map pages in arena address space")
 	}
 }

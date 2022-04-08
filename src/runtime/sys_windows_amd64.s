@@ -62,10 +62,6 @@ loadregs:
 	// Return result.
 	POPQ	CX
 	MOVQ	AX, libcall_r1(CX)
-	// Floating point return values are returned in XMM0. Setting r2 to this
-	// value in case this call returned a floating point value. For details,
-	// see https://docs.microsoft.com/en-us/cpp/build/x64-calling-convention
-	MOVQ    X0, libcall_r2(CX)
 
 	// GetLastError().
 	MOVQ	0x30(GS), DI
@@ -477,7 +473,7 @@ TEXT runtime·switchtothread(SB),NOSPLIT|NOFRAME,$0
 #define time_hi1 4
 #define time_hi2 8
 
-TEXT runtime·nanotime1(SB),NOSPLIT,$0-8
+TEXT runtime·nanotime(SB),NOSPLIT,$0-8
 	CMPB	runtime·useQPCTime(SB), $0
 	JNE	useQPC
 	MOVQ	$_INTERRUPT_TIME, DI

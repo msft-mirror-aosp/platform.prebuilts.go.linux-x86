@@ -192,13 +192,16 @@ func signalWaitUntilIdle() {
 //go:linkname signal_enable os/signal.signal_enable
 func signal_enable(s uint32) {
 	if !sig.inuse {
-		// This is the first call to signal_enable. Initialize.
+		// The first call to signal_enable is for us
+		// to use for initialization. It does not pass
+		// signal information in m.
 		sig.inuse = true // enable reception of signals; cannot disable
 		if GOOS == "darwin" {
 			sigNoteSetup(&sig.note)
-		} else {
-			noteclear(&sig.note)
+			return
 		}
+		noteclear(&sig.note)
+		return
 	}
 
 	if s >= uint32(len(sig.wanted)*32) {

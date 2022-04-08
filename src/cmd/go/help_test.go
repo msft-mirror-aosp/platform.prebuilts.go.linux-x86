@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +build !nacl
+
 package main_test
 
 import (
@@ -14,8 +16,6 @@ import (
 )
 
 func TestDocsUpToDate(t *testing.T) {
-	t.Parallel()
-
 	if !modload.Enabled() {
 		t.Skipf("help.Help in GOPATH mode is configured by main.main")
 	}

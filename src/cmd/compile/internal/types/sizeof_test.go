@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// +build !nacl
+
 package types
 
 import (
@@ -29,6 +31,7 @@ func TestSizeof(t *testing.T) {
 		{Interface{}, 8, 16},
 		{Chan{}, 8, 16},
 		{Array{}, 12, 16},
+		{DDDField{}, 4, 8},
 		{FuncArgs{}, 4, 8},
 		{ChanArgs{}, 4, 8},
 		{Ptr{}, 4, 8},

@@ -139,7 +139,7 @@ func decomposeStringPhi(v *Value) {
 
 func decomposeSlicePhi(v *Value) {
 	types := &v.Block.Func.Config.Types
-	ptrType := v.Type.Elem().PtrTo()
+	ptrType := types.BytePtr
 	lenType := types.Int
 
 	ptr := v.Block.NewValue0(v.Pos, OpPhi, ptrType)

@@ -8,19 +8,18 @@ import (
 	"cmd/internal/src"
 )
 
-// fuseEarly runs fuse(f, fuseTypePlain|fuseTypeIntInRange).
-func fuseEarly(f *Func) { fuse(f, fuseTypePlain|fuseTypeIntInRange) }
+// fusePlain runs fuse(f, fuseTypePlain).
+func fusePlain(f *Func) { fuse(f, fuseTypePlain) }
 
-// fuseLate runs fuse(f, fuseTypePlain|fuseTypeIf).
-func fuseLate(f *Func) { fuse(f, fuseTypePlain|fuseTypeIf) }
+// fuseAll runs fuse(f, fuseTypeAll).
+func fuseAll(f *Func) { fuse(f, fuseTypeAll) }
 
 type fuseType uint8
 
 const (
 	fuseTypePlain fuseType = 1 << iota
 	fuseTypeIf
-	fuseTypeIntInRange
-	fuseTypeShortCircuit
+	fuseTypeAll = fuseTypePlain | fuseTypeIf
 )
 
 // fuse simplifies control flow by joining basic blocks.
@@ -33,14 +32,8 @@ func fuse(f *Func, typ fuseType) {
 			if typ&fuseTypeIf != 0 {
 				changed = fuseBlockIf(b) || changed
 			}
-			if typ&fuseTypeIntInRange != 0 {
-				changed = fuseIntegerComparisons(b) || changed
-			}
 			if typ&fuseTypePlain != 0 {
 				changed = fuseBlockPlain(b) || changed
-			}
-			if typ&fuseTypeShortCircuit != 0 {
-				changed = shortcircuitBlock(b) || changed
 			}
 		}
 		if changed {
@@ -125,7 +118,7 @@ func fuseBlockIf(b *Block) bool {
 	}
 	b.Kind = BlockPlain
 	b.Likely = BranchUnknown
-	b.ResetControls()
+	b.SetControl(nil)
 
 	// Trash the empty blocks s0 and s1.
 	blocks := [...]*Block{s0, s1}
@@ -152,7 +145,7 @@ func fuseBlockIf(b *Block) bool {
 // There may be false positives.
 func isEmpty(b *Block) bool {
 	for _, v := range b.Values {
-		if v.Uses > 0 || v.Op.IsCall() || v.Op.HasSideEffects() || v.Type.IsVoid() {
+		if v.Uses > 0 || v.Type.IsVoid() {
 			return false
 		}
 	}

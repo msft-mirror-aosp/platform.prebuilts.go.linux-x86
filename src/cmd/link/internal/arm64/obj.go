@@ -1,5 +1,5 @@
 // Inferno utils/5l/obj.c
-// https://bitbucket.org/inferno-os/inferno-os/src/master/utils/5l/obj.c
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/5l/obj.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -46,7 +46,7 @@ func Init() (*sys.Arch, ld.Arch) {
 		Dwarfregsp: dwarfRegSP,
 		Dwarfreglr: dwarfRegLR,
 
-		Adddynrel2:       adddynrel2,
+		Adddynrel:        adddynrel,
 		Archinit:         archinit,
 		Archreloc:        archreloc,
 		Archrelocvariant: archrelocvariant,
@@ -54,13 +54,12 @@ func Init() (*sys.Arch, ld.Arch) {
 		Asmb2:            asmb2,
 		Elfreloc1:        elfreloc1,
 		Elfsetupplt:      elfsetupplt,
-		Gentext2:         gentext2,
+		Gentext:          gentext,
 		Machoreloc1:      machoreloc1,
 
-		Androiddynld: "/system/bin/linker64",
-		Linuxdynld:   "/lib/ld-linux-aarch64.so.1",
+		Linuxdynld: "/lib/ld-linux-aarch64.so.1",
 
-		Freebsddynld:   "/usr/libexec/ld-elf.so.1",
+		Freebsddynld:   "XXX",
 		Openbsddynld:   "/usr/libexec/ld.so",
 		Netbsddynld:    "/libexec/ld.elf_so",
 		Dragonflydynld: "XXX",
@@ -86,7 +85,6 @@ func archinit(ctxt *ld.Link) {
 		}
 
 	case objabi.Hlinux, /* arm64 elf */
-		objabi.Hfreebsd,
 		objabi.Hnetbsd,
 		objabi.Hopenbsd:
 		ld.Elfinit(ctxt)
@@ -105,6 +103,17 @@ func archinit(ctxt *ld.Link) {
 		}
 		if *ld.FlagRound == -1 {
 			*ld.FlagRound = 4096
+		}
+
+	case objabi.Hnacl:
+		ld.Elfinit(ctxt)
+		ld.HEADR = 0x10000
+		ld.Funcalign = 16
+		if *ld.FlagTextAddr == -1 {
+			*ld.FlagTextAddr = 0x20000
+		}
+		if *ld.FlagRound == -1 {
+			*ld.FlagRound = 0x10000
 		}
 	}
 }

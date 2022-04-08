@@ -4,12 +4,6 @@
 
 #include "textflag.h"
 
-// See comment in runtime/sys_openbsd_arm64.s re this construction.
-#define	INVOKE_SYSCALL	\
-	SVC;		\
-	NOOP;		\
-	NOOP
-
 TEXT _rt0_arm64_openbsd(SB),NOSPLIT|NOFRAME,$0
 	MOVD	0(RSP), R0	// argc
 	ADD	$8, RSP, R1	// argv
@@ -107,5 +101,5 @@ TEXT main(SB),NOSPLIT|NOFRAME,$0
 exit:
 	MOVD	$0, R0
 	MOVD	$1, R8		// sys_exit
-	INVOKE_SYSCALL
+	SVC
 	B	exit

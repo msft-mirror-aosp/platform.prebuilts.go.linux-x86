@@ -388,8 +388,6 @@ func GoSyntax(inst Inst, pc uint64, symname func(uint64) (string, uint64), text 
 
 	case UMOV:
 		op = "VMOV"
-	case NOP:
-		op = "NOOP"
 
 	default:
 		index := sort.SearchStrings(noSuffixOpSet, op)

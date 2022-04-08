@@ -28,20 +28,20 @@ type Reloc struct {
 	Type      objabi.RelocType // the relocation type
 	Add       int64            // addend
 	Sym       *Symbol          // symbol the relocation addresses
-	*RelocExt                  // extra fields (see below), may be nil, call InitExt before use
+	*relocExt                  // extra fields (see below), may be nil, call InitExt before use
 }
 
 // relocExt contains extra fields in Reloc that are used only in
 // certain cases.
-type RelocExt struct {
+type relocExt struct {
 	Xadd    int64        // addend passed to external linker
 	Xsym    *Symbol      // symbol passed to external linker
 	Variant RelocVariant // variation on Type, currently used only on PPC64 and S390X
 }
 
 func (r *Reloc) InitExt() {
-	if r.RelocExt == nil {
-		r.RelocExt = new(RelocExt)
+	if r.relocExt == nil {
+		r.relocExt = new(relocExt)
 	}
 }
 

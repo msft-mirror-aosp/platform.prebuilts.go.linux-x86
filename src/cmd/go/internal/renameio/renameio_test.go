@@ -2,20 +2,18 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build !plan9
+//+build !plan9
 
 package renameio
 
 import (
 	"encoding/binary"
 	"errors"
-	"internal/testenv"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -26,10 +24,6 @@ import (
 )
 
 func TestConcurrentReadsAndWrites(t *testing.T) {
-	if runtime.GOOS == "darwin" && strings.HasSuffix(testenv.Builder(), "-10_14") {
-		testenv.SkipFlaky(t, 33041)
-	}
-
 	dir, err := ioutil.TempDir("", "renameio")
 	if err != nil {
 		t.Fatal(err)
@@ -137,18 +131,10 @@ func TestConcurrentReadsAndWrites(t *testing.T) {
 	}
 
 	var minReadSuccesses int64 = attempts
-
-	switch runtime.GOOS {
-	case "windows":
+	if runtime.GOOS == "windows" {
 		// Windows produces frequent "Access is denied" errors under heavy rename load.
-		// As long as those are the only errors and *some* of the reads succeed, we're happy.
+		// As long as those are the only errors and *some* of the writes succeed, we're happy.
 		minReadSuccesses = attempts / 4
-
-	case "darwin":
-		// The filesystem on macOS 10.14 occasionally fails with "no such file or
-		// directory" errors. See https://golang.org/issue/33041. The flake rate is
-		// fairly low, so ensure that at least 75% of attempts succeed.
-		minReadSuccesses = attempts - (attempts / 4)
 	}
 
 	if readSuccesses < minReadSuccesses {

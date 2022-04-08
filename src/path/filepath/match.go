@@ -310,14 +310,14 @@ func glob(dir, pattern string, matches []string) (m []string, e error) {
 	m = matches
 	fi, err := os.Stat(dir)
 	if err != nil {
-		return // ignore I/O error
+		return
 	}
 	if !fi.IsDir() {
-		return // ignore I/O error
+		return
 	}
 	d, err := os.Open(dir)
 	if err != nil {
-		return // ignore I/O error
+		return
 	}
 	defer d.Close()
 

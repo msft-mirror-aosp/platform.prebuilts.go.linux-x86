@@ -7,9 +7,8 @@
 package src
 
 import (
-	"bytes"
 	"fmt"
-	"io"
+	"strconv"
 )
 
 // A Pos encodes a source position consisting of a (line, column) number pair
@@ -130,22 +129,13 @@ func (p Pos) String() string {
 // shown as well, as in "filename:line[origfile:origline:origcolumn] if
 // showOrig is set.
 func (p Pos) Format(showCol, showOrig bool) string {
-	buf := new(bytes.Buffer)
-	p.WriteTo(buf, showCol, showOrig)
-	return buf.String()
-}
-
-// WriteTo a position to w, formatted as Format does.
-func (p Pos) WriteTo(w io.Writer, showCol, showOrig bool) {
 	if !p.IsKnown() {
-		io.WriteString(w, "<unknown line number>")
-		return
+		return "<unknown line number>"
 	}
 
 	if b := p.base; b == b.Pos().base {
 		// base is file base (incl. nil)
-		format(w, p.Filename(), p.Line(), p.Col(), showCol)
-		return
+		return format(p.Filename(), p.Line(), p.Col(), showCol)
 	}
 
 	// base is relative
@@ -156,32 +146,22 @@ func (p Pos) WriteTo(w io.Writer, showCol, showOrig bool) {
 	// that's provided via a line directive).
 	// TODO(gri) This may not be true if we have an inlining base.
 	// We may want to differentiate at some point.
-	format(w, p.RelFilename(), p.RelLine(), p.RelCol(), showCol)
+	s := format(p.RelFilename(), p.RelLine(), p.RelCol(), showCol)
 	if showOrig {
-		io.WriteString(w, "[")
-		format(w, p.Filename(), p.Line(), p.Col(), showCol)
-		io.WriteString(w, "]")
+		s += "[" + format(p.Filename(), p.Line(), p.Col(), showCol) + "]"
 	}
+	return s
 }
 
 // format formats a (filename, line, col) tuple as "filename:line" (showCol
 // is false or col == 0) or "filename:line:column" (showCol is true and col != 0).
-func format(w io.Writer, filename string, line, col uint, showCol bool) {
-	io.WriteString(w, filename)
-	io.WriteString(w, ":")
-	fmt.Fprint(w, line)
+func format(filename string, line, col uint, showCol bool) string {
+	s := filename + ":" + strconv.FormatUint(uint64(line), 10)
 	// col == 0 and col == colMax are interpreted as unknown column values
 	if showCol && 0 < col && col < colMax {
-		io.WriteString(w, ":")
-		fmt.Fprint(w, col)
+		s += ":" + strconv.FormatUint(uint64(col), 10)
 	}
-}
-
-// formatstr wraps format to return a string.
-func formatstr(filename string, line, col uint, showCol bool) string {
-	buf := new(bytes.Buffer)
-	format(buf, filename, line, col, showCol)
-	return buf.String()
+	return s
 }
 
 // ----------------------------------------------------------------------------
@@ -325,7 +305,7 @@ type lico uint32
 // because they have almost no interaction with other uses of the position.
 const (
 	lineBits, lineMax     = 20, 1<<lineBits - 2
-	bogusLine             = 1 // Used to disrupt infinite loops to prevent debugger looping
+	bogusLine             = 1<<lineBits - 1 // Not a line number; used to disrupt infinite loops
 	isStmtBits, isStmtMax = 2, 1<<isStmtBits - 1
 	xlogueBits, xlogueMax = 2, 1<<xlogueBits - 1
 	colBits, colMax       = 32 - lineBits - xlogueBits - isStmtBits, 1<<colBits - 1
@@ -401,9 +381,8 @@ func makeLico(line, col uint) lico {
 	return makeLicoRaw(line, col)
 }
 
-func (x lico) Line() uint           { return uint(x) >> lineShift }
-func (x lico) SameLine(y lico) bool { return 0 == (x^y)&^lico(1<<lineShift-1) }
-func (x lico) Col() uint            { return uint(x) >> colShift & colMax }
+func (x lico) Line() uint { return uint(x) >> lineShift }
+func (x lico) Col() uint  { return uint(x) >> colShift & colMax }
 func (x lico) IsStmt() uint {
 	if x == 0 {
 		return PosNotStmt

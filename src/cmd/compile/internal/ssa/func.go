@@ -32,9 +32,8 @@ type Func struct {
 	Type   *types.Type // type signature of the function.
 	Blocks []*Block    // unordered set of all basic blocks (note: not indexable by ID)
 	Entry  *Block      // the entry basic block
-
-	bid idAlloc // block ID allocator
-	vid idAlloc // value ID allocator
+	bid    idAlloc     // block ID allocator
+	vid    idAlloc     // value ID allocator
 
 	// Given an environment variable used for debug hash match,
 	// what file (if any) receives the yes/no logging?
@@ -640,7 +639,7 @@ func (f *Func) Idom() []*Block {
 
 // sdom returns a sparse tree representing the dominator relationships
 // among the blocks of f.
-func (f *Func) Sdom() SparseTree {
+func (f *Func) sdom() SparseTree {
 	if f.cachedSdom == nil {
 		f.cachedSdom = newSparseTree(f, f.Idom())
 	}

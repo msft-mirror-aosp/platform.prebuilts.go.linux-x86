@@ -20,9 +20,9 @@ x_cgo_setenv(char **arg)
 
 /* Stub for calling unsetenv */
 void
-x_cgo_unsetenv(char **arg)
+x_cgo_unsetenv(char *arg)
 {
 	_cgo_tsan_acquire();
-	unsetenv(arg[0]);
+	unsetenv(arg);
 	_cgo_tsan_release();
 }

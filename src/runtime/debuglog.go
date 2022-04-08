@@ -665,17 +665,13 @@ func (r *debugLogReader) printVal() bool {
 		print("..(", r.uvarint(), " more bytes)..")
 
 	case debugLogPC:
-		printDebugLogPC(uintptr(r.uvarint()), false)
+		printDebugLogPC(uintptr(r.uvarint()))
 
 	case debugLogTraceback:
 		n := int(r.uvarint())
 		for i := 0; i < n; i++ {
 			print("\n\t")
-			// gentraceback PCs are always return PCs.
-			// Convert them to call PCs.
-			//
-			// TODO(austin): Expand inlined frames.
-			printDebugLogPC(uintptr(r.uvarint()), true)
+			printDebugLogPC(uintptr(r.uvarint()))
 		}
 	}
 
@@ -798,17 +794,9 @@ func printDebugLog() {
 	printunlock()
 }
 
-// printDebugLogPC prints a single symbolized PC. If returnPC is true,
-// pc is a return PC that must first be converted to a call PC.
-func printDebugLogPC(pc uintptr, returnPC bool) {
-	fn := findfunc(pc)
-	if returnPC && (!fn.valid() || pc > fn.entry) {
-		// TODO(austin): Don't back up if the previous frame
-		// was a sigpanic.
-		pc--
-	}
-
+func printDebugLogPC(pc uintptr) {
 	print(hex(pc))
+	fn := findfunc(pc)
 	if !fn.valid() {
 		print(" [unknown PC]")
 	} else {

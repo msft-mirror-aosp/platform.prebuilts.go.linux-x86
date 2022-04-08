@@ -2,11 +2,11 @@
 6:	func test() {
 8:		go func() {}()
 10:		for {
-1:	package main
+1048575:
 10:		for {
-1:	package main
+1048575:
 10:		for {
-1:	package main
+1048575:
 10:		for {
-1:	package main
+1048575:
 10:		for {

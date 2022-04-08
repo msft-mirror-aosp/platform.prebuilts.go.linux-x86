@@ -564,7 +564,6 @@ type Ustat_t struct {
 
 type EpollEvent struct {
 	Events uint32
-	_      int32
 	Fd     int32
 	Pad    int32
 }
@@ -575,12 +574,6 @@ const (
 	_AT_SYMLINK_NOFOLLOW = 0x100
 	_AT_EACCESS          = 0x200
 )
-
-type pollFd struct {
-	Fd      int32
-	Events  int16
-	Revents int16
-}
 
 type Termios struct {
 	Iflag     uint32

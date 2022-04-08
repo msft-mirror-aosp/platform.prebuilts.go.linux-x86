@@ -53,18 +53,14 @@ type pkgBuffer struct {
 }
 
 func (pb *pkgBuffer) Write(p []byte) (int, error) {
-	pb.packageClause()
-	return pb.Buffer.Write(p)
-}
-
-func (pb *pkgBuffer) packageClause() {
-	if !pb.printed {
+	if !pb.printed && len(p) > 0 {
 		pb.printed = true
 		// Only show package clause for commands if requested explicitly.
 		if pb.pkg.pkg.Name != "main" || showCmd {
 			pb.pkg.packageClause()
 		}
 	}
+	return pb.Buffer.Write(p)
 }
 
 type PackageError string // type returned by pkg.Fatalf.
@@ -176,18 +172,18 @@ func parsePackage(writer io.Writer, pkg *build.Package, userPath string) *Packag
 	constructor := make(map[*doc.Func]bool)
 	for _, typ := range docPkg.Types {
 		docPkg.Consts = append(docPkg.Consts, typ.Consts...)
+		for _, value := range typ.Consts {
+			typedValue[value] = true
+		}
 		docPkg.Vars = append(docPkg.Vars, typ.Vars...)
+		for _, value := range typ.Vars {
+			typedValue[value] = true
+		}
 		docPkg.Funcs = append(docPkg.Funcs, typ.Funcs...)
-		if isExported(typ.Name) {
-			for _, value := range typ.Consts {
-				typedValue[value] = true
-			}
-			for _, value := range typ.Vars {
-				typedValue[value] = true
-			}
-			for _, fun := range typ.Funcs {
-				// We don't count it as a constructor bound to the type
-				// if the type itself is not exported.
+		for _, fun := range typ.Funcs {
+			// We don't count it as a constructor bound to the type
+			// if the type itself is not exported.
+			if isExported(typ.Name) {
 				constructor[fun] = true
 			}
 		}
@@ -449,7 +445,8 @@ func joinStrings(ss []string) string {
 
 // allDoc prints all the docs for the package.
 func (pkg *Package) allDoc() {
-	pkg.Printf("") // Trigger the package clause; we know the package exists.
+	defer pkg.flush()
+
 	doc.ToText(&pkg.buf, pkg.doc.Doc, "", indent, indentedWidth)
 	pkg.newlines(1)
 
@@ -508,35 +505,26 @@ func (pkg *Package) allDoc() {
 
 // packageDoc prints the docs for the package (package doc plus one-liners of the rest).
 func (pkg *Package) packageDoc() {
-	pkg.Printf("") // Trigger the package clause; we know the package exists.
-	if !short {
-		doc.ToText(&pkg.buf, pkg.doc.Doc, "", indent, indentedWidth)
-		pkg.newlines(1)
-	}
+	defer pkg.flush()
+
+	doc.ToText(&pkg.buf, pkg.doc.Doc, "", indent, indentedWidth)
+	pkg.newlines(1)
 
 	if pkg.pkg.Name == "main" && !showCmd {
 		// Show only package docs for commands.
 		return
 	}
 
-	if !short {
-		pkg.newlines(2) // Guarantee blank line before the components.
-	}
-
+	pkg.newlines(2) // Guarantee blank line before the components.
 	pkg.valueSummary(pkg.doc.Consts, false)
 	pkg.valueSummary(pkg.doc.Vars, false)
 	pkg.funcSummary(pkg.doc.Funcs, false)
 	pkg.typeSummary()
-	if !short {
-		pkg.bugs()
-	}
+	pkg.bugs()
 }
 
 // packageClause prints the package clause.
 func (pkg *Package) packageClause() {
-	if short {
-		return
-	}
 	importPath := pkg.build.ImportComment
 	if importPath == "" {
 		importPath = pkg.build.ImportPath
@@ -701,6 +689,7 @@ func (pkg *Package) findTypeSpec(decl *ast.GenDecl, symbol string) *ast.TypeSpec
 // If symbol matches a type, output includes its methods factories and associated constants.
 // If there is no top-level symbol, symbolDoc looks for methods that match.
 func (pkg *Package) symbolDoc(symbol string) bool {
+	defer pkg.flush()
 	found := false
 	// Functions.
 	for _, fun := range pkg.findFuncs(symbol) {
@@ -920,6 +909,7 @@ func trimUnexportedFields(fields *ast.FieldList, isInterface bool) *ast.FieldLis
 // If symbol is empty, it prints all methods for any concrete type
 // that match the name. It reports whether it found any methods.
 func (pkg *Package) printMethodDoc(symbol, method string) bool {
+	defer pkg.flush()
 	types := pkg.findTypes(symbol)
 	if types == nil {
 		if symbol == "" {
@@ -985,6 +975,7 @@ func (pkg *Package) printFieldDoc(symbol, fieldName string) bool {
 	if symbol == "" || fieldName == "" {
 		return false
 	}
+	defer pkg.flush()
 	types := pkg.findTypes(symbol)
 	if types == nil {
 		pkg.Fatalf("symbol %s is not a type in package %s installed in %q", symbol, pkg.name, pkg.build.ImportPath)
@@ -1040,11 +1031,13 @@ func (pkg *Package) printFieldDoc(symbol, fieldName string) bool {
 
 // methodDoc prints the docs for matches of symbol.method.
 func (pkg *Package) methodDoc(symbol, method string) bool {
+	defer pkg.flush()
 	return pkg.printMethodDoc(symbol, method)
 }
 
 // fieldDoc prints the docs for matches of symbol.field.
 func (pkg *Package) fieldDoc(symbol, field string) bool {
+	defer pkg.flush()
 	return pkg.printFieldDoc(symbol, field)
 }
 

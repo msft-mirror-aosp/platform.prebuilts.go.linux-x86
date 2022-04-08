@@ -1,4 +1,4 @@
-// errorcheck -0 -m -l
+// errorcheck -0 -m -l -newescape=true
 
 // Copyright 2012 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -139,7 +139,7 @@ func f8(p *T1) (k T2) { // ERROR "leaking param: p$"
 	}
 
 	// should make p leak always
-	global = p
+	global = p // ERROR "p escapes to heap"
 	return T2{p}
 }
 
@@ -164,7 +164,7 @@ func f13() {
 	var x *int
 	f11(&x)
 	f12(&x)
-	runtime.KeepAlive(&x)
+	runtime.KeepAlive(&x) // ERROR "&x does not escape"
 }
 
 // Test for issue 24305 (passing to unnamed receivers does not escape).

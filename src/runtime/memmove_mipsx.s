@@ -14,8 +14,6 @@
 #define MOVWLO  MOVWL
 #endif
 
-// See memmove Go doc for important implementation constraints.
-
 // func memmove(to, from unsafe.Pointer, n uintptr)
 TEXT runtime·memmove(SB),NOSPLIT,$-0-12
 	MOVW	n+8(FP), R3

@@ -118,16 +118,12 @@ func main() {
 		w := &countWriter{0, c}
 		cmd.Stdout = w
 		cmd.Stderr = w
-		err := cmd.Run()
-		if err != nil {
+		if err := cmd.Run(); err != nil {
 			if w.n > 0 {
 				// Assume command printed why it failed.
 			} else {
 				fmt.Fprintf(c, "test2json: %v\n", err)
 			}
-		}
-		c.Exited(err)
-		if err != nil {
 			c.Close()
 			os.Exit(1)
 		}

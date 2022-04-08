@@ -5,14 +5,11 @@
 package modcmd
 
 import (
-	"fmt"
-	"strings"
-
 	"cmd/go/internal/base"
 	"cmd/go/internal/modload"
-	"cmd/go/internal/work"
-
-	"golang.org/x/mod/module"
+	"cmd/go/internal/module"
+	"fmt"
+	"strings"
 )
 
 var cmdWhy = &base.Command{
@@ -57,7 +54,6 @@ var (
 
 func init() {
 	cmdWhy.Run = runWhy // break init cycle
-	work.AddModCommonFlags(cmdWhy)
 }
 
 func runWhy(cmd *base.Command, args []string) {

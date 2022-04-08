@@ -600,13 +600,13 @@ func (s *ss) scanNumber(digits string, haveDigits bool) string {
 // scanRune returns the next rune value in the input.
 func (s *ss) scanRune(bitSize int) int64 {
 	s.notEOF()
-	r := s.getRune()
+	r := int64(s.getRune())
 	n := uint(bitSize)
-	x := (int64(r) << (64 - n)) >> (64 - n)
-	if x != int64(r) {
+	x := (r << (64 - n)) >> (64 - n)
+	if x != r {
 		s.errorString("overflow on character value " + string(r))
 	}
-	return int64(r)
+	return r
 }
 
 // scanBasePrefix reports whether the integer begins with a base prefix
@@ -940,15 +940,6 @@ const (
 	uintptrBits = 32 << (^uintptr(0) >> 63)
 )
 
-// scanPercent scans a literal percent character.
-func (s *ss) scanPercent() {
-	s.SkipSpace()
-	s.notEOF()
-	if !s.accept("%") {
-		s.errorString("missing literal %")
-	}
-}
-
 // scanOne scans a single value, deriving the scanner from the type of the argument.
 func (s *ss) scanOne(verb rune, arg interface{}) {
 	s.buf = s.buf[:0]
@@ -1211,10 +1202,6 @@ func (s *ss) doScanf(format string, a []interface{}) (numProcessed int, err erro
 
 		if c != 'c' {
 			s.SkipSpace()
-		}
-		if c == '%' {
-			s.scanPercent()
-			continue // Do not consume an argument.
 		}
 		s.argLimit = s.limit
 		if f := s.count + s.maxWid; f < s.argLimit {

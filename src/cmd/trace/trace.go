@@ -25,7 +25,6 @@ func init() {
 	http.HandleFunc("/trace", httpTrace)
 	http.HandleFunc("/jsontrace", httpJsonTrace)
 	http.HandleFunc("/trace_viewer_html", httpTraceViewerHTML)
-	http.HandleFunc("/webcomponents.min.js", webcomponentsJS)
 }
 
 // httpTrace serves either whole trace (goid==0) or trace for goid goroutine.
@@ -44,26 +43,14 @@ func httpTrace(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// https://chromium.googlesource.com/catapult/+/9508452e18f130c98499cb4c4f1e1efaedee8962/tracing/docs/embedding-trace-viewer.md
-// This is almost verbatim copy of https://chromium-review.googlesource.com/c/catapult/+/2062938/2/tracing/bin/index.html
+// See https://github.com/catapult-project/catapult/blob/master/tracing/docs/embedding-trace-viewer.md
+// This is almost verbatim copy of:
+// https://github.com/catapult-project/catapult/blob/master/tracing/bin/index.html
+// on revision 5f9e4c3eaa555bdef18218a89f38c768303b7b6e.
 var templTrace = `
 <html>
 <head>
-<script src="/webcomponents.min.js"></script>
-<script>
-'use strict';
-
-function onTraceViewerImportFail() {
-  document.addEventListener('DOMContentLoaded', function() {
-    document.body.textContent =
-    '/trace_viewer_full.html is missing. File a bug in https://golang.org/issue';
-  });
-}
-</script>
-
-<link rel="import" href="/trace_viewer_html"
-      onerror="onTraceViewerImportFail(event)">
-
+<link href="/trace_viewer_html" rel="import">
 <style type="text/css">
   html, body {
     box-sizing: border-box;
@@ -90,10 +77,10 @@ function onTraceViewerImportFail() {
 
   function load() {
     var req = new XMLHttpRequest();
-    var isBinary = /[.]gz$/.test(url) || /[.]zip$/.test(url);
+    var is_binary = /[.]gz$/.test(url) || /[.]zip$/.test(url);
     req.overrideMimeType('text/plain; charset=x-user-defined');
     req.open('GET', url, true);
-    if (isBinary)
+    if (is_binary)
       req.responseType = 'arraybuffer';
 
     req.onreadystatechange = function(event) {
@@ -102,7 +89,7 @@ function onTraceViewerImportFail() {
 
       window.setTimeout(function() {
         if (req.status === 200)
-          onResult(isBinary ? req.response : req.responseText);
+          onResult(is_binary ? req.response : req.responseText);
         else
           onResultFail(req.status);
       }, 0);
@@ -149,17 +136,17 @@ function onTraceViewerImportFail() {
     overlay.visible = true;
   }
 
-  document.addEventListener('WebComponentsReady', function() {
+  document.addEventListener('DOMContentLoaded', function() {
     var container = document.createElement('track-view-container');
     container.id = 'track_view_container';
 
     viewer = document.createElement('tr-ui-timeline-view');
     viewer.track_view_container = container;
-    Polymer.dom(viewer).appendChild(container);
+    viewer.appendChild(container);
 
     viewer.id = 'trace-viewer';
     viewer.globalMode = true;
-    Polymer.dom(document.body).appendChild(viewer);
+    document.body.appendChild(viewer);
 
     url = '/jsontrace?{{PARAMS}}';
     load();
@@ -176,10 +163,6 @@ function onTraceViewerImportFail() {
 // This URL is queried from templTrace HTML.
 func httpTraceViewerHTML(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(runtime.GOROOT(), "misc", "trace", "trace_viewer_full.html"))
-}
-
-func webcomponentsJS(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, filepath.Join(runtime.GOROOT(), "misc", "trace", "webcomponents.min.js"))
 }
 
 // httpJsonTrace serves json trace, requested from within templTrace HTML.

@@ -9,7 +9,6 @@ package syscall
 import (
 	"internal/oserror"
 	"internal/race"
-	"internal/unsafeheader"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -61,12 +60,15 @@ func (m *mmapper) Mmap(fd int, offset int64, length int, prot int, flags int) (d
 		return nil, errno
 	}
 
-	// Use unsafe to turn addr into a []byte.
-	var b []byte
-	hdr := (*unsafeheader.Slice)(unsafe.Pointer(&b))
-	hdr.Data = unsafe.Pointer(addr)
-	hdr.Cap = length
-	hdr.Len = length
+	// Slice memory layout
+	var sl = struct {
+		addr uintptr
+		len  int
+		cap  int
+	}{addr, length, length}
+
+	// Use unsafe to turn sl into a []byte.
+	b := *(*[]byte)(unsafe.Pointer(&sl))
 
 	// Register mapping in m and return it.
 	p := &b[cap(b)-1]
@@ -105,12 +107,6 @@ func (m *mmapper) Munmap(data []byte) (err error) {
 //	if errno != 0 {
 //		err = errno
 //	}
-//
-// Errno values can be tested against error values from the os package
-// using errors.Is. For example:
-//
-//	_, _, err := syscall.Syscall(...)
-//	if errors.Is(err, os.ErrNotExist) ...
 type Errno uintptr
 
 func (e Errno) Error() string {
@@ -136,7 +132,7 @@ func (e Errno) Is(target error) bool {
 }
 
 func (e Errno) Temporary() bool {
-	return e == EINTR || e == EMFILE || e == ENFILE || e.Timeout()
+	return e == EINTR || e == EMFILE || e.Timeout()
 }
 
 func (e Errno) Timeout() bool {
@@ -203,14 +199,7 @@ func Write(fd int, p []byte) (n int, err error) {
 	if race.Enabled {
 		race.ReleaseMerge(unsafe.Pointer(&ioSync))
 	}
-	if faketime && (fd == 1 || fd == 2) {
-		n = faketimeWrite(fd, p)
-		if n < 0 {
-			n, err = 0, errnoErr(Errno(-n))
-		}
-	} else {
-		n, err = write(fd, p)
-	}
+	n, err = write(fd, p)
 	if race.Enabled && n > 0 {
 		race.ReadRange(unsafe.Pointer(&p[0]), n)
 	}

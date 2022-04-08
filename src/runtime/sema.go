@@ -129,7 +129,7 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags, skipframes i
 		s.acquiretime = t0
 	}
 	for {
-		lockWithRank(&root.lock, lockRankRoot)
+		lock(&root.lock)
 		// Add ourselves to nwait to disable "easy case" in semrelease.
 		atomic.Xadd(&root.nwait, 1)
 		// Check cansemacquire to avoid missed wakeup.
@@ -168,7 +168,7 @@ func semrelease1(addr *uint32, handoff bool, skipframes int) {
 	}
 
 	// Harder case: search for a waiter and wake it.
-	lockWithRank(&root.lock, lockRankRoot)
+	lock(&root.lock)
 	if atomic.Load(&root.nwait) == 0 {
 		// The count is already consumed by another goroutine,
 		// so no need to wake up another goroutine.
@@ -180,7 +180,7 @@ func semrelease1(addr *uint32, handoff bool, skipframes int) {
 		atomic.Xadd(&root.nwait, -1)
 	}
 	unlock(&root.lock)
-	if s != nil { // May be slow or even yield, so unlock first
+	if s != nil { // May be slow, so unlock first
 		acquiretime := s.acquiretime
 		if acquiretime != 0 {
 			mutexevent(t0-acquiretime, 3+skipframes)
@@ -192,25 +192,6 @@ func semrelease1(addr *uint32, handoff bool, skipframes int) {
 			s.ticket = 1
 		}
 		readyWithTime(s, 5+skipframes)
-		if s.ticket == 1 && getg().m.locks == 0 {
-			// Direct G handoff
-			// readyWithTime has added the waiter G as runnext in the
-			// current P; we now call the scheduler so that we start running
-			// the waiter G immediately.
-			// Note that waiter inherits our time slice: this is desirable
-			// to avoid having a highly contended semaphore hog the P
-			// indefinitely. goyield is like Gosched, but it emits a
-			// "preempted" trace event instead and, more importantly, puts
-			// the current G on the local runq instead of the global one.
-			// We only do this in the starving regime (handoff=true), as in
-			// the non-starving case it is possible for a different waiter
-			// to acquire the semaphore while we are yielding/scheduling,
-			// and this would be wasteful. We wait instead to enter starving
-			// regime, and then we start to do direct handoffs of ticket and
-			// P.
-			// See issue 33747 for discussion.
-			goyield()
-		}
 	}
 }
 
@@ -392,11 +373,19 @@ Found:
 func (root *semaRoot) rotateLeft(x *sudog) {
 	// p -> (x a (y b c))
 	p := x.parent
-	y := x.next
-	b := y.prev
+	a, y := x.prev, x.next
+	b, c := y.prev, y.next
 
 	y.prev = x
 	x.parent = y
+	y.next = c
+	if c != nil {
+		c.parent = y
+	}
+	x.prev = a
+	if a != nil {
+		a.parent = x
+	}
 	x.next = b
 	if b != nil {
 		b.parent = x
@@ -420,14 +409,22 @@ func (root *semaRoot) rotateLeft(x *sudog) {
 func (root *semaRoot) rotateRight(y *sudog) {
 	// p -> (y (x a b) c)
 	p := y.parent
-	x := y.prev
-	b := x.next
+	x, c := y.prev, y.next
+	a, b := x.prev, x.next
 
+	x.prev = a
+	if a != nil {
+		a.parent = x
+	}
 	x.next = y
 	y.parent = x
 	y.prev = b
 	if b != nil {
 		b.parent = y
+	}
+	y.next = c
+	if c != nil {
+		c.parent = y
 	}
 
 	x.parent = p
@@ -486,7 +483,7 @@ func notifyListAdd(l *notifyList) uint32 {
 // notifyListAdd was called, it returns immediately. Otherwise, it blocks.
 //go:linkname notifyListWait sync.runtime_notifyListWait
 func notifyListWait(l *notifyList, t uint32) {
-	lockWithRank(&l.lock, lockRankNotifyList)
+	lock(&l.lock)
 
 	// Return right away if this ticket has already been notified.
 	if less(t, l.notify) {
@@ -528,7 +525,7 @@ func notifyListNotifyAll(l *notifyList) {
 
 	// Pull the list out into a local variable, waiters will be readied
 	// outside the lock.
-	lockWithRank(&l.lock, lockRankNotifyList)
+	lock(&l.lock)
 	s := l.head
 	l.head = nil
 	l.tail = nil
@@ -558,7 +555,7 @@ func notifyListNotifyOne(l *notifyList) {
 		return
 	}
 
-	lockWithRank(&l.lock, lockRankNotifyList)
+	lock(&l.lock)
 
 	// Re-check under the lock if we need to do anything.
 	t := l.notify

@@ -13,7 +13,8 @@ import (
 func setKeepAlivePeriod(fd *netFD, d time.Duration) error {
 	// The kernel expects milliseconds so round to next highest
 	// millisecond.
-	msecs := int(roundDurationUp(d, time.Millisecond))
+	d += (time.Millisecond - time.Nanosecond)
+	msecs := int(d / time.Millisecond)
 
 	// Normally we'd do
 	//	syscall.SetsockoptInt(fd.sysfd, syscall.IPPROTO_TCP, syscall.TCP_KEEPINTVL, secs)

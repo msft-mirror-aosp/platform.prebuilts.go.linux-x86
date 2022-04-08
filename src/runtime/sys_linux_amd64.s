@@ -21,7 +21,6 @@
 #define SYS_rt_sigaction	13
 #define SYS_rt_sigprocmask	14
 #define SYS_rt_sigreturn	15
-#define SYS_pipe		22
 #define SYS_sched_yield 	24
 #define SYS_mincore		27
 #define SYS_madvise		28
@@ -33,10 +32,8 @@
 #define SYS_clone		56
 #define SYS_exit		60
 #define SYS_kill		62
-#define SYS_uname		63
 #define SYS_fcntl		72
 #define SYS_sigaltstack 	131
-#define SYS_mlock		149
 #define SYS_arch_prctl		158
 #define SYS_gettid		186
 #define SYS_futex		202
@@ -49,7 +46,6 @@
 #define SYS_faccessat		269
 #define SYS_epoll_pwait		281
 #define SYS_epoll_create1	291
-#define SYS_pipe2		293
 
 TEXT runtime·exit(SB),NOSPLIT,$0-4
 	MOVL	code+0(FP), DI
@@ -93,12 +89,15 @@ TEXT runtime·closefd(SB),NOSPLIT,$0-12
 	MOVL	AX, ret+8(FP)
 	RET
 
-TEXT runtime·write1(SB),NOSPLIT,$0-28
+TEXT runtime·write(SB),NOSPLIT,$0-28
 	MOVQ	fd+0(FP), DI
 	MOVQ	p+8(FP), SI
 	MOVL	n+16(FP), DX
 	MOVL	$SYS_write, AX
 	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
 	MOVL	AX, ret+24(FP)
 	RET
 
@@ -108,24 +107,10 @@ TEXT runtime·read(SB),NOSPLIT,$0-28
 	MOVL	n+16(FP), DX
 	MOVL	$SYS_read, AX
 	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
 	MOVL	AX, ret+24(FP)
-	RET
-
-// func pipe() (r, w int32, errno int32)
-TEXT runtime·pipe(SB),NOSPLIT,$0-12
-	LEAQ	r+0(FP), DI
-	MOVL	$SYS_pipe, AX
-	SYSCALL
-	MOVL	AX, errno+8(FP)
-	RET
-
-// func pipe2(flags int32) (r, w int32, errno int32)
-TEXT runtime·pipe2(SB),NOSPLIT,$0-20
-	LEAQ	r+8(FP), DI
-	MOVL	flags+0(FP), SI
-	MOVL	$SYS_pipe2, AX
-	SYSCALL
-	MOVL	AX, errno+16(FP)
 	RET
 
 TEXT runtime·usleep(SB),NOSPLIT,$16
@@ -173,20 +158,6 @@ TEXT runtime·raiseproc(SB),NOSPLIT,$0
 	SYSCALL
 	RET
 
-TEXT ·getpid(SB),NOSPLIT,$0-8
-	MOVL	$SYS_getpid, AX
-	SYSCALL
-	MOVQ	AX, ret+0(FP)
-	RET
-
-TEXT ·tgkill(SB),NOSPLIT,$0
-	MOVQ	tgid+0(FP), DI
-	MOVQ	tid+8(FP), SI
-	MOVQ	sig+16(FP), DX
-	MOVL	$SYS_tgkill, AX
-	SYSCALL
-	RET
-
 TEXT runtime·setitimer(SB),NOSPLIT,$0-24
 	MOVL	mode+0(FP), DI
 	MOVQ	new+8(FP), SI
@@ -204,9 +175,8 @@ TEXT runtime·mincore(SB),NOSPLIT,$0-28
 	MOVL	AX, ret+24(FP)
 	RET
 
-// func walltime1() (sec int64, nsec int32)
-// non-zero frame-size means bp is saved and restored
-TEXT runtime·walltime1(SB),NOSPLIT,$16-12
+// func walltime() (sec int64, nsec int32)
+TEXT runtime·walltime(SB),NOSPLIT,$0-12
 	// We don't know how much stack space the VDSO code will need,
 	// so switch to g0.
 	// In particular, a kernel configured with CONFIG_OPTIMIZE_INLINING=n
@@ -221,16 +191,9 @@ TEXT runtime·walltime1(SB),NOSPLIT,$16-12
 	MOVQ	g_m(AX), BX // BX unchanged by C code.
 
 	// Set vdsoPC and vdsoSP for SIGPROF traceback.
-	// Save the old values on stack and restore them on exit,
-	// so this function is reentrant.
-	MOVQ	m_vdsoPC(BX), CX
-	MOVQ	m_vdsoSP(BX), DX
-	MOVQ	CX, 0(SP)
-	MOVQ	DX, 8(SP)
-
-	LEAQ	sec+0(FP), DX
-	MOVQ	-8(DX), CX
-	MOVQ	CX, m_vdsoPC(BX)
+	MOVQ	0(SP), DX
+	MOVQ	DX, m_vdsoPC(BX)
+	LEAQ	sec+0(SP), DX
 	MOVQ	DX, m_vdsoSP(BX)
 
 	CMPQ	AX, m_curg(BX)	// Only switch if on curg.
@@ -251,17 +214,8 @@ noswitch:
 	CALL	AX
 	MOVQ	0(SP), AX	// sec
 	MOVQ	8(SP), DX	// nsec
-ret:
 	MOVQ	BP, SP		// Restore real SP
-	// Restore vdsoPC, vdsoSP
-	// We don't worry about being signaled between the two stores.
-	// If we are not in a signal handler, we'll restore vdsoSP to 0,
-	// and no one will care about vdsoPC. If we are in a signal handler,
-	// we cannot receive another signal.
-	MOVQ	8(SP), CX
-	MOVQ	CX, m_vdsoSP(BX)
-	MOVQ	0(SP), CX
-	MOVQ	CX, m_vdsoPC(BX)
+	MOVQ	$0, m_vdsoSP(BX)
 	MOVQ	AX, sec+0(FP)
 	MOVL	DX, nsec+8(FP)
 	RET
@@ -273,10 +227,13 @@ fallback:
 	MOVQ	0(SP), AX	// sec
 	MOVL	8(SP), DX	// usec
 	IMULQ	$1000, DX
-	JMP ret
+	MOVQ	BP, SP		// Restore real SP
+	MOVQ	$0, m_vdsoSP(BX)
+	MOVQ	AX, sec+0(FP)
+	MOVL	DX, nsec+8(FP)
+	RET
 
-// func nanotime1() int64
-TEXT runtime·nanotime1(SB),NOSPLIT,$16-8
+TEXT runtime·nanotime(SB),NOSPLIT,$0-8
 	// Switch to g0 stack. See comment above in runtime·walltime.
 
 	MOVQ	SP, BP	// Save old SP; BP unchanged by C code.
@@ -286,16 +243,9 @@ TEXT runtime·nanotime1(SB),NOSPLIT,$16-8
 	MOVQ	g_m(AX), BX // BX unchanged by C code.
 
 	// Set vdsoPC and vdsoSP for SIGPROF traceback.
-	// Save the old values on stack and restore them on exit,
-	// so this function is reentrant.
-	MOVQ	m_vdsoPC(BX), CX
-	MOVQ	m_vdsoSP(BX), DX
-	MOVQ	CX, 0(SP)
-	MOVQ	DX, 8(SP)
-
-	LEAQ	ret+0(FP), DX
-	MOVQ	-8(DX), CX
-	MOVQ	CX, m_vdsoPC(BX)
+	MOVQ	0(SP), DX
+	MOVQ	DX, m_vdsoPC(BX)
+	LEAQ	ret+0(SP), DX
 	MOVQ	DX, m_vdsoSP(BX)
 
 	CMPQ	AX, m_curg(BX)	// Only switch if on curg.
@@ -316,17 +266,8 @@ noswitch:
 	CALL	AX
 	MOVQ	0(SP), AX	// sec
 	MOVQ	8(SP), DX	// nsec
-ret:
 	MOVQ	BP, SP		// Restore real SP
-	// Restore vdsoPC, vdsoSP
-	// We don't worry about being signaled between the two stores.
-	// If we are not in a signal handler, we'll restore vdsoSP to 0,
-	// and no one will care about vdsoPC. If we are in a signal handler,
-	// we cannot receive another signal.
-	MOVQ	8(SP), CX
-	MOVQ	CX, m_vdsoSP(BX)
-	MOVQ	0(SP), CX
-	MOVQ	CX, m_vdsoPC(BX)
+	MOVQ	$0, m_vdsoSP(BX)
 	// sec is in AX, nsec in DX
 	// return nsec in AX
 	IMULQ	$1000000000, AX
@@ -340,8 +281,15 @@ fallback:
 	CALL	AX
 	MOVQ	0(SP), AX	// sec
 	MOVL	8(SP), DX	// usec
+	MOVQ	BP, SP		// Restore real SP
+	MOVQ	$0, m_vdsoSP(BX)
 	IMULQ	$1000, DX
-	JMP	ret
+	// sec is in AX, nsec in DX
+	// return nsec in AX
+	IMULQ	$1000000000, AX
+	ADDQ	DX, AX
+	MOVQ	AX, ret+0(FP)
+	RET
 
 TEXT runtime·rtsigprocmask(SB),NOSPLIT,$0-28
 	MOVL	how+0(FP), DI
@@ -734,20 +682,6 @@ TEXT runtime·closeonexec(SB),NOSPLIT,$0
 	SYSCALL
 	RET
 
-// func runtime·setNonblock(int32 fd)
-TEXT runtime·setNonblock(SB),NOSPLIT,$0-4
-	MOVL    fd+0(FP), DI  // fd
-	MOVQ    $3, SI  // F_GETFL
-	MOVQ    $0, DX
-	MOVL	$SYS_fcntl, AX
-	SYSCALL
-	MOVL	fd+0(FP), DI // fd
-	MOVQ	$4, SI // F_SETFL
-	MOVQ	$0x800, DX // O_NONBLOCK
-	ORL	AX, DX
-	MOVL	$SYS_fcntl, AX
-	SYSCALL
-	RET
 
 // int access(const char *name, int mode)
 TEXT runtime·access(SB),NOSPLIT,$0
@@ -788,21 +722,4 @@ TEXT runtime·sbrk0(SB),NOSPLIT,$0-8
 	MOVL	$SYS_brk, AX
 	SYSCALL
 	MOVQ	AX, ret+0(FP)
-	RET
-
-// func uname(utsname *new_utsname) int
-TEXT ·uname(SB),NOSPLIT,$0-16
-	MOVQ    utsname+0(FP), DI
-	MOVL    $SYS_uname, AX
-	SYSCALL
-	MOVQ	AX, ret+8(FP)
-	RET
-
-// func mlock(addr, len uintptr) int
-TEXT ·mlock(SB),NOSPLIT,$0-24
-	MOVQ    addr+0(FP), DI
-	MOVQ    len+8(FP), SI
-	MOVL    $SYS_mlock, AX
-	SYSCALL
-	MOVQ	AX, ret+16(FP)
 	RET

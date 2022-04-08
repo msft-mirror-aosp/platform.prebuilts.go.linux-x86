@@ -9,7 +9,6 @@ package modcmd
 import (
 	"cmd/go/internal/base"
 	"cmd/go/internal/modload"
-	"cmd/go/internal/work"
 	"os"
 	"strings"
 )
@@ -28,10 +27,6 @@ To override this guess, supply the module path as an argument.
 	Run: runInit,
 }
 
-func init() {
-	work.AddModCommonFlags(cmdInit)
-}
-
 func runInit(cmd *base.Command, args []string) {
 	modload.CmdModInit = true
 	if len(args) > 1 {
@@ -43,8 +38,7 @@ func runInit(cmd *base.Command, args []string) {
 	if os.Getenv("GO111MODULE") == "off" {
 		base.Fatalf("go mod init: modules disabled by GO111MODULE=off; see 'go help modules'")
 	}
-	modFilePath := modload.ModFilePath()
-	if _, err := os.Stat(modFilePath); err == nil {
+	if _, err := os.Stat("go.mod"); err == nil {
 		base.Fatalf("go mod init: go.mod already exists")
 	}
 	if strings.Contains(modload.CmdModModule, "@") {

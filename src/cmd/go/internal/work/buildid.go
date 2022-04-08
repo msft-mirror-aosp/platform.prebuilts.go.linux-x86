@@ -15,6 +15,7 @@ import (
 	"cmd/go/internal/base"
 	"cmd/go/internal/cache"
 	"cmd/go/internal/cfg"
+	"cmd/go/internal/load"
 	"cmd/go/internal/str"
 	"cmd/internal/buildid"
 )
@@ -185,7 +186,7 @@ func (b *Builder) toolID(name string) string {
 
 	cmdline := str.StringList(cfg.BuildToolexec, path, "-V=full")
 	cmd := exec.Command(cmdline[0], cmdline[1:]...)
-	cmd.Env = base.AppendPWD(os.Environ(), cmd.Dir)
+	cmd.Env = base.EnvForDir(cmd.Dir, os.Environ())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -244,7 +245,7 @@ func (b *Builder) gccgoToolID(name, language string) (string, error) {
 	// compile an empty file on standard input.
 	cmdline := str.StringList(cfg.BuildToolexec, name, "-###", "-x", language, "-c", "-")
 	cmd := exec.Command(cmdline[0], cmdline[1:]...)
-	cmd.Env = base.AppendPWD(os.Environ(), cmd.Dir)
+	cmd.Env = base.EnvForDir(cmd.Dir, os.Environ())
 	// Force untranslated output so that we see the string "version".
 	cmd.Env = append(cmd.Env, "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
@@ -291,19 +292,14 @@ func (b *Builder) gccgoToolID(name, language string) (string, error) {
 				exe = lp
 			}
 		}
-		id, err = buildid.ReadFile(exe)
-		if err != nil {
-			return "", err
+		if _, err := os.Stat(exe); err != nil {
+			return "", fmt.Errorf("%s: can not find compiler %q: %v; output %q", name, exe, err, out)
 		}
-
-		// If we can't find a build ID, use a hash.
-		if id == "" {
-			id = b.fileHash(exe)
-		}
+		id = b.fileHash(exe)
 	}
 
 	b.id.Lock()
-	b.toolIDCache[key] = id
+	b.toolIDCache[name] = id
 	b.id.Unlock()
 
 	return id, nil
@@ -420,7 +416,7 @@ func (b *Builder) fileHash(file string) string {
 // during a's work. The caller should defer b.flushOutput(a), to make sure
 // that flushOutput is eventually called regardless of whether the action
 // succeeds. The flushOutput call must happen after updateBuildID.
-func (b *Builder) useCache(a *Action, actionHash cache.ActionID, target string) bool {
+func (b *Builder) useCache(a *Action, p *load.Package, actionHash cache.ActionID, target string) bool {
 	// The second half of the build ID here is a placeholder for the content hash.
 	// It's important that the overall buildID be unlikely verging on impossible
 	// to appear in the output by chance, but that should be taken care of by

@@ -17,5 +17,3 @@ func archauxv(tag, val uintptr) {
 		cpu.S390X.HasVX = val&_HWCAP_S390_VX != 0
 	}
 }
-
-func osArchInit() {}

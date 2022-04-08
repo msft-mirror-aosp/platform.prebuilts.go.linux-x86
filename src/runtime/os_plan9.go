@@ -167,7 +167,7 @@ func mpreinit(mp *m) {
 	mp.errstr = (*byte)(mallocgc(_ERRMAX, nil, true))
 }
 
-func sigsave(p *sigset) {
+func msigsave(mp *m) {
 }
 
 func msigrestore(sigmask sigset) {
@@ -293,6 +293,7 @@ func osinit() {
 	ncpu = getproccount()
 	physPageSize = getPageSize()
 	getg().m.procid = getpid()
+	notify(unsafe.Pointer(funcPC(sigtramp)))
 }
 
 //go:nosplit
@@ -306,10 +307,10 @@ func getRandomData(r []byte) {
 	extendRandom(r, 0)
 }
 
+func goenvs() {
+}
+
 func initsig(preinit bool) {
-	if !preinit {
-		notify(unsafe.Pointer(funcPC(sigtramp)))
-	}
 }
 
 //go:nosplit
@@ -327,7 +328,7 @@ func usleep(µs uint32) {
 }
 
 //go:nosplit
-func nanotime1() int64 {
+func nanotime() int64 {
 	var scratch int64
 	ns := nsec(&scratch)
 	// TODO(aram): remove hack after I fix _nsec in the pc64 kernel.
@@ -372,7 +373,7 @@ func postnote(pid uint64, msg []byte) int {
 		return -1
 	}
 	len := findnull(&msg[0])
-	if write1(uintptr(fd), unsafe.Pointer(&msg[0]), int32(len)) != int32(len) {
+	if write(uintptr(fd), unsafe.Pointer(&msg[0]), int32(len)) != int64(len) {
 		closefd(fd)
 		return -1
 	}
@@ -450,8 +451,8 @@ func read(fd int32, buf unsafe.Pointer, n int32) int32 {
 }
 
 //go:nosplit
-func write1(fd uintptr, buf unsafe.Pointer, n int32) int32 {
-	return pwrite(int32(fd), buf, n, -1)
+func write(fd uintptr, buf unsafe.Pointer, n int32) int64 {
+	return int64(pwrite(int32(fd), buf, n, -1))
 }
 
 var _badsignal = []byte("runtime: signal received on thread not created by Go.\n")
@@ -481,12 +482,4 @@ func signame(sig uint32) string {
 		return ""
 	}
 	return sigtable[sig].name
-}
-
-const preemptMSupported = false
-
-func preemptM(mp *m) {
-	// Not currently supported.
-	//
-	// TODO: Use a note like we use signals on POSIX OSes
 }

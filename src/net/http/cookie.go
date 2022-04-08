@@ -7,7 +7,6 @@ package http
 import (
 	"log"
 	"net"
-	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
@@ -61,11 +60,11 @@ func readSetCookies(h Header) []*Cookie {
 	}
 	cookies := make([]*Cookie, 0, cookieCount)
 	for _, line := range h["Set-Cookie"] {
-		parts := strings.Split(textproto.TrimString(line), ";")
+		parts := strings.Split(strings.TrimSpace(line), ";")
 		if len(parts) == 1 && parts[0] == "" {
 			continue
 		}
-		parts[0] = textproto.TrimString(parts[0])
+		parts[0] = strings.TrimSpace(parts[0])
 		j := strings.Index(parts[0], "=")
 		if j < 0 {
 			continue
@@ -84,7 +83,7 @@ func readSetCookies(h Header) []*Cookie {
 			Raw:   line,
 		}
 		for i := 1; i < len(parts); i++ {
-			parts[i] = textproto.TrimString(parts[i])
+			parts[i] = strings.TrimSpace(parts[i])
 			if len(parts[i]) == 0 {
 				continue
 			}
@@ -243,7 +242,7 @@ func readCookies(h Header, filter string) []*Cookie {
 
 	cookies := make([]*Cookie, 0, len(lines)+strings.Count(lines[0], ";"))
 	for _, line := range lines {
-		line = textproto.TrimString(line)
+		line = strings.TrimSpace(line)
 
 		var part string
 		for len(line) > 0 { // continue since we have rest
@@ -252,7 +251,7 @@ func readCookies(h Header, filter string) []*Cookie {
 			} else {
 				part, line = line, ""
 			}
-			part = textproto.TrimString(part)
+			part = strings.TrimSpace(part)
 			if len(part) == 0 {
 				continue
 			}
@@ -354,7 +353,6 @@ func sanitizeCookieName(n string) string {
 	return cookieNameSanitizer.Replace(n)
 }
 
-// sanitizeCookieValue produces a suitable cookie-value from v.
 // https://tools.ietf.org/html/rfc6265#section-4.1.1
 // cookie-value      = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
 // cookie-octet      = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
@@ -362,8 +360,8 @@ func sanitizeCookieName(n string) string {
 //           ; whitespace DQUOTE, comma, semicolon,
 //           ; and backslash
 // We loosen this as spaces and commas are common in cookie values
-// but we produce a quoted cookie-value if and only if v contains
-// commas or spaces.
+// but we produce a quoted cookie-value in when value starts or ends
+// with a comma or space.
 // See https://golang.org/issue/7243 for the discussion.
 func sanitizeCookieValue(v string) string {
 	v = sanitizeOrWarn("Cookie.Value", validCookieValueByte, v)

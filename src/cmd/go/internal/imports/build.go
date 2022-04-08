@@ -210,7 +210,7 @@ var KnownOS = map[string]bool{
 	"illumos":   true,
 	"js":        true,
 	"linux":     true,
-	"nacl":      true, // legacy; don't remove
+	"nacl":      true,
 	"netbsd":    true,
 	"openbsd":   true,
 	"plan9":     true,
@@ -222,7 +222,7 @@ var KnownOS = map[string]bool{
 var KnownArch = map[string]bool{
 	"386":         true,
 	"amd64":       true,
-	"amd64p32":    true, // legacy; don't remove
+	"amd64p32":    true,
 	"arm":         true,
 	"armbe":       true,
 	"arm64":       true,

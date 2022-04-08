@@ -5,12 +5,22 @@
 package ld
 
 import (
-	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
 	"encoding/binary"
 	"fmt"
 	"os"
+	"time"
 )
+
+var startTime time.Time
+
+// TODO(josharian): delete. See issue 19865.
+func Cputime() float64 {
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	return time.Since(startTime).Seconds()
+}
 
 var atExitFuncs []func()
 
@@ -18,17 +28,11 @@ func AtExit(f func()) {
 	atExitFuncs = append(atExitFuncs, f)
 }
 
-// runAtExitFuncs runs the queued set of AtExit functions.
-func runAtExitFuncs() {
+// Exit exits with code after executing all atExitFuncs.
+func Exit(code int) {
 	for i := len(atExitFuncs) - 1; i >= 0; i-- {
 		atExitFuncs[i]()
 	}
-	atExitFuncs = nil
-}
-
-// Exit exits with code after executing all atExitFuncs.
-func Exit(code int) {
-	runAtExitFuncs()
 	os.Exit(code)
 }
 
@@ -37,18 +41,6 @@ func Exitf(format string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, os.Args[0]+": "+format+"\n", a...)
 	nerrors++
 	Exit(2)
-}
-
-// afterErrorAction updates 'nerrors' on error and invokes exit or
-// panics in the proper circumstances.
-func afterErrorAction() {
-	nerrors++
-	if *flagH {
-		panic("error")
-	}
-	if nerrors > 20 {
-		Exitf("too many errors")
-	}
 }
 
 // Errorf logs an error message.
@@ -63,25 +55,13 @@ func Errorf(s *sym.Symbol, format string, args ...interface{}) {
 	}
 	format += "\n"
 	fmt.Fprintf(os.Stderr, format, args...)
-	afterErrorAction()
-}
-
-// Errorf method logs an error message.
-//
-// If more than 20 errors have been printed, exit with an error.
-//
-// Logging an error means that on exit cmd/link will delete any
-// output file and return a non-zero error code.
-func (ctxt *Link) Errorf(s loader.Sym, format string, args ...interface{}) {
-	if ctxt.loader != nil {
-		ctxt.loader.Errorf(s, format, args...)
-		return
+	nerrors++
+	if *flagH {
+		panic("error")
 	}
-	// Note: this is not expected to happen very often.
-	format = fmt.Sprintf("sym %d: %s", s, format)
-	format += "\n"
-	fmt.Fprintf(os.Stderr, format, args...)
-	afterErrorAction()
+	if nerrors > 20 {
+		Exitf("too many errors")
+	}
 }
 
 func artrim(x []byte) string {
@@ -104,6 +84,12 @@ func stringtouint32(x []uint32, s string) {
 	}
 }
 
+var start = time.Now()
+
+func elapsed() float64 {
+	return time.Since(start).Seconds()
+}
+
 // contains reports whether v is in s.
 func contains(s []string, v string) bool {
 	for _, x := range s {
@@ -113,10 +99,3 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
-
-// implements sort.Interface, for sorting symbols by name.
-type byName []*sym.Symbol
-
-func (s byName) Len() int           { return len(s) }
-func (s byName) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s byName) Less(i, j int) bool { return s[i].Name < s[j].Name }

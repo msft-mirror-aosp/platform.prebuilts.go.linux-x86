@@ -7,7 +7,6 @@ package gc_test
 import (
 	"cmd/internal/objfile"
 	"debug/dwarf"
-	"fmt"
 	"internal/testenv"
 	"io/ioutil"
 	"os"
@@ -40,12 +39,6 @@ type testline struct {
 	// Must be ordered alphabetically.
 	// Set to nil to skip the check.
 	vars []string
-
-	// decl is the list of variables declared at this line.
-	decl []string
-
-	// declBefore is the list of variables declared at or before this line.
-	declBefore []string
 }
 
 var testfile = []testline{
@@ -65,11 +58,11 @@ var testfile = []testline{
 	{line: "var floatch = make(chan float64)"},
 	{line: "var iface interface{}"},
 	{line: "func TestNestedFor() {", vars: []string{"var a int"}},
-	{line: "	a := 0", decl: []string{"a"}},
+	{line: "	a := 0"},
 	{line: "	f1(a)"},
-	{line: "	for i := 0; i < 5; i++ {", scopes: []int{1}, vars: []string{"var i int"}, decl: []string{"i"}},
+	{line: "	for i := 0; i < 5; i++ {", scopes: []int{1}, vars: []string{"var i int"}},
 	{line: "		f2(i)", scopes: []int{1}},
-	{line: "		for i := 0; i < 5; i++ {", scopes: []int{1, 2}, vars: []string{"var i int"}, decl: []string{"i"}},
+	{line: "		for i := 0; i < 5; i++ {", scopes: []int{1, 2}, vars: []string{"var i int"}},
 	{line: "			f3(i)", scopes: []int{1, 2}},
 	{line: "		}"},
 	{line: "		f4(i)", scopes: []int{1}},
@@ -160,7 +153,7 @@ var testfile = []testline{
 	{line: "}"},
 	{line: "func TestClosureScope() {", vars: []string{"var a int", "var b int", "var f func(int)"}},
 	{line: "	a := 1; b := 1"},
-	{line: "	f := func(c int) {", scopes: []int{0}, vars: []string{"arg c int", "var &b *int", "var a int", "var d int"}, declBefore: []string{"&b", "a"}},
+	{line: "	f := func(c int) {", scopes: []int{0}, vars: []string{"arg c int", "var &b *int", "var a int", "var d int"}},
 	{line: "		d := 3"},
 	{line: "		f1(c); f1(d)"},
 	{line: "		if e := 3; e != 0 {", scopes: []int{1}, vars: []string{"var e int"}},
@@ -293,18 +286,7 @@ func TestScopeRanges(t *testing.T) {
 			if len(out) > 0 {
 				varsok = checkVars(testfile[i].vars, out[len(out)-1].vars)
 				if !varsok {
-					t.Logf("variable mismatch at line %d %q for scope %d: expected: %v got: %v\n", i+1, testfile[i].line, out[len(out)-1].id, testfile[i].vars, out[len(out)-1].vars)
-				}
-				for j := range testfile[i].decl {
-					if line := declLineForVar(out[len(out)-1].vars, testfile[i].decl[j]); line != i+1 {
-						t.Errorf("wrong declaration line for variable %s, expected %d got: %d", testfile[i].decl[j], i+1, line)
-					}
-				}
-
-				for j := range testfile[i].declBefore {
-					if line := declLineForVar(out[len(out)-1].vars, testfile[i].declBefore[j]); line > i+1 {
-						t.Errorf("wrong declaration line for variable %s, expected %d (or less) got: %d", testfile[i].declBefore[j], i+1, line)
-					}
+					t.Logf("variable mismatch at line %d %q for scope %d: expected: %v got: %v\n", i, testfile[i].line, out[len(out)-1].id, testfile[i].vars, out[len(out)-1].vars)
 				}
 			}
 		}
@@ -341,41 +323,23 @@ func checkScopes(tgt []int, out []*lexblock) bool {
 	return true
 }
 
-func checkVars(tgt []string, out []variable) bool {
+func checkVars(tgt, out []string) bool {
 	if len(tgt) != len(out) {
 		return false
 	}
 	for i := range tgt {
-		if tgt[i] != out[i].expr {
+		if tgt[i] != out[i] {
 			return false
 		}
 	}
 	return true
 }
 
-func declLineForVar(scope []variable, name string) int {
-	for i := range scope {
-		if scope[i].name() == name {
-			return scope[i].declLine
-		}
-	}
-	return -1
-}
-
 type lexblock struct {
 	id     int
 	ranges [][2]uint64
-	vars   []variable
+	vars   []string
 	scopes []lexblock
-}
-
-type variable struct {
-	expr     string
-	declLine int
-}
-
-func (v *variable) name() string {
-	return strings.Split(v.expr, " ")[1]
 }
 
 type line struct {
@@ -405,34 +369,25 @@ func readScope(ctxt *scopexplainContext, scope *lexblock, entry *dwarf.Entry) {
 		}
 		switch e.Tag {
 		case 0:
-			sort.Slice(scope.vars, func(i, j int) bool {
-				return scope.vars[i].expr < scope.vars[j].expr
-			})
+			sort.Strings(scope.vars)
 			return
 		case dwarf.TagFormalParameter:
 			typ, err := ctxt.dwarfData.Type(e.Val(dwarf.AttrType).(dwarf.Offset))
 			if err != nil {
 				panic(err)
 			}
-			scope.vars = append(scope.vars, entryToVar(e, "arg", typ))
+			scope.vars = append(scope.vars, "arg "+e.Val(dwarf.AttrName).(string)+" "+typ.String())
 		case dwarf.TagVariable:
 			typ, err := ctxt.dwarfData.Type(e.Val(dwarf.AttrType).(dwarf.Offset))
 			if err != nil {
 				panic(err)
 			}
-			scope.vars = append(scope.vars, entryToVar(e, "var", typ))
+			scope.vars = append(scope.vars, "var "+e.Val(dwarf.AttrName).(string)+" "+typ.String())
 		case dwarf.TagLexDwarfBlock:
 			scope.scopes = append(scope.scopes, lexblock{id: ctxt.scopegen})
 			ctxt.scopegen++
 			readScope(ctxt, &scope.scopes[len(scope.scopes)-1], e)
 		}
-	}
-}
-
-func entryToVar(e *dwarf.Entry, kind string, typ dwarf.Type) variable {
-	return variable{
-		fmt.Sprintf("%s %s %s", kind, e.Val(dwarf.AttrName).(string), typ.String()),
-		int(e.Val(dwarf.AttrDeclLine).(int64)),
 	}
 }
 

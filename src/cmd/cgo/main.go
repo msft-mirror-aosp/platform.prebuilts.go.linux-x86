@@ -151,8 +151,7 @@ type Type struct {
 	Go         ast.Expr
 	EnumValues map[string]int64
 	Typedef    string
-	BadPointer bool // this pointer type should be represented as a uintptr (deprecated)
-	NotInHeap  bool // this type should have a go:notinheap annotation
+	BadPointer bool
 }
 
 // A FuncType collects information about a function type in both the C and Go worlds.
@@ -170,51 +169,35 @@ func usage() {
 
 var ptrSizeMap = map[string]int64{
 	"386":      4,
-	"alpha":    8,
 	"amd64":    8,
 	"arm":      4,
 	"arm64":    8,
-	"m68k":     4,
 	"mips":     4,
 	"mipsle":   4,
 	"mips64":   8,
 	"mips64le": 8,
-	"nios2":    4,
-	"ppc":      4,
 	"ppc64":    8,
 	"ppc64le":  8,
-	"riscv":    4,
 	"riscv64":  8,
 	"s390":     4,
 	"s390x":    8,
-	"sh":       4,
-	"shbe":     4,
-	"sparc":    4,
 	"sparc64":  8,
 }
 
 var intSizeMap = map[string]int64{
 	"386":      4,
-	"alpha":    8,
 	"amd64":    8,
 	"arm":      4,
 	"arm64":    8,
-	"m68k":     4,
 	"mips":     4,
 	"mipsle":   4,
 	"mips64":   8,
 	"mips64le": 8,
-	"nios2":    4,
-	"ppc":      4,
 	"ppc64":    8,
 	"ppc64le":  8,
-	"riscv":    4,
 	"riscv64":  8,
 	"s390":     4,
 	"s390x":    8,
-	"sh":       4,
-	"shbe":     4,
-	"sparc":    4,
 	"sparc64":  8,
 }
 

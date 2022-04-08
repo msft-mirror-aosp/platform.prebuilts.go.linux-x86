@@ -38,7 +38,7 @@ func (mode *BuildMode) Set(s string) error {
 		*mode = BuildModeExe
 	case "pie":
 		switch objabi.GOOS {
-		case "aix", "android", "linux", "windows":
+		case "aix", "android", "linux":
 		case "darwin", "freebsd":
 			switch objabi.GOARCH {
 			case "amd64":
@@ -95,7 +95,7 @@ func (mode *BuildMode) Set(s string) error {
 			default:
 				return badmode()
 			}
-		case "darwin", "freebsd":
+		case "darwin":
 			switch objabi.GOARCH {
 			case "amd64":
 			default:
@@ -189,9 +189,6 @@ func mustLinkExternal(ctxt *Link) (res bool, reason string) {
 	if iscgo && ctxt.Arch.InFamily(sys.MIPS64, sys.MIPS, sys.PPC64) {
 		return true, objabi.GOARCH + " does not support internal cgo"
 	}
-	if iscgo && objabi.GOOS == "android" {
-		return true, objabi.GOOS + " does not support internal cgo"
-	}
 
 	// When the race flag is set, the LLVM tsan relocatable file is linked
 	// into the final binary, which means external linking is required because
@@ -208,8 +205,7 @@ func mustLinkExternal(ctxt *Link) (res bool, reason string) {
 		return true, "buildmode=c-shared"
 	case BuildModePIE:
 		switch objabi.GOOS + "/" + objabi.GOARCH {
-		case "linux/amd64", "linux/arm64", "android/arm64":
-		case "windows/386", "windows/amd64", "windows/arm":
+		case "linux/amd64", "linux/arm64":
 		default:
 			// Internal linking does not support TLS_IE.
 			return true, "buildmode=pie"
@@ -232,40 +228,43 @@ func mustLinkExternal(ctxt *Link) (res bool, reason string) {
 // so the ctxt.LinkMode variable has an initial value from the -linkmode
 // flag and the iscgo externalobj variables are set.
 func determineLinkMode(ctxt *Link) {
-	extNeeded, extReason := mustLinkExternal(ctxt)
-	via := ""
-
-	if ctxt.LinkMode == LinkAuto {
+	switch ctxt.LinkMode {
+	case LinkAuto:
 		// The environment variable GO_EXTLINK_ENABLED controls the
 		// default value of -linkmode. If it is not set when the
 		// linker is called we take the value it was set to when
 		// cmd/link was compiled. (See make.bash.)
 		switch objabi.Getgoextlinkenabled() {
 		case "0":
+			if needed, reason := mustLinkExternal(ctxt); needed {
+				Exitf("internal linking requested via GO_EXTLINK_ENABLED, but external linking required: %s", reason)
+			}
 			ctxt.LinkMode = LinkInternal
-			via = "via GO_EXTLINK_ENABLED "
 		case "1":
+			if objabi.GOARCH == "ppc64" && objabi.GOOS != "aix" {
+				Exitf("external linking requested via GO_EXTLINK_ENABLED but not supported for %s/ppc64", objabi.GOOS)
+			}
 			ctxt.LinkMode = LinkExternal
-			via = "via GO_EXTLINK_ENABLED "
 		default:
-			if extNeeded || (iscgo && externalobj) {
+			if needed, _ := mustLinkExternal(ctxt); needed {
+				ctxt.LinkMode = LinkExternal
+			} else if iscgo && externalobj {
+				ctxt.LinkMode = LinkExternal
+			} else if ctxt.BuildMode == BuildModePIE {
 				ctxt.LinkMode = LinkExternal
 			} else {
 				ctxt.LinkMode = LinkInternal
 			}
+			if objabi.GOARCH == "ppc64" && objabi.GOOS != "aix" && ctxt.LinkMode == LinkExternal {
+				Exitf("external linking is not supported for %s/ppc64", objabi.GOOS)
+			}
 		}
-	}
-
-	switch ctxt.LinkMode {
 	case LinkInternal:
-		if extNeeded {
-			Exitf("internal linking requested %sbut external linking required: %s", via, extReason)
+		if needed, reason := mustLinkExternal(ctxt); needed {
+			Exitf("internal linking requested but external linking required: %s", reason)
 		}
 	case LinkExternal:
-		switch {
-		case objabi.GOARCH == "riscv64":
-			Exitf("external linking not supported for %s/riscv64", objabi.GOOS)
-		case objabi.GOARCH == "ppc64" && objabi.GOOS != "aix":
+		if objabi.GOARCH == "ppc64" && objabi.GOOS != "aix" {
 			Exitf("external linking not supported for %s/ppc64", objabi.GOOS)
 		}
 	}

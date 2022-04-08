@@ -93,7 +93,7 @@ func TestPragcgo(t *testing.T) {
 	for _, tt := range tests {
 
 		p.err = make(chan syntax.Error)
-		gotch := make(chan [][]string, 1)
+		gotch := make(chan [][]string)
 		go func() {
 			p.pragcgobuf = nil
 			p.pragcgo(nopos, tt.in)

@@ -6,9 +6,9 @@
 // Go source. After initialization, consecutive calls of
 // next advance the scanner one token at a time.
 //
-// This file, source.go, tokens.go, and token_string.go are self-contained
-// (`go tool compile scanner.go source.go tokens.go token_string.go` compiles)
-// and thus could be made into their own package.
+// This file, source.go, and tokens.go are self-contained
+// (go tool compile scanner.go source.go tokens.go compiles)
+// and thus could be made into its own package.
 
 package syntax
 
@@ -34,10 +34,8 @@ type scanner struct {
 
 	// current token, valid after calling next()
 	line, col uint
-	blank     bool // line is blank up to col
 	tok       token
-	lit       string   // valid if tok is _Name, _Literal, or _Semi ("semicolon", "newline", or "EOF"); may be malformed if bad is true
-	bad       bool     // valid if tok is _Literal, true if a syntax error occurred, lit may be malformed
+	lit       string   // valid if tok is _Name, _Literal, or _Semi ("semicolon", "newline", or "EOF")
 	kind      LitKind  // valid if tok is _Literal
 	op        Operator // valid if tok is _Operator, _AssignOp, or _IncOp
 	prec      int      // valid if tok is _Operator, _AssignOp, or _IncOp
@@ -49,23 +47,8 @@ func (s *scanner) init(src io.Reader, errh func(line, col uint, msg string), mod
 	s.nlsemi = false
 }
 
-// errorf reports an error at the most recently read character position.
 func (s *scanner) errorf(format string, args ...interface{}) {
 	s.error(fmt.Sprintf(format, args...))
-}
-
-// errorAtf reports an error at a byte column offset relative to the current token start.
-func (s *scanner) errorAtf(offset int, format string, args ...interface{}) {
-	s.errh(s.line, s.col+uint(offset), fmt.Sprintf(format, args...))
-}
-
-// setLit sets the scanner state for a recognized _Literal token.
-func (s *scanner) setLit(kind LitKind, ok bool) {
-	s.nlsemi = true
-	s.tok = _Literal
-	s.lit = string(s.segment())
-	s.bad = !ok
-	s.kind = kind
 }
 
 // next advances the scanner by reading the next token.
@@ -84,30 +67,30 @@ func (s *scanner) setLit(kind LitKind, ok bool) {
 //
 // If the scanner mode includes the directives (but not the comments)
 // flag, only comments containing a //line, /*line, or //go: directive
-// are reported, in the same way as regular comments.
+// are reported, in the same way as regular comments. Directives in
+// //-style comments are only recognized if they are at the beginning
+// of a line.
+//
 func (s *scanner) next() {
 	nlsemi := s.nlsemi
 	s.nlsemi = false
 
 redo:
 	// skip white space
-	s.stop()
-	startLine, startCol := s.pos()
-	for s.ch == ' ' || s.ch == '\t' || s.ch == '\n' && !nlsemi || s.ch == '\r' {
-		s.nextch()
+	c := s.getr()
+	for c == ' ' || c == '\t' || c == '\n' && !nlsemi || c == '\r' {
+		c = s.getr()
 	}
 
 	// token start
-	s.line, s.col = s.pos()
-	s.blank = s.line > startLine || startCol == colbase
-	s.start()
-	if isLetter(s.ch) || s.ch >= utf8.RuneSelf && s.atIdentChar(true) {
-		s.nextch()
+	s.line, s.col = s.source.line0, s.source.col0
+
+	if isLetter(c) || c >= utf8.RuneSelf && s.isIdentRune(c, true) {
 		s.ident()
 		return
 	}
 
-	switch s.ch {
+	switch c {
 	case -1:
 		if nlsemi {
 			s.lit = "EOF"
@@ -117,12 +100,11 @@ redo:
 		s.tok = _EOF
 
 	case '\n':
-		s.nextch()
 		s.lit = "newline"
 		s.tok = _Semi
 
 	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-		s.number(false)
+		s.number(c)
 
 	case '"':
 		s.stdString()
@@ -134,110 +116,97 @@ redo:
 		s.rune()
 
 	case '(':
-		s.nextch()
 		s.tok = _Lparen
 
 	case '[':
-		s.nextch()
 		s.tok = _Lbrack
 
 	case '{':
-		s.nextch()
 		s.tok = _Lbrace
 
 	case ',':
-		s.nextch()
 		s.tok = _Comma
 
 	case ';':
-		s.nextch()
 		s.lit = "semicolon"
 		s.tok = _Semi
 
 	case ')':
-		s.nextch()
 		s.nlsemi = true
 		s.tok = _Rparen
 
 	case ']':
-		s.nextch()
 		s.nlsemi = true
 		s.tok = _Rbrack
 
 	case '}':
-		s.nextch()
 		s.nlsemi = true
 		s.tok = _Rbrace
 
 	case ':':
-		s.nextch()
-		if s.ch == '=' {
-			s.nextch()
+		if s.getr() == '=' {
 			s.tok = _Define
 			break
 		}
+		s.ungetr()
 		s.tok = _Colon
 
 	case '.':
-		s.nextch()
-		if isDecimal(s.ch) {
-			s.number(true)
+		c = s.getr()
+		if isDecimal(c) {
+			s.ungetr()
+			s.unread(1) // correct position of '.' (needed by startLit in number)
+			s.number('.')
 			break
 		}
-		if s.ch == '.' {
-			s.nextch()
-			if s.ch == '.' {
-				s.nextch()
+		if c == '.' {
+			c = s.getr()
+			if c == '.' {
 				s.tok = _DotDotDot
 				break
 			}
-			s.rewind() // now s.ch holds 1st '.'
-			s.nextch() // consume 1st '.' again
+			s.unread(1)
 		}
+		s.ungetr()
 		s.tok = _Dot
 
 	case '+':
-		s.nextch()
 		s.op, s.prec = Add, precAdd
-		if s.ch != '+' {
+		c = s.getr()
+		if c != '+' {
 			goto assignop
 		}
-		s.nextch()
 		s.nlsemi = true
 		s.tok = _IncOp
 
 	case '-':
-		s.nextch()
 		s.op, s.prec = Sub, precAdd
-		if s.ch != '-' {
+		c = s.getr()
+		if c != '-' {
 			goto assignop
 		}
-		s.nextch()
 		s.nlsemi = true
 		s.tok = _IncOp
 
 	case '*':
-		s.nextch()
 		s.op, s.prec = Mul, precMul
 		// don't goto assignop - want _Star token
-		if s.ch == '=' {
-			s.nextch()
+		if s.getr() == '=' {
 			s.tok = _AssignOp
 			break
 		}
+		s.ungetr()
 		s.tok = _Star
 
 	case '/':
-		s.nextch()
-		if s.ch == '/' {
-			s.nextch()
+		c = s.getr()
+		if c == '/' {
 			s.lineComment()
 			goto redo
 		}
-		if s.ch == '*' {
-			s.nextch()
+		if c == '*' {
 			s.fullComment()
-			if line, _ := s.pos(); line > s.line && nlsemi {
+			if s.source.line > s.line && nlsemi {
 				// A multi-line comment acts like a newline;
 				// it translates to a ';' if nlsemi is set.
 				s.lit = "newline"
@@ -250,29 +219,27 @@ redo:
 		goto assignop
 
 	case '%':
-		s.nextch()
 		s.op, s.prec = Rem, precMul
+		c = s.getr()
 		goto assignop
 
 	case '&':
-		s.nextch()
-		if s.ch == '&' {
-			s.nextch()
+		c = s.getr()
+		if c == '&' {
 			s.op, s.prec = AndAnd, precAndAnd
 			s.tok = _Operator
 			break
 		}
 		s.op, s.prec = And, precMul
-		if s.ch == '^' {
-			s.nextch()
+		if c == '^' {
 			s.op = AndNot
+			c = s.getr()
 		}
 		goto assignop
 
 	case '|':
-		s.nextch()
-		if s.ch == '|' {
-			s.nextch()
+		c = s.getr()
+		if c == '|' {
 			s.op, s.prec = OrOr, precOrOr
 			s.tok = _Operator
 			break
@@ -281,100 +248,106 @@ redo:
 		goto assignop
 
 	case '^':
-		s.nextch()
 		s.op, s.prec = Xor, precAdd
+		c = s.getr()
 		goto assignop
 
 	case '<':
-		s.nextch()
-		if s.ch == '=' {
-			s.nextch()
+		c = s.getr()
+		if c == '=' {
 			s.op, s.prec = Leq, precCmp
 			s.tok = _Operator
 			break
 		}
-		if s.ch == '<' {
-			s.nextch()
+		if c == '<' {
 			s.op, s.prec = Shl, precMul
+			c = s.getr()
 			goto assignop
 		}
-		if s.ch == '-' {
-			s.nextch()
+		if c == '-' {
 			s.tok = _Arrow
 			break
 		}
+		s.ungetr()
 		s.op, s.prec = Lss, precCmp
 		s.tok = _Operator
 
 	case '>':
-		s.nextch()
-		if s.ch == '=' {
-			s.nextch()
+		c = s.getr()
+		if c == '=' {
 			s.op, s.prec = Geq, precCmp
 			s.tok = _Operator
 			break
 		}
-		if s.ch == '>' {
-			s.nextch()
+		if c == '>' {
 			s.op, s.prec = Shr, precMul
+			c = s.getr()
 			goto assignop
 		}
+		s.ungetr()
 		s.op, s.prec = Gtr, precCmp
 		s.tok = _Operator
 
 	case '=':
-		s.nextch()
-		if s.ch == '=' {
-			s.nextch()
+		if s.getr() == '=' {
 			s.op, s.prec = Eql, precCmp
 			s.tok = _Operator
 			break
 		}
+		s.ungetr()
 		s.tok = _Assign
 
 	case '!':
-		s.nextch()
-		if s.ch == '=' {
-			s.nextch()
+		if s.getr() == '=' {
 			s.op, s.prec = Neq, precCmp
 			s.tok = _Operator
 			break
 		}
+		s.ungetr()
 		s.op, s.prec = Not, 0
 		s.tok = _Operator
 
 	default:
-		s.errorf("invalid character %#U", s.ch)
-		s.nextch()
+		s.tok = 0
+		s.errorf("invalid character %#U", c)
 		goto redo
 	}
 
 	return
 
 assignop:
-	if s.ch == '=' {
-		s.nextch()
+	if c == '=' {
 		s.tok = _AssignOp
 		return
 	}
+	s.ungetr()
 	s.tok = _Operator
 }
 
+func isLetter(c rune) bool {
+	return 'a' <= lower(c) && lower(c) <= 'z' || c == '_'
+}
+
 func (s *scanner) ident() {
+	s.startLit()
+
 	// accelerate common case (7bit ASCII)
-	for isLetter(s.ch) || isDecimal(s.ch) {
-		s.nextch()
+	c := s.getr()
+	for isLetter(c) || isDecimal(c) {
+		c = s.getr()
 	}
 
 	// general case
-	if s.ch >= utf8.RuneSelf {
-		for s.atIdentChar(false) {
-			s.nextch()
+	if c >= utf8.RuneSelf {
+		for s.isIdentRune(c, false) {
+			c = s.getr()
 		}
 	}
+	s.ungetr()
+
+	lit := s.stopLit()
 
 	// possibly a keyword
-	lit := s.segment()
 	if len(lit) >= 2 {
 		if tok := keywordMap[hash(lit)]; tok != 0 && tokStrFast(tok) == string(lit) {
 			s.nlsemi = contains(1<<_Break|1<<_Continue|1<<_Fallthrough|1<<_Return, tok)
@@ -394,16 +367,16 @@ func tokStrFast(tok token) string {
 	return _token_name[_token_index[tok-1]:_token_index[tok]]
 }
 
-func (s *scanner) atIdentChar(first bool) bool {
+func (s *scanner) isIdentRune(c rune, first bool) bool {
 	switch {
-	case unicode.IsLetter(s.ch) || s.ch == '_':
+	case unicode.IsLetter(c) || c == '_':
 		// ok
-	case unicode.IsDigit(s.ch):
+	case unicode.IsDigit(c):
 		if first {
-			s.errorf("identifier cannot begin with digit %#U", s.ch)
+			s.errorf("identifier cannot begin with digit %#U", c)
 		}
-	case s.ch >= utf8.RuneSelf:
-		s.errorf("invalid character %#U in identifier", s.ch)
+	case c >= utf8.RuneSelf:
+		s.errorf("invalid identifier character %#U", c)
 	default:
 		return false
 	}
@@ -429,155 +402,145 @@ func init() {
 	}
 }
 
-func lower(ch rune) rune     { return ('a' - 'A') | ch } // returns lower-case ch iff ch is ASCII letter
-func isLetter(ch rune) bool  { return 'a' <= lower(ch) && lower(ch) <= 'z' || ch == '_' }
-func isDecimal(ch rune) bool { return '0' <= ch && ch <= '9' }
-func isHex(ch rune) bool     { return '0' <= ch && ch <= '9' || 'a' <= lower(ch) && lower(ch) <= 'f' }
+func lower(c rune) rune     { return ('a' - 'A') | c } // returns lower-case c iff c is ASCII letter
+func isDecimal(c rune) bool { return '0' <= c && c <= '9' }
+func isHex(c rune) bool     { return '0' <= c && c <= '9' || 'a' <= lower(c) && lower(c) <= 'f' }
 
-// digits accepts the sequence { digit | '_' }.
+// digits accepts the sequence { digit | '_' } starting with c0.
 // If base <= 10, digits accepts any decimal digit but records
 // the index (relative to the literal start) of a digit >= base
 // in *invalid, if *invalid < 0.
-// digits returns a bitset describing whether the sequence contained
+// digits returns the first rune that is not part of the sequence
+// anymore, and a bitset describing whether the sequence contained
 // digits (bit 0 is set), or separators '_' (bit 1 is set).
-func (s *scanner) digits(base int, invalid *int) (digsep int) {
+func (s *scanner) digits(c0 rune, base int, invalid *int) (c rune, digsep int) {
+	c = c0
 	if base <= 10 {
 		max := rune('0' + base)
-		for isDecimal(s.ch) || s.ch == '_' {
+		for isDecimal(c) || c == '_' {
 			ds := 1
-			if s.ch == '_' {
+			if c == '_' {
 				ds = 2
-			} else if s.ch >= max && *invalid < 0 {
-				_, col := s.pos()
-				*invalid = int(col - s.col) // record invalid rune index
+			} else if c >= max && *invalid < 0 {
+				*invalid = int(s.col0 - s.col) // record invalid rune index
 			}
 			digsep |= ds
-			s.nextch()
+			c = s.getr()
 		}
 	} else {
-		for isHex(s.ch) || s.ch == '_' {
+		for isHex(c) || c == '_' {
 			ds := 1
-			if s.ch == '_' {
+			if c == '_' {
 				ds = 2
 			}
 			digsep |= ds
-			s.nextch()
+			c = s.getr()
 		}
 	}
 	return
 }
 
-func (s *scanner) number(seenPoint bool) {
-	ok := true
-	kind := IntLit
+func (s *scanner) number(c rune) {
+	s.startLit()
+
 	base := 10        // number base
 	prefix := rune(0) // one of 0 (decimal), '0' (0-octal), 'x', 'o', or 'b'
 	digsep := 0       // bit 0: digit present, bit 1: '_' present
 	invalid := -1     // index of invalid digit in literal, or < 0
 
 	// integer part
-	if !seenPoint {
-		if s.ch == '0' {
-			s.nextch()
-			switch lower(s.ch) {
+	var ds int
+	if c != '.' {
+		s.kind = IntLit
+		if c == '0' {
+			c = s.getr()
+			switch lower(c) {
 			case 'x':
-				s.nextch()
+				c = s.getr()
 				base, prefix = 16, 'x'
 			case 'o':
-				s.nextch()
+				c = s.getr()
 				base, prefix = 8, 'o'
 			case 'b':
-				s.nextch()
+				c = s.getr()
 				base, prefix = 2, 'b'
 			default:
 				base, prefix = 8, '0'
 				digsep = 1 // leading 0
 			}
 		}
-		digsep |= s.digits(base, &invalid)
-		if s.ch == '.' {
-			if prefix == 'o' || prefix == 'b' {
-				s.errorf("invalid radix point in %s literal", baseName(base))
-				ok = false
-			}
-			s.nextch()
-			seenPoint = true
-		}
+		c, ds = s.digits(c, base, &invalid)
+		digsep |= ds
 	}
 
 	// fractional part
-	if seenPoint {
-		kind = FloatLit
-		digsep |= s.digits(base, &invalid)
+	if c == '.' {
+		s.kind = FloatLit
+		if prefix == 'o' || prefix == 'b' {
+			s.error("invalid radix point in " + litname(prefix))
+		}
+		c, ds = s.digits(s.getr(), base, &invalid)
+		digsep |= ds
 	}
 
-	if digsep&1 == 0 && ok {
-		s.errorf("%s literal has no digits", baseName(base))
-		ok = false
+	if digsep&1 == 0 {
+		s.error(litname(prefix) + " has no digits")
 	}
 
 	// exponent
-	if e := lower(s.ch); e == 'e' || e == 'p' {
-		if ok {
-			switch {
-			case e == 'e' && prefix != 0 && prefix != '0':
-				s.errorf("%q exponent requires decimal mantissa", s.ch)
-				ok = false
-			case e == 'p' && prefix != 'x':
-				s.errorf("%q exponent requires hexadecimal mantissa", s.ch)
-				ok = false
-			}
+	if e := lower(c); e == 'e' || e == 'p' {
+		switch {
+		case e == 'e' && prefix != 0 && prefix != '0':
+			s.errorf("%q exponent requires decimal mantissa", c)
+		case e == 'p' && prefix != 'x':
+			s.errorf("%q exponent requires hexadecimal mantissa", c)
 		}
-		s.nextch()
-		kind = FloatLit
-		if s.ch == '+' || s.ch == '-' {
-			s.nextch()
+		c = s.getr()
+		s.kind = FloatLit
+		if c == '+' || c == '-' {
+			c = s.getr()
 		}
-		digsep = s.digits(10, nil) | digsep&2 // don't lose sep bit
-		if digsep&1 == 0 && ok {
-			s.errorf("exponent has no digits")
-			ok = false
+		c, ds = s.digits(c, 10, nil)
+		digsep |= ds
+		if ds&1 == 0 {
+			s.error("exponent has no digits")
 		}
-	} else if prefix == 'x' && kind == FloatLit && ok {
-		s.errorf("hexadecimal mantissa requires a 'p' exponent")
-		ok = false
+	} else if prefix == 'x' && s.kind == FloatLit {
+		s.error("hexadecimal mantissa requires a 'p' exponent")
 	}
 
 	// suffix 'i'
-	if s.ch == 'i' {
-		kind = ImagLit
-		s.nextch()
+	if c == 'i' {
+		s.kind = ImagLit
+		c = s.getr()
+	}
+	s.ungetr()
+
+	s.nlsemi = true
+	s.lit = string(s.stopLit())
+	s.tok = _Literal
+
+	if s.kind == IntLit && invalid >= 0 {
+		s.errh(s.line, s.col+uint(invalid), fmt.Sprintf("invalid digit %q in %s", s.lit[invalid], litname(prefix)))
 	}
 
-	s.setLit(kind, ok) // do this now so we can use s.lit below
-
-	if kind == IntLit && invalid >= 0 && ok {
-		s.errorAtf(invalid, "invalid digit %q in %s literal", s.lit[invalid], baseName(base))
-		ok = false
-	}
-
-	if digsep&2 != 0 && ok {
+	if digsep&2 != 0 {
 		if i := invalidSep(s.lit); i >= 0 {
-			s.errorAtf(i, "'_' must separate successive digits")
-			ok = false
+			s.errh(s.line, s.col+uint(i), "'_' must separate successive digits")
 		}
 	}
-
-	s.bad = !ok // correct s.bad
 }
 
-func baseName(base int) string {
-	switch base {
-	case 2:
-		return "binary"
-	case 8:
-		return "octal"
-	case 10:
-		return "decimal"
-	case 16:
-		return "hexadecimal"
+func litname(prefix rune) string {
+	switch prefix {
+	case 'x':
+		return "hexadecimal literal"
+	case 'o', '0':
+		return "octal literal"
+	case 'b':
+		return "binary literal"
 	}
-	panic("invalid base")
+	return "decimal literal"
 }
 
 // invalidSep returns the index of the first invalid separator in x, or -1.
@@ -621,197 +584,201 @@ func invalidSep(x string) int {
 }
 
 func (s *scanner) rune() {
-	ok := true
-	s.nextch()
+	s.startLit()
 
+	ok := true // only report errors if we're ok so far
 	n := 0
 	for ; ; n++ {
-		if s.ch == '\'' {
-			if ok {
-				if n == 0 {
-					s.errorf("empty rune literal or unescaped '")
-					ok = false
-				} else if n != 1 {
-					s.errorAtf(0, "more than one character in rune literal")
-					ok = false
-				}
-			}
-			s.nextch()
+		r := s.getr()
+		if r == '\'' {
 			break
 		}
-		if s.ch == '\\' {
-			s.nextch()
+		if r == '\\' {
 			if !s.escape('\'') {
 				ok = false
 			}
 			continue
 		}
-		if s.ch == '\n' {
+		if r == '\n' {
+			s.ungetr() // assume newline is not part of literal
 			if ok {
-				s.errorf("newline in rune literal")
+				s.error("newline in character literal")
 				ok = false
 			}
 			break
 		}
-		if s.ch < 0 {
+		if r < 0 {
 			if ok {
-				s.errorAtf(0, "rune literal not terminated")
+				s.errh(s.line, s.col, "invalid character literal (missing closing ')")
 				ok = false
 			}
 			break
 		}
-		s.nextch()
 	}
 
-	s.setLit(RuneLit, ok)
+	if ok {
+		if n == 0 {
+			s.error("empty character literal or unescaped ' in character literal")
+		} else if n != 1 {
+			s.errh(s.line, s.col, "invalid character literal (more than one character)")
+		}
+	}
+
+	s.nlsemi = true
+	s.lit = string(s.stopLit())
+	s.kind = RuneLit
+	s.tok = _Literal
 }
 
 func (s *scanner) stdString() {
-	ok := true
-	s.nextch()
+	s.startLit()
 
 	for {
-		if s.ch == '"' {
-			s.nextch()
+		r := s.getr()
+		if r == '"' {
 			break
 		}
-		if s.ch == '\\' {
-			s.nextch()
-			if !s.escape('"') {
-				ok = false
-			}
+		if r == '\\' {
+			s.escape('"')
 			continue
 		}
-		if s.ch == '\n' {
-			s.errorf("newline in string")
-			ok = false
+		if r == '\n' {
+			s.ungetr() // assume newline is not part of literal
+			s.error("newline in string")
 			break
 		}
-		if s.ch < 0 {
-			s.errorAtf(0, "string not terminated")
-			ok = false
+		if r < 0 {
+			s.errh(s.line, s.col, "string not terminated")
 			break
 		}
-		s.nextch()
 	}
 
-	s.setLit(StringLit, ok)
+	s.nlsemi = true
+	s.lit = string(s.stopLit())
+	s.kind = StringLit
+	s.tok = _Literal
 }
 
 func (s *scanner) rawString() {
-	ok := true
-	s.nextch()
+	s.startLit()
 
 	for {
-		if s.ch == '`' {
-			s.nextch()
+		r := s.getr()
+		if r == '`' {
 			break
 		}
-		if s.ch < 0 {
-			s.errorAtf(0, "string not terminated")
-			ok = false
+		if r < 0 {
+			s.errh(s.line, s.col, "string not terminated")
 			break
 		}
-		s.nextch()
 	}
 	// We leave CRs in the string since they are part of the
 	// literal (even though they are not part of the literal
 	// value).
 
-	s.setLit(StringLit, ok)
+	s.nlsemi = true
+	s.lit = string(s.stopLit())
+	s.kind = StringLit
+	s.tok = _Literal
 }
 
 func (s *scanner) comment(text string) {
-	s.errorAtf(0, "%s", text)
+	s.errh(s.line, s.col, text)
 }
 
-func (s *scanner) skipLine() {
-	// don't consume '\n' - needed for nlsemi logic
-	for s.ch >= 0 && s.ch != '\n' {
-		s.nextch()
+func (s *scanner) skipLine(r rune) {
+	for r >= 0 {
+		if r == '\n' {
+			s.ungetr() // don't consume '\n' - needed for nlsemi logic
+			break
+		}
+		r = s.getr()
 	}
 }
 
 func (s *scanner) lineComment() {
-	// opening has already been consumed
+	r := s.getr()
 
 	if s.mode&comments != 0 {
-		s.skipLine()
-		s.comment(string(s.segment()))
+		s.startLit()
+		s.skipLine(r)
+		s.comment("//" + string(s.stopLit()))
 		return
 	}
 
-	// are we saving directives? or is this definitely not a directive?
-	if s.mode&directives == 0 || (s.ch != 'g' && s.ch != 'l') {
-		s.stop()
-		s.skipLine()
+	// directives must start at the beginning of the line (s.col == colbase)
+	if s.mode&directives == 0 || s.col != colbase || (r != 'g' && r != 'l') {
+		s.skipLine(r)
 		return
 	}
 
 	// recognize go: or line directives
 	prefix := "go:"
-	if s.ch == 'l' {
+	if r == 'l' {
 		prefix = "line "
 	}
 	for _, m := range prefix {
-		if s.ch != m {
-			s.stop()
-			s.skipLine()
+		if r != m {
+			s.skipLine(r)
 			return
 		}
-		s.nextch()
+		r = s.getr()
 	}
 
 	// directive text
-	s.skipLine()
-	s.comment(string(s.segment()))
+	s.startLit()
+	s.skipLine(r)
+	s.comment("//" + prefix + string(s.stopLit()))
 }
 
-func (s *scanner) skipComment() bool {
-	for s.ch >= 0 {
-		for s.ch == '*' {
-			s.nextch()
-			if s.ch == '/' {
-				s.nextch()
+func (s *scanner) skipComment(r rune) bool {
+	for r >= 0 {
+		for r == '*' {
+			r = s.getr()
+			if r == '/' {
 				return true
 			}
 		}
-		s.nextch()
+		r = s.getr()
 	}
-	s.errorAtf(0, "comment not terminated")
+	s.errh(s.line, s.col, "comment not terminated")
 	return false
 }
 
 func (s *scanner) fullComment() {
-	/* opening has already been consumed */
+	r := s.getr()
 
 	if s.mode&comments != 0 {
-		if s.skipComment() {
-			s.comment(string(s.segment()))
+		s.startLit()
+		if s.skipComment(r) {
+			s.comment("/*" + string(s.stopLit()))
+		} else {
+			s.killLit() // not a complete comment - ignore
 		}
 		return
 	}
 
-	if s.mode&directives == 0 || s.ch != 'l' {
-		s.stop()
-		s.skipComment()
+	if s.mode&directives == 0 || r != 'l' {
+		s.skipComment(r)
 		return
 	}
 
 	// recognize line directive
 	const prefix = "line "
 	for _, m := range prefix {
-		if s.ch != m {
-			s.stop()
-			s.skipComment()
+		if r != m {
+			s.skipComment(r)
 			return
 		}
-		s.nextch()
+		r = s.getr()
 	}
 
 	// directive text
-	if s.skipComment() {
-		s.comment(string(s.segment()))
+	s.startLit()
+	if s.skipComment(r) {
+		s.comment("/*" + prefix + string(s.stopLit()))
+	} else {
+		s.killLit() // not a complete comment - ignore
 	}
 }
 
@@ -819,56 +786,63 @@ func (s *scanner) escape(quote rune) bool {
 	var n int
 	var base, max uint32
 
-	switch s.ch {
-	case quote, 'a', 'b', 'f', 'n', 'r', 't', 'v', '\\':
-		s.nextch()
+	c := s.getr()
+	switch c {
+	case 'a', 'b', 'f', 'n', 'r', 't', 'v', '\\', quote:
 		return true
 	case '0', '1', '2', '3', '4', '5', '6', '7':
 		n, base, max = 3, 8, 255
 	case 'x':
-		s.nextch()
+		c = s.getr()
 		n, base, max = 2, 16, 255
 	case 'u':
-		s.nextch()
+		c = s.getr()
 		n, base, max = 4, 16, unicode.MaxRune
 	case 'U':
-		s.nextch()
+		c = s.getr()
 		n, base, max = 8, 16, unicode.MaxRune
 	default:
-		if s.ch < 0 {
+		if c < 0 {
 			return true // complain in caller about EOF
 		}
-		s.errorf("unknown escape")
+		s.error("unknown escape sequence")
 		return false
 	}
 
 	var x uint32
 	for i := n; i > 0; i-- {
-		if s.ch < 0 {
-			return true // complain in caller about EOF
-		}
 		d := base
-		if isDecimal(s.ch) {
-			d = uint32(s.ch) - '0'
-		} else if 'a' <= lower(s.ch) && lower(s.ch) <= 'f' {
-			d = uint32(lower(s.ch)) - 'a' + 10
+		switch {
+		case isDecimal(c):
+			d = uint32(c) - '0'
+		case 'a' <= lower(c) && lower(c) <= 'f':
+			d = uint32(lower(c)) - ('a' - 10)
 		}
 		if d >= base {
-			s.errorf("invalid character %q in %s escape", s.ch, baseName(int(base)))
+			if c < 0 {
+				return true // complain in caller about EOF
+			}
+			kind := "hex"
+			if base == 8 {
+				kind = "octal"
+			}
+			s.errorf("non-%s character in escape sequence: %c", kind, c)
+			s.ungetr()
 			return false
 		}
 		// d < base
 		x = x*base + d
-		s.nextch()
+		c = s.getr()
 	}
+	s.ungetr()
 
 	if x > max && base == 8 {
-		s.errorf("octal escape value %d > 255", x)
+		s.errorf("octal escape value > 255: %d", x)
 		return false
 	}
 
 	if x > max || 0xD800 <= x && x < 0xE000 /* surrogate range */ {
-		s.errorf("escape is invalid Unicode code point %#U", x)
+		s.error("escape sequence is invalid Unicode code point")
 		return false
 	}
 

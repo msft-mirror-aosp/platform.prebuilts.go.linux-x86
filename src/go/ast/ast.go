@@ -87,10 +87,10 @@ func stripTrailingWhitespace(s string) string {
 
 // Text returns the text of the comment.
 // Comment markers (//, /*, and */), the first space of a line comment, and
-// leading and trailing empty lines are removed.
-// Comment directives like "//line" and "//go:noinline" are also removed.
-// Multiple empty lines are reduced to one, and trailing space on lines is trimmed.
-// Unless the result is empty, it is newline-terminated.
+// leading and trailing empty lines are removed. Multiple empty lines are
+// reduced to one, and trailing space on lines is trimmed. Unless the result
+// is empty, it is newline-terminated.
+//
 func (g *CommentGroup) Text() string {
 	if g == nil {
 		return ""
@@ -108,18 +108,9 @@ func (g *CommentGroup) Text() string {
 		case '/':
 			//-style comment (no newline at the end)
 			c = c[2:]
-			if len(c) == 0 {
-				// empty line
-				break
-			}
-			if c[0] == ' ' {
-				// strip first space - required for Example tests
+			// strip first space - required for Example tests
+			if len(c) > 0 && c[0] == ' ' {
 				c = c[1:]
-				break
-			}
-			if isDirective(c) {
-				// Ignore //go:noinline, //line, and so on.
-				continue
 			}
 		case '*':
 			/*-style comment */
@@ -152,32 +143,6 @@ func (g *CommentGroup) Text() string {
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// isDirective reports whether c is a comment directive.
-func isDirective(c string) bool {
-	// "//line " is a line directive.
-	// (The // has been removed.)
-	if strings.HasPrefix(c, "line ") {
-		return true
-	}
-
-	// "//[a-z0-9]+:[a-z0-9]"
-	// (The // has been removed.)
-	colon := strings.Index(c, ":")
-	if colon <= 0 || colon+1 >= len(c) {
-		return false
-	}
-	for i := 0; i <= colon+1; i++ {
-		if i == colon {
-			continue
-		}
-		b := c[i]
-		if !('a' <= b && b <= 'z' || '0' <= b && b <= '9') {
-			return false
-		}
-	}
-	return true
 }
 
 // ----------------------------------------------------------------------------
@@ -261,8 +226,8 @@ func (f *FieldList) NumFields() int {
 // or more of the following concrete expression nodes.
 //
 type (
-	// A BadExpr node is a placeholder for an expression containing
-	// syntax errors for which a correct expression node cannot be
+	// A BadExpr node is a placeholder for expressions containing
+	// syntax errors for which no correct expression nodes can be
 	// created.
 	//
 	BadExpr struct {
@@ -327,7 +292,7 @@ type (
 		Rbrack token.Pos // position of "]"
 	}
 
-	// A SliceExpr node represents an expression followed by slice indices.
+	// An SliceExpr node represents an expression followed by slice indices.
 	SliceExpr struct {
 		X      Expr      // expression
 		Lbrack token.Pos // position of "["
@@ -669,7 +634,7 @@ type (
 	BlockStmt struct {
 		Lbrace token.Pos // position of "{"
 		List   []Stmt
-		Rbrace token.Pos // position of "}", if any (may be absent due to syntax error)
+		Rbrace token.Pos // position of "}"
 	}
 
 	// An IfStmt node represents an if statement.
@@ -697,7 +662,7 @@ type (
 		Body   *BlockStmt // CaseClauses only
 	}
 
-	// A TypeSwitchStmt node represents a type switch statement.
+	// An TypeSwitchStmt node represents a type switch statement.
 	TypeSwitchStmt struct {
 		Switch token.Pos  // position of "switch" keyword
 		Init   Stmt       // initialization statement; or nil
@@ -713,7 +678,7 @@ type (
 		Body  []Stmt    // statement list; or nil
 	}
 
-	// A SelectStmt node represents a select statement.
+	// An SelectStmt node represents a select statement.
 	SelectStmt struct {
 		Select token.Pos  // position of "select" keyword
 		Body   *BlockStmt // CommClauses only
@@ -792,15 +757,7 @@ func (s *BranchStmt) End() token.Pos {
 	}
 	return token.Pos(int(s.TokPos) + len(s.Tok.String()))
 }
-func (s *BlockStmt) End() token.Pos {
-	if s.Rbrace.IsValid() {
-		return s.Rbrace + 1
-	}
-	if n := len(s.List); n > 0 {
-		return s.List[n-1].End()
-	}
-	return s.Lbrace + 1
-}
+func (s *BlockStmt) End() token.Pos { return s.Rbrace + 1 }
 func (s *IfStmt) End() token.Pos {
 	if s.Else != nil {
 		return s.Else.End()
@@ -932,8 +889,8 @@ func (*TypeSpec) specNode()   {}
 // A declaration is represented by one of the following declaration nodes.
 //
 type (
-	// A BadDecl node is a placeholder for a declaration containing
-	// syntax errors for which a correct declaration node cannot be
+	// A BadDecl node is a placeholder for declarations containing
+	// syntax errors for which no correct declaration nodes can be
 	// created.
 	//
 	BadDecl struct {

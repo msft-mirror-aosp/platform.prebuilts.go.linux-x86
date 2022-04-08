@@ -18,9 +18,9 @@ import (
 
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/modfetch"
-
-	"golang.org/x/mod/modfile"
-	"golang.org/x/mod/module"
+	"cmd/go/internal/modfetch/codehost"
+	"cmd/go/internal/modfile"
+	"cmd/go/internal/module"
 )
 
 func TestMain(m *testing.M) {
@@ -41,7 +41,8 @@ func testMain(m *testing.M) int {
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	cfg.GOMODCACHE = filepath.Join(dir, "pkg/mod")
+	modfetch.PkgMod = filepath.Join(dir, "pkg/mod")
+	codehost.WorkRoot = filepath.Join(dir, "codework")
 
 	return m.Run()
 }

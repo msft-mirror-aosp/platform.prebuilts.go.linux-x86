@@ -12,7 +12,8 @@ import (
 )
 
 func TestDeps(t *testing.T) {
-	out, err := exec.Command(testenv.GoToolPath(t), "list", "-f", "{{.Deps}}", "cmd/compile/internal/gc").Output()
+	testenv.MustHaveGoBuild(t)
+	out, err := exec.Command("go", "list", "-f", "{{.Deps}}", "cmd/compile/internal/gc").Output()
 	if err != nil {
 		t.Fatal(err)
 	}

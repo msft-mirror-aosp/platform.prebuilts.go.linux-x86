@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build aix darwin netbsd openbsd plan9 solaris windows
+// +build aix darwin nacl netbsd openbsd plan9 solaris windows
 
 package runtime
 
@@ -33,10 +33,6 @@ const (
 )
 
 func lock(l *mutex) {
-	lockWithRank(l, getLockRank(l))
-}
-
-func lock2(l *mutex) {
 	gp := getg()
 	if gp.m.locks < 0 {
 		throw("runtime·lock: lock count")
@@ -93,13 +89,9 @@ Loop:
 	}
 }
 
-func unlock(l *mutex) {
-	unlockWithRank(l)
-}
-
 //go:nowritebarrier
 // We might not be holding a p in this code.
-func unlock2(l *mutex) {
+func unlock(l *mutex) {
 	gp := getg()
 	var mp *m
 	for {
@@ -297,8 +289,8 @@ func notetsleepg(n *note, ns int64) bool {
 	return ok
 }
 
-func beforeIdle(int64) (*g, bool) {
-	return nil, false
+func beforeIdle() bool {
+	return false
 }
 
 func checkTimeouts() {}

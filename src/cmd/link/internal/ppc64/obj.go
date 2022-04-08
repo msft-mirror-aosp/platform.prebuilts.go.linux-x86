@@ -1,5 +1,5 @@
 // Inferno utils/5l/obj.c
-// https://bitbucket.org/inferno-os/inferno-os/src/master/utils/5l/obj.c
+// https://bitbucket.org/inferno-os/inferno-os/src/default/utils/5l/obj.c
 //
 //	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 //	Portions Copyright © 1995-1997 C H Forsyth (forsyth@terzarima.net)
@@ -49,7 +49,7 @@ func Init() (*sys.Arch, ld.Arch) {
 		Dwarfregsp: dwarfRegSP,
 		Dwarfreglr: dwarfRegLR,
 
-		Adddynrel2:       adddynrel2,
+		Adddynrel:        adddynrel,
 		Archinit:         archinit,
 		Archreloc:        archreloc,
 		Archrelocvariant: archrelocvariant,
@@ -57,7 +57,7 @@ func Init() (*sys.Arch, ld.Arch) {
 		Asmb2:            asmb2,
 		Elfreloc1:        elfreloc1,
 		Elfsetupplt:      elfsetupplt,
-		Gentext2:         gentext2,
+		Gentext:          gentext,
 		Trampoline:       trampoline,
 		Machoreloc1:      machoreloc1,
 		Xcoffreloc1:      xcoffreloc1,
@@ -95,6 +95,17 @@ func archinit(ctxt *ld.Link) {
 		ld.HEADR = ld.ELFRESERVE
 		if *ld.FlagTextAddr == -1 {
 			*ld.FlagTextAddr = 0x10000 + int64(ld.HEADR)
+		}
+		if *ld.FlagRound == -1 {
+			*ld.FlagRound = 0x10000
+		}
+
+	case objabi.Hnacl:
+		ld.Elfinit(ctxt)
+		ld.HEADR = 0x10000
+		ld.Funcalign = 16
+		if *ld.FlagTextAddr == -1 {
+			*ld.FlagTextAddr = 0x20000
 		}
 		if *ld.FlagRound == -1 {
 			*ld.FlagRound = 0x10000

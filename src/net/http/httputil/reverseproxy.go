@@ -13,7 +13,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/textproto"
 	"net/url"
 	"strings"
 	"sync"
@@ -25,19 +24,6 @@ import (
 // ReverseProxy is an HTTP Handler that takes an incoming request and
 // sends it to another server, proxying the response back to the
 // client.
-//
-// ReverseProxy by default sets the client IP as the value of the
-// X-Forwarded-For header.
-//
-// If an X-Forwarded-For header already exists, the client IP is
-// appended to the existing values. As a special case, if the header
-// exists in the Request.Header map but has a nil value (such as when
-// set by the Director func), the X-Forwarded-For header is
-// not modified.
-//
-// To prevent IP spoofing, be sure to delete any pre-existing
-// X-Forwarded-For header coming from the client or
-// an untrusted proxy.
 type ReverseProxy struct {
 	// Director must be a function which modifies
 	// the request into a new request to be sent
@@ -111,27 +97,6 @@ func singleJoiningSlash(a, b string) string {
 	return a + b
 }
 
-func joinURLPath(a, b *url.URL) (path, rawpath string) {
-	if a.RawPath == "" && b.RawPath == "" {
-		return singleJoiningSlash(a.Path, b.Path), ""
-	}
-	// Same as singleJoiningSlash, but uses EscapedPath to determine
-	// whether a slash should be added
-	apath := a.EscapedPath()
-	bpath := b.EscapedPath()
-
-	aslash := strings.HasSuffix(apath, "/")
-	bslash := strings.HasPrefix(bpath, "/")
-
-	switch {
-	case aslash && bslash:
-		return a.Path + b.Path[1:], apath + bpath[1:]
-	case !aslash && !bslash:
-		return a.Path + "/" + b.Path, apath + "/" + bpath
-	}
-	return a.Path + b.Path, apath + bpath
-}
-
 // NewSingleHostReverseProxy returns a new ReverseProxy that routes
 // URLs to the scheme, host, and base path provided in target. If the
 // target's path is "/base" and the incoming request was for "/dir",
@@ -144,7 +109,7 @@ func NewSingleHostReverseProxy(target *url.URL) *ReverseProxy {
 	director := func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
-		req.URL.Path, req.URL.RawPath = joinURLPath(target, req.URL)
+		req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path)
 		if targetQuery == "" || req.URL.RawQuery == "" {
 			req.URL.RawQuery = targetQuery + req.URL.RawQuery
 		} else {
@@ -275,14 +240,10 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// If we aren't the first proxy retain prior
 		// X-Forwarded-For information as a comma+space
 		// separated list and fold multiple headers into one.
-		prior, ok := outreq.Header["X-Forwarded-For"]
-		omit := ok && prior == nil // Issue 38079: nil now means don't populate the header
-		if len(prior) > 0 {
+		if prior, ok := outreq.Header["X-Forwarded-For"]; ok {
 			clientIP = strings.Join(prior, ", ") + ", " + clientIP
 		}
-		if !omit {
-			outreq.Header.Set("X-Forwarded-For", clientIP)
-		}
+		outreq.Header.Set("X-Forwarded-For", clientIP)
 	}
 
 	res, err := transport.RoundTrip(outreq)
@@ -388,7 +349,7 @@ func shouldPanicOnCopyError(req *http.Request) bool {
 func removeConnectionHeaders(h http.Header) {
 	for _, f := range h["Connection"] {
 		for _, sf := range strings.Split(f, ",") {
-			if sf = textproto.TrimString(sf); sf != "" {
+			if sf = strings.TrimSpace(sf); sf != "" {
 				h.Del(sf)
 			}
 		}
@@ -557,20 +518,7 @@ func (p *ReverseProxy) handleUpgradeResponse(rw http.ResponseWriter, req *http.R
 		p.getErrorHandler()(rw, req, fmt.Errorf("internal error: 101 switching protocols response with non-writable body"))
 		return
 	}
-
-	backConnCloseCh := make(chan bool)
-	go func() {
-		// Ensure that the cancelation of a request closes the backend.
-		// See issue https://golang.org/issue/35559.
-		select {
-		case <-req.Context().Done():
-		case <-backConnCloseCh:
-		}
-		backConn.Close()
-	}()
-
-	defer close(backConnCloseCh)
-
+	defer backConn.Close()
 	conn, brw, err := hj.Hijack()
 	if err != nil {
 		p.getErrorHandler()(rw, req, fmt.Errorf("Hijack failed on protocol switch: %v", err))

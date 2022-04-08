@@ -36,7 +36,7 @@ func test(sep string) {
 		os.Exit(1)
 	}
 
-	want := "hello\nhello\nhello\ntrumped\ntrumped\ntrumped\n"
+	want := "hello\ntrumped\n"
 	got := out.String()
 	if got != want {
 		fmt.Printf("got %q want %q\n", got, want)

@@ -9,8 +9,6 @@ package types
 import (
 	"go/ast"
 	"go/token"
-	"strings"
-	"unicode"
 )
 
 func (check *Checker) call(x *operand, e *ast.CallExpr) exprKind {
@@ -56,8 +54,6 @@ func (check *Checker) call(x *operand, e *ast.CallExpr) exprKind {
 
 	default:
 		// function/method call
-		cgocall := x.mode == cgofunc
-
 		sig, _ := x.typ.Underlying().(*Signature)
 		if sig == nil {
 			check.invalidOp(x.pos(), "cannot call non-function %s", x)
@@ -78,11 +74,7 @@ func (check *Checker) call(x *operand, e *ast.CallExpr) exprKind {
 		case 0:
 			x.mode = novalue
 		case 1:
-			if cgocall {
-				x.mode = commaerr
-			} else {
-				x.mode = value
-			}
+			x.mode = value
 			x.typ = sig.results.vars[0].typ // unpack tuple
 		default:
 			x.mode = value
@@ -200,13 +192,10 @@ func unpack(get getter, n int, allowCommaOk bool) (getter, int, bool) {
 		}, t.Len(), false
 	}
 
-	if x0.mode == mapindex || x0.mode == commaok || x0.mode == commaerr {
+	if x0.mode == mapindex || x0.mode == commaok {
 		// comma-ok value
 		if allowCommaOk {
 			a := [2]Type{x0.typ, Typ[UntypedBool]}
-			if x0.mode == commaerr {
-				a[1] = universeError
-			}
 			return func(x *operand, i int) {
 				x.mode = value
 				x.expr = x0.expr
@@ -313,17 +302,6 @@ func (check *Checker) argument(sig *Signature, i int, x *operand, ellipsis token
 	check.assignment(x, typ, context)
 }
 
-var cgoPrefixes = [...]string{
-	"_Ciconst_",
-	"_Cfconst_",
-	"_Csconst_",
-	"_Ctype_",
-	"_Cvar_", // actually a pointer to the var
-	"_Cfpvar_fp_",
-	"_Cfunc_",
-	"_Cmacro_", // function to evaluate the expanded expression
-}
-
 func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 	// these must be declared before the "goto Error" statements
 	var (
@@ -344,43 +322,16 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 			check.recordUse(ident, pname)
 			pname.used = true
 			pkg := pname.imported
-
-			var exp Object
-			funcMode := value
-			if pkg.cgo {
-				// cgo special cases C.malloc: it's
-				// rewritten to _CMalloc and does not
-				// support two-result calls.
-				if sel == "malloc" {
-					sel = "_CMalloc"
-				} else {
-					funcMode = cgofunc
+			exp := pkg.scope.Lookup(sel)
+			if exp == nil {
+				if !pkg.fake {
+					check.errorf(e.Sel.Pos(), "%s not declared by package %s", sel, pkg.name)
 				}
-				for _, prefix := range cgoPrefixes {
-					// cgo objects are part of the current package (in file
-					// _cgo_gotypes.go). Use regular lookup.
-					_, exp = check.scope.LookupParent(prefix+sel, check.pos)
-					if exp != nil {
-						break
-					}
-				}
-				if exp == nil {
-					check.errorf(e.Sel.Pos(), "%s not declared by package C", sel)
-					goto Error
-				}
-				check.objDecl(exp, nil)
-			} else {
-				exp = pkg.scope.Lookup(sel)
-				if exp == nil {
-					if !pkg.fake {
-						check.errorf(e.Sel.Pos(), "%s not declared by package %s", sel, pkg.name)
-					}
-					goto Error
-				}
-				if !exp.Exported() {
-					check.errorf(e.Sel.Pos(), "%s not exported by package %s", sel, pkg.name)
-					// ok to continue
-				}
+				goto Error
+			}
+			if !exp.Exported() {
+				check.errorf(e.Sel.Pos(), "%s not exported by package %s", sel, pkg.name)
+				// ok to continue
 			}
 			check.recordUse(e.Sel, exp)
 
@@ -398,16 +349,9 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 			case *Var:
 				x.mode = variable
 				x.typ = exp.typ
-				if pkg.cgo && strings.HasPrefix(exp.name, "_Cvar_") {
-					x.typ = x.typ.(*Pointer).base
-				}
 			case *Func:
-				x.mode = funcMode
+				x.mode = value
 				x.typ = exp.typ
-				if pkg.cgo && strings.HasPrefix(exp.name, "_Cmacro_") {
-					x.mode = value
-					x.typ = x.typ.(*Signature).results.vars[0].typ
-				}
 			case *Builtin:
 				x.mode = builtin
 				x.typ = exp.typ
@@ -426,29 +370,17 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 		goto Error
 	}
 
-	obj, index, indirect = check.lookupFieldOrMethod(x.typ, x.mode == variable, check.pkg, sel)
+	obj, index, indirect = LookupFieldOrMethod(x.typ, x.mode == variable, check.pkg, sel)
 	if obj == nil {
 		switch {
 		case index != nil:
 			// TODO(gri) should provide actual type where the conflict happens
-			check.errorf(e.Sel.Pos(), "ambiguous selector %s.%s", x.expr, sel)
+			check.errorf(e.Sel.Pos(), "ambiguous selector %s", sel)
 		case indirect:
-			check.errorf(e.Sel.Pos(), "cannot call pointer method %s on %s", sel, x.typ)
+			// TODO(gri) be more specific with this error message
+			check.errorf(e.Sel.Pos(), "%s is not in method set of %s", sel, x.typ)
 		default:
-			// Check if capitalization of sel matters and provide better error
-			// message in that case.
-			if len(sel) > 0 {
-				var changeCase string
-				if r := rune(sel[0]); unicode.IsUpper(r) {
-					changeCase = string(unicode.ToLower(r)) + sel[1:]
-				} else {
-					changeCase = string(unicode.ToUpper(r)) + sel[1:]
-				}
-				if obj, _, _ = check.lookupFieldOrMethod(x.typ, x.mode == variable, check.pkg, changeCase); obj != nil {
-					check.errorf(e.Sel.Pos(), "%s.%s undefined (type %s has no field or method %s, but does have %s)", x.expr, sel, x.typ, sel, changeCase)
-					break
-				}
-			}
+			// TODO(gri) should check if capitalization of sel matters and provide better error message in that case
 			check.errorf(e.Sel.Pos(), "%s.%s undefined (type %s has no field or method %s)", x.expr, sel, x.typ, sel)
 		}
 		goto Error
@@ -505,10 +437,6 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 
 			if debug {
 				// Verify that LookupFieldOrMethod and MethodSet.Lookup agree.
-				// TODO(gri) This only works because we call LookupFieldOrMethod
-				// _before_ calling NewMethodSet: LookupFieldOrMethod completes
-				// any incomplete interfaces so they are available to NewMethodSet
-				// (which assumes that interfaces have been completed already).
 				typ := x.typ
 				if x.mode == variable {
 					// If typ is not an (unnamed) pointer or an interface,
@@ -532,11 +460,6 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 				if m := mset.Lookup(check.pkg, sel); m == nil || m.obj != obj {
 					check.dump("%v: (%s).%v -> %s", e.Pos(), typ, obj.name, m)
 					check.dump("%s\n", mset)
-					// Caution: MethodSets are supposed to be used externally
-					// only (after all interface types were completed). It's
-					// now possible that we get here incorrectly. Not urgent
-					// to fix since we only run this code in debug mode.
-					// TODO(gri) fix this eventually.
 					panic("method sets and lookup don't agree")
 				}
 			}

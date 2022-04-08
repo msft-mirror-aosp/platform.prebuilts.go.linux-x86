@@ -121,8 +121,8 @@ type Obj struct {
 type Table struct {
 	Syms  []Sym // nil for Go 1.3 and later binaries
 	Funcs []Func
-	Files map[string]*Obj // for Go 1.2 and later all files map to one Obj
-	Objs  []Obj           // for Go 1.2 and later only one Obj in slice
+	Files map[string]*Obj // nil for Go 1.2 and later binaries
+	Objs  []Obj           // nil for Go 1.2 and later binaries
 
 	go12line *LineTable // Go 1.2 line number table
 }

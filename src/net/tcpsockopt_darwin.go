@@ -15,7 +15,8 @@ const sysTCP_KEEPINTVL = 0x101
 
 func setKeepAlivePeriod(fd *netFD, d time.Duration) error {
 	// The kernel expects seconds so round to next highest second.
-	secs := int(roundDurationUp(d, time.Second))
+	d += (time.Second - time.Nanosecond)
+	secs := int(d.Seconds())
 	if err := fd.pfd.SetsockoptInt(syscall.IPPROTO_TCP, sysTCP_KEEPINTVL, secs); err != nil {
 		return wrapSyscallError("setsockopt", err)
 	}

@@ -139,6 +139,8 @@ var Anames = []string{
 	"MULAWT",
 	"MULAWB",
 	"MULABB",
+	"DATABUNDLE",
+	"DATABUNDLEEND",
 	"MRC",
 	"LAST",
 }

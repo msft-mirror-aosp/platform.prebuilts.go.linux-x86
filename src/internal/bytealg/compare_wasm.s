@@ -45,8 +45,9 @@ TEXT cmpbody<>(SB), NOSPLIT, $0-0
 	I32WrapI64
 	Call memcmp<>(SB)
 	I64ExtendI32S
-	Tee R5
+	Set R5
 
+	Get R5
 	I64Eqz
 	If
 		// check length

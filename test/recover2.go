@@ -71,7 +71,7 @@ func test5() {
 }
 
 func test6() {
-	defer mustRecover("unhashable type main.T")
+	defer mustRecover("unhashable")
 	var x T
 	var z interface{} = x
 	m := make(map[interface{}]int)

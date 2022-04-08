@@ -123,12 +123,8 @@ int main(int argc, char** argv) {
 	sigset_t mask;
 	int i;
 	struct timespec ts;
-	int darwin;
 
-	darwin = atoi(argv[1]);
-
-	verbose = argc > 2;
-
+	verbose = argc > 1;
 	setvbuf(stdout, NULL, _IONBF, 0);
 
 	// Call setsid so that we can use kill(0, SIGIO) below.
@@ -190,25 +186,22 @@ int main(int argc, char** argv) {
 		printf("provoking SIGPIPE\n");
 	}
 
-	// SIGPIPE is never forwarded on Darwin, see golang.org/issue/33384.
-	if (!darwin) {
-		GoRaiseSIGPIPE();
+	GoRaiseSIGPIPE();
 
-		if (verbose) {
-			printf("waiting for sigpipeSeen\n");
-		}
+	if (verbose) {
+		printf("waiting for sigpipeSeen\n");
+	}
 
-		// Wait until the signal has been delivered.
-		i = 0;
-		while (!sigpipeSeen) {
-			ts.tv_sec = 0;
-			ts.tv_nsec = 1000000;
-			nanosleep(&ts, NULL);
-			i++;
-			if (i > 5000) {
-				fprintf(stderr, "looping too long waiting for SIGPIPE\n");
-				exit(EXIT_FAILURE);
-			}
+	// Wait until the signal has been delivered.
+	i = 0;
+	while (!sigpipeSeen) {
+		ts.tv_sec = 0;
+		ts.tv_nsec = 1000000;
+		nanosleep(&ts, NULL);
+		i++;
+		if (i > 5000) {
+			fprintf(stderr, "looping too long waiting for SIGPIPE\n");
+			exit(EXIT_FAILURE);
 		}
 	}
 

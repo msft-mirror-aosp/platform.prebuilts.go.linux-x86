@@ -10,31 +10,21 @@ import (
 	"path/filepath"
 	"strings"
 
+	"cmd/go/internal/base"
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/imports"
+	"cmd/go/internal/module"
 	"cmd/go/internal/search"
-
-	"golang.org/x/mod/module"
 )
 
-type stdFilter int8
-
-const (
-	omitStd = stdFilter(iota)
-	includeStd
-)
-
-// matchPackages is like m.MatchPackages, but uses a local variable (rather than
-// a global) for tags, can include or exclude packages in the standard library,
-// and is restricted to the given list of modules.
-func matchPackages(m *search.Match, tags map[string]bool, filter stdFilter, modules []module.Version) {
-	m.Pkgs = []string{}
-
-	isMatch := func(string) bool { return true }
+// matchPackages returns a list of packages in the list of modules
+// matching the pattern. Package loading assumes the given set of tags.
+func matchPackages(pattern string, tags map[string]bool, useStd bool, modules []module.Version) []string {
+	match := func(string) bool { return true }
 	treeCanMatch := func(string) bool { return true }
-	if !m.IsMeta() {
-		isMatch = search.MatchPattern(m.Pattern())
-		treeCanMatch = search.TreeCanMatchPattern(m.Pattern())
+	if !search.IsMetaPackage(pattern) {
+		match = search.MatchPattern(pattern)
+		treeCanMatch = search.TreeCanMatchPattern(pattern)
 	}
 
 	have := map[string]bool{
@@ -43,6 +33,7 @@ func matchPackages(m *search.Match, tags map[string]bool, filter stdFilter, modu
 	if !cfg.BuildContext.CgoEnabled {
 		have["runtime/cgo"] = true // ignore during walk
 	}
+	var pkgs []string
 
 	type pruning int8
 	const (
@@ -52,26 +43,21 @@ func matchPackages(m *search.Match, tags map[string]bool, filter stdFilter, modu
 
 	walkPkgs := func(root, importPathRoot string, prune pruning) {
 		root = filepath.Clean(root)
-		err := filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
+		filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
 			if err != nil {
-				m.AddError(err)
+				return nil
+			}
+
+			// Don't use GOROOT/src but do walk down into it.
+			if path == root && importPathRoot == "" {
 				return nil
 			}
 
 			want := true
-			elem := ""
-
-			// Don't use GOROOT/src but do walk down into it.
-			if path == root {
-				if importPathRoot == "" {
-					return nil
-				}
-			} else {
-				// Avoid .foo, _foo, and testdata subdirectory trees.
-				_, elem = filepath.Split(path)
-				if strings.HasPrefix(elem, ".") || strings.HasPrefix(elem, "_") || elem == "testdata" {
-					want = false
-				}
+			// Avoid .foo, _foo, and testdata directory trees.
+			_, elem := filepath.Split(path)
+			if strings.HasPrefix(elem, ".") || strings.HasPrefix(elem, "_") || elem == "testdata" {
+				want = false
 			}
 
 			name := importPathRoot + filepath.ToSlash(path[len(root):])
@@ -103,9 +89,9 @@ func matchPackages(m *search.Match, tags map[string]bool, filter stdFilter, modu
 
 			if !have[name] {
 				have[name] = true
-				if isMatch(name) {
+				if match(name) {
 					if _, _, err := scanDir(path, tags); err != imports.ErrNoGo {
-						m.Pkgs = append(m.Pkgs, name)
+						pkgs = append(pkgs, name)
 					}
 				}
 			}
@@ -115,12 +101,9 @@ func matchPackages(m *search.Match, tags map[string]bool, filter stdFilter, modu
 			}
 			return nil
 		})
-		if err != nil {
-			m.AddError(err)
-		}
 	}
 
-	if filter == includeStd {
+	if useStd {
 		walkPkgs(cfg.GOROOTsrc, "", pruneGoMod)
 		if treeCanMatch("cmd") {
 			walkPkgs(filepath.Join(cfg.GOROOTsrc, "cmd"), "cmd", pruneGoMod)
@@ -132,7 +115,7 @@ func matchPackages(m *search.Match, tags map[string]bool, filter stdFilter, modu
 			walkPkgs(ModRoot(), targetPrefix, pruneGoMod|pruneVendor)
 			walkPkgs(filepath.Join(ModRoot(), "vendor"), "", pruneVendor)
 		}
-		return
+		return pkgs
 	}
 
 	for _, mod := range modules {
@@ -155,7 +138,7 @@ func matchPackages(m *search.Match, tags map[string]bool, filter stdFilter, modu
 			var err error
 			root, isLocal, err = fetch(mod)
 			if err != nil {
-				m.AddError(err)
+				base.Errorf("go: %v", err)
 				continue
 			}
 			modPrefix = mod.Path
@@ -168,5 +151,5 @@ func matchPackages(m *search.Match, tags map[string]bool, filter stdFilter, modu
 		walkPkgs(root, modPrefix, prune)
 	}
 
-	return
+	return pkgs
 }

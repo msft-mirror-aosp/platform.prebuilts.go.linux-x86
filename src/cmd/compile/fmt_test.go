@@ -83,7 +83,7 @@ type File struct {
 }
 
 func TestFormats(t *testing.T) {
-	if testing.Short() && testenv.Builder() == "" {
+	if testing.Short() {
 		t.Skip("Skipping in short mode")
 	}
 	testenv.MustHaveGoBuild(t) // more restrictive than necessary, but that's ok
@@ -96,7 +96,7 @@ func TestFormats(t *testing.T) {
 			}
 
 			importPath := filepath.Join("cmd/compile", path)
-			if ignoredPackages[filepath.ToSlash(importPath)] {
+			if blacklistedPackages[filepath.ToSlash(importPath)] {
 				return filepath.SkipDir
 			}
 
@@ -344,7 +344,8 @@ func collectPkgFormats(t *testing.T, pkg *build.Package) {
 	for index, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			if call, ok := n.(*ast.CallExpr); ok {
-				if ignoredFunctions[nodeString(call.Fun)] {
+				// ignore blacklisted functions
+				if blacklistedFunctions[nodeString(call.Fun)] {
 					return true
 				}
 				// look for an arguments that might be a format string
@@ -353,7 +354,7 @@ func collectPkgFormats(t *testing.T, pkg *build.Package) {
 						// make sure we have enough arguments
 						n := numFormatArgs(s)
 						if i+1+n > len(call.Args) {
-							t.Errorf("%s: not enough format args (ignore %s?)", posString(call), nodeString(call.Fun))
+							t.Errorf("%s: not enough format args (blacklist %s?)", posString(call), nodeString(call.Fun))
 							break // ignore this call
 						}
 						// assume last n arguments are to be formatted;
@@ -548,14 +549,14 @@ func formatReplace(in string, f func(i int, s string) string) string {
 	return string(append(buf, in[i0:]...))
 }
 
-// ignoredPackages is the set of packages which can
+// blacklistedPackages is the set of packages which can
 // be ignored.
-var ignoredPackages = map[string]bool{}
+var blacklistedPackages = map[string]bool{}
 
-// ignoredFunctions is the set of functions which may have
+// blacklistedFunctions is the set of functions which may have
 // format-like arguments but which don't do any formatting and
 // thus may be ignored.
-var ignoredFunctions = map[string]bool{}
+var blacklistedFunctions = map[string]bool{}
 
 func init() {
 	// verify that knownFormats entries are correctly formatted
