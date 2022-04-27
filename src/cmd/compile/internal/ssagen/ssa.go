@@ -2446,6 +2446,38 @@ func (s *state) conv(n ir.Node, v *ssa.Value, ft, tt *types.Type) *ssa.Value {
 		return s.newValue1(op, tt, v)
 	}
 
+	if ft.IsComplex() && tt.IsComplex() {
+		var op ssa.Op
+		if ft.Size() == tt.Size() {
+			switch ft.Size() {
+			case 8:
+				op = ssa.OpRound32F
+			case 16:
+				op = ssa.OpRound64F
+			default:
+				s.Fatalf("weird complex conversion %v -> %v", ft, tt)
+			}
+		} else if ft.Size() == 8 && tt.Size() == 16 {
+			op = ssa.OpCvt32Fto64F
+		} else if ft.Size() == 16 && tt.Size() == 8 {
+			op = ssa.OpCvt64Fto32F
+		} else {
+			s.Fatalf("weird complex conversion %v -> %v", ft, tt)
+		}
+		ftp := types.FloatForComplex(ft)
+		ttp := types.FloatForComplex(tt)
+		return s.newValue2(ssa.OpComplexMake, tt,
+			s.newValueOrSfCall1(op, ttp, s.newValue1(ssa.OpComplexReal, ftp, v)),
+			s.newValueOrSfCall1(op, ttp, s.newValue1(ssa.OpComplexImag, ftp, v)))
+	}
+
+	if tt.IsComplex() { // and ft is not complex
+		// Needed for generics support - can't happen in normal Go code.
+		et := types.FloatForComplex(tt)
+		v = s.conv(n, v, ft, et)
+		return s.newValue2(ssa.OpComplexMake, tt, v, s.zeroVal(et))
+	}
+
 	if ft.IsFloat() || tt.IsFloat() {
 		conv, ok := fpConvOpToSSA[twoTypes{s.concreteEtype(ft), s.concreteEtype(tt)}]
 		if s.config.RegSize == 4 && Arch.LinkArch.Family != sys.MIPS && !s.softFloat {
@@ -2517,31 +2549,6 @@ func (s *state) conv(n ir.Node, v *ssa.Value, ft, tt *types.Type) *ssa.Value {
 		}
 		s.Fatalf("weird float to unsigned integer conversion %v -> %v", ft, tt)
 		return nil
-	}
-
-	if ft.IsComplex() && tt.IsComplex() {
-		var op ssa.Op
-		if ft.Size() == tt.Size() {
-			switch ft.Size() {
-			case 8:
-				op = ssa.OpRound32F
-			case 16:
-				op = ssa.OpRound64F
-			default:
-				s.Fatalf("weird complex conversion %v -> %v", ft, tt)
-			}
-		} else if ft.Size() == 8 && tt.Size() == 16 {
-			op = ssa.OpCvt32Fto64F
-		} else if ft.Size() == 16 && tt.Size() == 8 {
-			op = ssa.OpCvt64Fto32F
-		} else {
-			s.Fatalf("weird complex conversion %v -> %v", ft, tt)
-		}
-		ftp := types.FloatForComplex(ft)
-		ttp := types.FloatForComplex(tt)
-		return s.newValue2(ssa.OpComplexMake, tt,
-			s.newValueOrSfCall1(op, ttp, s.newValue1(ssa.OpComplexReal, ftp, v)),
-			s.newValueOrSfCall1(op, ttp, s.newValue1(ssa.OpComplexImag, ftp, v)))
 	}
 
 	s.Fatalf("unhandled OCONV %s -> %s", ft.Kind(), tt.Kind())
@@ -6761,6 +6768,34 @@ func EmitArgInfo(f *ir.Func, abiInfo *abi.ABIParamResultInfo) *obj.LSym {
 	return x
 }
 
+// for wrapper, emit info of wrapped function.
+func emitWrappedFuncInfo(e *ssafn, pp *objw.Progs) {
+	if base.Ctxt.Flag_linkshared {
+		// Relative reference (SymPtrOff) to another shared object doesn't work.
+		// Unfortunate.
+		return
+	}
+
+	wfn := e.curfn.WrappedFunc
+	if wfn == nil {
+		return
+	}
+
+	wsym := wfn.Linksym()
+	x := base.Ctxt.LookupInit(fmt.Sprintf("%s.wrapinfo", wsym.Name), func(x *obj.LSym) {
+		objw.SymPtrOff(x, 0, wsym)
+		x.Set(obj.AttrContentAddressable, true)
+	})
+	e.curfn.LSym.Func().WrapInfo = x
+
+	// Emit a funcdata pointing at the wrap info data.
+	p := pp.Prog(obj.AFUNCDATA)
+	p.From.SetConst(objabi.FUNCDATA_WrapInfo)
+	p.To.Type = obj.TYPE_MEM
+	p.To.Name = obj.NAME_EXTERN
+	p.To.Sym = x
+}
+
 // genssa appends entries to pp for each instruction in f.
 func genssa(f *ssa.Func, pp *objw.Progs) {
 	var s State
@@ -6782,6 +6817,8 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 		p.To.Name = obj.NAME_EXTERN
 		p.To.Sym = openDeferInfo
 	}
+
+	emitWrappedFuncInfo(e, pp)
 
 	// Remember where each block starts.
 	s.bstart = make([]*obj.Prog, f.NumBlocks())

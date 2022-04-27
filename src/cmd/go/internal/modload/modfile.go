@@ -340,6 +340,9 @@ func Replacement(mod module.Version) module.Version {
 	foundFrom, found, foundModRoot := "", module.Version{}, ""
 	if MainModules == nil {
 		return module.Version{}
+	} else if MainModules.Contains(mod.Path) && mod.Version == "" {
+		// Don't replace the workspace version of the main module.
+		return module.Version{}
 	}
 	if _, r, ok := replacement(mod, MainModules.WorkFileReplaceMap()); ok {
 		return r
@@ -799,7 +802,7 @@ var latestVersionIgnoringRetractionsCache par.Cache // path → queryLatestVersi
 // an absolute path or a relative path starting with a '.' or '..'
 // path component.
 func ToDirectoryPath(path string) string {
-	if modfile.IsDirectoryPath(path) {
+	if path == "." || modfile.IsDirectoryPath(path) {
 		return path
 	}
 	// The path is not a relative path or an absolute path, so make it relative
