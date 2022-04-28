@@ -37,7 +37,7 @@ func NewInterfaceType(methods []*Func, embeddeds []Type) *Interface {
 	}
 
 	// set method receivers if necessary
-	typ := new(Interface)
+	typ := (*Checker)(nil).newInterface()
 	for _, m := range methods {
 		if sig := m.typ.(*Signature); sig.recv == nil {
 			sig.recv = NewVar(m.pos, m.pkg, "", typ)
@@ -51,6 +51,15 @@ func NewInterfaceType(methods []*Func, embeddeds []Type) *Interface {
 	typ.embeddeds = embeddeds
 	typ.complete = true
 
+	return typ
+}
+
+// check may be nil
+func (check *Checker) newInterface() *Interface {
+	typ := &Interface{check: check}
+	if check != nil {
+		check.needsCleanup(typ)
+	}
 	return typ
 }
 
@@ -86,7 +95,7 @@ func (t *Interface) Method(i int) *Func { return t.typeSet().Method(i) }
 func (t *Interface) Empty() bool { return t.typeSet().IsAll() }
 
 // IsComparable reports whether each type in interface t's type set is comparable.
-func (t *Interface) IsComparable() bool { return t.typeSet().IsComparable() }
+func (t *Interface) IsComparable() bool { return t.typeSet().IsComparable(nil) }
 
 // IsMethodSet reports whether the interface t is fully described by its method set.
 func (t *Interface) IsMethodSet() bool { return t.typeSet().IsMethodSet() }
@@ -99,6 +108,11 @@ func (t *Interface) String() string   { return TypeString(t, nil) }
 
 // ----------------------------------------------------------------------------
 // Implementation
+
+func (t *Interface) cleanup() {
+	t.check = nil
+	t.embedPos = nil
+}
 
 func (check *Checker) interfaceType(ityp *Interface, iface *syntax.InterfaceType, def *Named) {
 	addEmbedded := func(pos syntax.Pos, typ Type) {
@@ -136,13 +150,6 @@ func (check *Checker) interfaceType(ityp *Interface, iface *syntax.InterfaceType
 			continue // ignore
 		}
 
-		// Always type-check method type parameters but complain if they are not enabled.
-		// (This extra check is needed here because interface method signatures don't have
-		// a receiver specification.)
-		if sig.tparams != nil && !acceptMethodTypeParams {
-			check.error(f.Type, "methods cannot have type parameters")
-		}
-
 		// use named receiver type if available (for better error messages)
 		var recvTyp Type = ityp
 		if def != nil {
@@ -169,16 +176,10 @@ func (check *Checker) interfaceType(ityp *Interface, iface *syntax.InterfaceType
 	// (don't sort embeddeds: they must correspond to *embedPos entries)
 	sortMethods(ityp.methods)
 
-	// Compute type set with a non-nil *Checker as soon as possible
-	// to report any errors. Subsequent uses of type sets will use
-	// this computed type set and won't need to pass in a *Checker.
-	//
-	// Pin the checker to the interface type in the interim, in case the type set
-	// must be used before delayed funcs are processed (see issue #48234).
-	// TODO(rfindley): clean up use of *Checker with computeInterfaceTypeSet
-	ityp.check = check
+	// Compute type set as soon as possible to report any errors.
+	// Subsequent uses of type sets will use this computed type
+	// set and won't need to pass in a *Checker.
 	check.later(func() {
 		computeInterfaceTypeSet(check, iface.Pos(), ityp)
-		ityp.check = nil
 	}).describef(iface, "compute type set for %s", ityp)
 }
