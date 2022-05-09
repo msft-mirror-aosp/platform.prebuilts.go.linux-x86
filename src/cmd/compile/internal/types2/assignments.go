@@ -268,7 +268,7 @@ func (check *Checker) typesSummary(list []Type, variadic bool) string {
 		var s string
 		switch {
 		case t == nil:
-			fallthrough // should not happend but be cautious
+			fallthrough // should not happen but be cautious
 		case t == Typ[Invalid]:
 			s = "<T>"
 		case isUntyped(t):
@@ -294,15 +294,14 @@ func (check *Checker) typesSummary(list []Type, variadic bool) string {
 	return "(" + strings.Join(res, ", ") + ")"
 }
 
-func (check *Checker) assignError(rhs []syntax.Expr, nvars, nvals int) {
-	measure := func(x int, unit string) string {
-		s := fmt.Sprintf("%d %s", x, unit)
-		if x != 1 {
-			s += "s"
-		}
-		return s
+func measure(x int, unit string) string {
+	if x != 1 {
+		unit += "s"
 	}
+	return fmt.Sprintf("%d %s", x, unit)
+}
 
+func (check *Checker) assignError(rhs []syntax.Expr, nvars, nvals int) {
 	vars := measure(nvars, "variable")
 	vals := measure(nvals, "value")
 	rhs0 := rhs[0]
@@ -317,7 +316,7 @@ func (check *Checker) assignError(rhs []syntax.Expr, nvars, nvals int) {
 }
 
 // If returnStmt != nil, initVars is called to type-check the assignment
-// of return expressions, and returnStmt is the the return statement.
+// of return expressions, and returnStmt is the return statement.
 func (check *Checker) initVars(lhs []*Var, orig_rhs []syntax.Expr, returnStmt syntax.Stmt) {
 	rhs, commaOk := check.exprList(orig_rhs, len(lhs) == 2 && returnStmt == nil)
 
