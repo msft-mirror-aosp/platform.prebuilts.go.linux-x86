@@ -95,12 +95,6 @@ func (w *limitWriter) Write(p []byte) (n int, err error) {
 func TestKillChildAfterCopyError(t *testing.T) {
 	testenv.MustHaveExec(t)
 
-	defer func() { testHookStartProcess = nil }()
-	proc := make(chan *os.Process, 1)
-	testHookStartProcess = func(p *os.Process) {
-		proc <- p
-	}
-
 	h := &Handler{
 		Path: os.Args[0],
 		Root: "/test.go",
@@ -112,26 +106,9 @@ func TestKillChildAfterCopyError(t *testing.T) {
 	const writeLen = 50 << 10
 	rw := &customWriterRecorder{&limitWriter{&out, writeLen}, rec}
 
-	donec := make(chan bool, 1)
-	go func() {
-		h.ServeHTTP(rw, req)
-		donec <- true
-	}()
-
-	select {
-	case <-donec:
-		if out.Len() != writeLen || out.Bytes()[0] != 'a' {
-			t.Errorf("unexpected output: %q", out.Bytes())
-		}
-	case <-time.After(5 * time.Second):
-		t.Errorf("timeout. ServeHTTP hung and didn't kill the child process?")
-		select {
-		case p := <-proc:
-			p.Kill()
-			t.Logf("killed process")
-		default:
-			t.Logf("didn't kill process")
-		}
+	h.ServeHTTP(rw, req)
+	if out.Len() != writeLen || out.Bytes()[0] != 'a' {
+		t.Errorf("unexpected output: %q", out.Bytes())
 	}
 }
 
@@ -152,6 +129,23 @@ func TestChildOnlyHeaders(t *testing.T) {
 	if expected, got := "X-Test-Value", replay.Header().Get("X-Test-Header"); got != expected {
 		t.Errorf("got a X-Test-Header of %q; expected %q", got, expected)
 	}
+}
+
+// Test that a child handler does not receive a nil Request Body.
+// golang.org/issue/39190
+func TestNilRequestBody(t *testing.T) {
+	testenv.MustHaveExec(t)
+
+	h := &Handler{
+		Path: os.Args[0],
+		Root: "/test.go",
+		Args: []string{"-test.run=TestBeChildCGIProcess"},
+	}
+	expectedMap := map[string]string{
+		"nil-request-body": "false",
+	}
+	_ = runCgiTest(t, h, "POST /test.go?nil-request-body=1 HTTP/1.0\nHost: example.com\n\n", expectedMap)
+	_ = runCgiTest(t, h, "POST /test.go?nil-request-body=1 HTTP/1.0\nHost: example.com\nContent-Length: 0\n\n", expectedMap)
 }
 
 func TestChildContentType(t *testing.T) {
@@ -245,6 +239,10 @@ func TestBeChildCGIProcess(t *testing.T) {
 		os.Exit(0)
 	}
 	Serve(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if req.FormValue("nil-request-body") == "1" {
+			fmt.Fprintf(rw, "nil-request-body=%v\n", req.Body == nil)
+			return
+		}
 		rw.Header().Set("X-Test-Header", "X-Test-Value")
 		req.ParseForm()
 		if req.FormValue("no-body") == "1" {
