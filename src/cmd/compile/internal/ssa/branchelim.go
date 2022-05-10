@@ -22,7 +22,7 @@ import "cmd/internal/src"
 func branchelim(f *Func) {
 	// FIXME: add support for lowering CondSelects on more architectures
 	switch f.Config.arch {
-	case "arm64", "amd64", "wasm":
+	case "arm64", "ppc64le", "ppc64", "amd64", "wasm":
 		// implemented
 	default:
 		return
@@ -35,7 +35,7 @@ func branchelim(f *Func) {
 	for _, b := range f.Blocks {
 		for _, v := range b.Values {
 			switch v.Op {
-			case OpLoad, OpAtomicLoad8, OpAtomicLoad32, OpAtomicLoad64, OpAtomicLoadPtr, OpAtomicLoadAcq32:
+			case OpLoad, OpAtomicLoad8, OpAtomicLoad32, OpAtomicLoad64, OpAtomicLoadPtr, OpAtomicLoadAcq32, OpAtomicLoadAcq64:
 				loadAddr.add(v.Args[0].ID)
 			case OpMove:
 				loadAddr.add(v.Args[1].ID)
