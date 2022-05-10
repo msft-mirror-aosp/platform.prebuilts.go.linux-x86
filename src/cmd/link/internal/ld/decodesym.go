@@ -10,17 +10,18 @@ import (
 	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
 	"debug/elf"
+	"encoding/binary"
 	"log"
 )
 
 // Decoding the type.* symbols.	 This has to be in sync with
 // ../../runtime/type.go, or more specifically, with what
-// cmd/compile/internal/gc/reflect.go stuffs in these.
+// cmd/compile/internal/reflectdata/reflect.go stuffs in these.
 
 // tflag is documented in reflect/type.go.
 //
 // tflag values must be kept in sync with copies in:
-//	cmd/compile/internal/gc/reflect.go
+//	cmd/compile/internal/reflectdata/reflect.go
 //	cmd/link/internal/ld/decodesym.go
 //	reflect/type.go
 //	runtime/type.go
@@ -91,10 +92,6 @@ func decodetypeIfaceMethodCount(arch *sys.Arch, p []byte) int64 {
 	return int64(decodeInuxi(arch, p[commonsize(arch)+2*arch.PtrSize:], arch.PtrSize))
 }
 
-// methodsig is a fully qualified typed method signature, like
-// "Visit(type.go/ast.Node) (type.go/ast.Visitor)".
-type methodsig string
-
 // Matches runtime/typekind.go and reflect.Kind.
 const (
 	kindArray     = 17
@@ -108,14 +105,14 @@ const (
 	kindMask      = (1 << 5) - 1
 )
 
-func decodeReloc(ldr *loader.Loader, symIdx loader.Sym, relocs *loader.Relocs, off int32) loader.Reloc2 {
+func decodeReloc(ldr *loader.Loader, symIdx loader.Sym, relocs *loader.Relocs, off int32) loader.Reloc {
 	for j := 0; j < relocs.Count(); j++ {
-		rel := relocs.At2(j)
+		rel := relocs.At(j)
 		if rel.Off() == off {
 			return rel
 		}
 	}
-	return loader.Reloc2{}
+	return loader.Reloc{}
 }
 
 func decodeRelocSym(ldr *loader.Loader, symIdx loader.Sym, relocs *loader.Relocs, off int32) loader.Sym {
@@ -130,8 +127,8 @@ func decodetypeName(ldr *loader.Loader, symIdx loader.Sym, relocs *loader.Relocs
 	}
 
 	data := ldr.Data(r)
-	namelen := int(uint16(data[1])<<8 | uint16(data[2]))
-	return string(data[3 : 3+namelen])
+	nameLen, nameLenLen := binary.Uvarint(data[1:])
+	return string(data[1+nameLenLen : 1+nameLenLen+int(nameLen)])
 }
 
 func decodetypeFuncInType(ldr *loader.Loader, arch *sys.Arch, symIdx loader.Sym, relocs *loader.Relocs, i int) loader.Sym {
@@ -283,7 +280,7 @@ func findShlibSection(ctxt *Link, path string, addr uint64) *elf.Section {
 	for _, shlib := range ctxt.Shlibs {
 		if shlib.Path == path {
 			for _, sect := range shlib.File.Sections[1:] { // skip the NULL section
-				if sect.Addr <= addr && addr <= sect.Addr+sect.Size {
+				if sect.Addr <= addr && addr < sect.Addr+sect.Size {
 					return sect
 				}
 			}
