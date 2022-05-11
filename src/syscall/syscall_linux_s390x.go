@@ -33,11 +33,7 @@ const _SYS_setgroups = SYS_SETGROUPS
 //sys	sendfile(outfd int, infd int, offset *int64, count int) (written int, err error)
 //sys	Setfsgid(gid int) (err error)
 //sys	Setfsuid(uid int) (err error)
-//sysnb	Setregid(rgid int, egid int) (err error)
-//sysnb	Setresgid(rgid int, egid int, sgid int) (err error)
-//sysnb	Setresuid(ruid int, euid int, suid int) (err error)
 //sysnb	Setrlimit(resource int, rlim *Rlimit) (err error)
-//sysnb	Setreuid(ruid int, euid int) (err error)
 //sys	Splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (n int64, err error)
 //sys	Stat(path string, stat *Stat_t) (err error)
 //sys	Statfs(path string, buf *Statfs_t) (err error)
@@ -45,7 +41,6 @@ const _SYS_setgroups = SYS_SETGROUPS
 //sys	Truncate(path string, length int64) (err error)
 //sys	Ustat(dev int, ubuf *Ustat_t) (err error)
 //sysnb	getgroups(n int, list *_Gid_t) (nn int, err error)
-//sysnb	setgroups(n int, list *_Gid_t) (err error)
 
 //sys	futimesat(dirfd int, path string, times *[2]Timeval) (err error)
 //sysnb	Gettimeofday(tv *Timeval) (err error)
@@ -71,30 +66,6 @@ func setTimespec(sec, nsec int64) Timespec {
 
 func setTimeval(sec, usec int64) Timeval {
 	return Timeval{Sec: sec, Usec: usec}
-}
-
-func Pipe(p []int) (err error) {
-	if len(p) != 2 {
-		return EINVAL
-	}
-	var pp [2]_C_int
-	err = pipe2(&pp, 0)
-	p[0] = int(pp[0])
-	p[1] = int(pp[1])
-	return
-}
-
-//sysnb pipe2(p *[2]_C_int, flags int) (err error)
-
-func Pipe2(p []int, flags int) (err error) {
-	if len(p) != 2 {
-		return EINVAL
-	}
-	var pp [2]_C_int
-	err = pipe2(&pp, flags)
-	p[0] = int(pp[0])
-	p[1] = int(pp[1])
-	return
 }
 
 // Linux on s390x uses the old mmap interface, which requires arguments to be passed in a struct.

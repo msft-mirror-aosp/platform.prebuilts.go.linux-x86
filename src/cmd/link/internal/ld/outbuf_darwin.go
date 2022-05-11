@@ -2,12 +2,19 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build darwin && go1.12
+// +build darwin,go1.12
+
 package ld
 
 import (
 	"syscall"
 	"unsafe"
 )
+
+// Implemented in the syscall package.
+//go:linkname fcntl syscall.fcntl
+func fcntl(fd int, cmd int, arg int) (int, error)
 
 func (out *OutBuf) fallocate(size uint64) error {
 	stat, err := out.f.Stat()
@@ -29,10 +36,15 @@ func (out *OutBuf) fallocate(size uint64) error {
 		Length:  int64(size - cursize),
 	}
 
-	_, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(out.f.Fd()), syscall.F_PREALLOCATE, uintptr(unsafe.Pointer(store)))
-	if errno != 0 {
-		return errno
-	}
+	_, err = fcntl(int(out.f.Fd()), syscall.F_PREALLOCATE, int(uintptr(unsafe.Pointer(store))))
+	return err
+}
 
-	return nil
+func (out *OutBuf) purgeSignatureCache() {
+	// Apparently, the Darwin kernel may cache the code signature at mmap.
+	// When we mmap the output buffer, it doesn't have a code signature
+	// (as we haven't generated one). Invalidate the kernel cache now that
+	// we have generated the signature. See issue #42684.
+	syscall.Syscall(syscall.SYS_MSYNC, uintptr(unsafe.Pointer(&out.buf[0])), uintptr(len(out.buf)), syscall.MS_INVALIDATE)
+	// Best effort. Ignore error.
 }
