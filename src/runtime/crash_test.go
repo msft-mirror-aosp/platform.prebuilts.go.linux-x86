@@ -6,18 +6,20 @@ package runtime_test
 
 import (
 	"bytes"
-	"errors"
 	"flag"
 	"fmt"
 	"internal/testenv"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 var toRemove []string
@@ -33,13 +35,12 @@ func TestMain(m *testing.M) {
 var testprog struct {
 	sync.Mutex
 	dir    string
-	target map[string]*buildexe
+	target map[string]buildexe
 }
 
 type buildexe struct {
-	once sync.Once
-	exe  string
-	err  error
+	exe string
+	err error
 }
 
 func runTestProg(t *testing.T, binary, name string, env ...string) string {
@@ -69,21 +70,54 @@ func runBuiltTestProg(t *testing.T, exe, name string, env ...string) string {
 	if testing.Short() {
 		cmd.Env = append(cmd.Env, "RUNTIME_TEST_SHORT=1")
 	}
-	out, _ := testenv.RunWithTimeout(t, cmd)
-	return string(out)
-}
+	var b bytes.Buffer
+	cmd.Stdout = &b
+	cmd.Stderr = &b
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting %s %s: %v", exe, name, err)
+	}
 
-var serializeBuild = make(chan bool, 2)
+	// If the process doesn't complete within 1 minute,
+	// assume it is hanging and kill it to get a stack trace.
+	p := cmd.Process
+	done := make(chan bool)
+	go func() {
+		scale := 1
+		// This GOARCH/GOOS test is copied from cmd/dist/test.go.
+		// TODO(iant): Have cmd/dist update the environment variable.
+		if runtime.GOARCH == "arm" || runtime.GOOS == "windows" {
+			scale = 2
+		}
+		if s := os.Getenv("GO_TEST_TIMEOUT_SCALE"); s != "" {
+			if sc, err := strconv.Atoi(s); err == nil {
+				scale = sc
+			}
+		}
+
+		select {
+		case <-done:
+		case <-time.After(time.Duration(scale) * time.Minute):
+			p.Signal(sigquit)
+		}
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		t.Logf("%s %s exit status: %v", exe, name, err)
+	}
+	close(done)
+
+	return b.String()
+}
 
 func buildTestProg(t *testing.T, binary string, flags ...string) (string, error) {
 	if *flagQuick {
 		t.Skip("-quick")
 	}
-	testenv.MustHaveGoBuild(t)
 
 	testprog.Lock()
+	defer testprog.Unlock()
 	if testprog.dir == "" {
-		dir, err := os.MkdirTemp("", "go-build")
+		dir, err := ioutil.TempDir("", "go-build")
 		if err != nil {
 			t.Fatalf("failed to create temp directory: %v", err)
 		}
@@ -92,48 +126,29 @@ func buildTestProg(t *testing.T, binary string, flags ...string) (string, error)
 	}
 
 	if testprog.target == nil {
-		testprog.target = make(map[string]*buildexe)
+		testprog.target = make(map[string]buildexe)
 	}
 	name := binary
 	if len(flags) > 0 {
 		name += "_" + strings.Join(flags, "_")
 	}
 	target, ok := testprog.target[name]
-	if !ok {
-		target = &buildexe{}
-		testprog.target[name] = target
+	if ok {
+		return target.exe, target.err
 	}
 
-	dir := testprog.dir
-
-	// Unlock testprog while actually building, so that other
-	// tests can look up executables that were already built.
-	testprog.Unlock()
-
-	target.once.Do(func() {
-		// Only do two "go build"'s at a time,
-		// to keep load from getting too high.
-		serializeBuild <- true
-		defer func() { <-serializeBuild }()
-
-		// Don't get confused if testenv.GoToolPath calls t.Skip.
-		target.err = errors.New("building test called t.Skip")
-
-		exe := filepath.Join(dir, name+".exe")
-
-		t.Logf("running go build -o %s %s", exe, strings.Join(flags, " "))
-		cmd := exec.Command(testenv.GoToolPath(t), append([]string{"build", "-o", exe}, flags...)...)
-		cmd.Dir = "testdata/" + binary
-		out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
-		if err != nil {
-			target.err = fmt.Errorf("building %s %v: %v\n%s", binary, flags, err, out)
-		} else {
-			target.exe = exe
-			target.err = nil
-		}
-	})
-
-	return target.exe, target.err
+	exe := filepath.Join(testprog.dir, name+".exe")
+	cmd := exec.Command(testenv.GoToolPath(t), append([]string{"build", "-o", exe}, flags...)...)
+	cmd.Dir = "testdata/" + binary
+	out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
+	if err != nil {
+		target.err = fmt.Errorf("building %s %v: %v\n%s", binary, flags, err, out)
+		testprog.target[name] = target
+		return "", target.err
+	}
+	target.exe = exe
+	testprog.target[name] = target
+	return exe, nil
 }
 
 func TestVDSO(t *testing.T) {
@@ -166,9 +181,6 @@ func TestCrashHandler(t *testing.T) {
 }
 
 func testDeadlock(t *testing.T, name string) {
-	// External linking brings in cgo, causing deadlock detection not working.
-	testenv.MustInternalLink(t)
-
 	output := runTestProg(t, "testprog", name)
 	want := "fatal error: all goroutines are asleep - deadlock!\n"
 	if !strings.HasPrefix(output, want) {
@@ -193,9 +205,6 @@ func TestLockedDeadlock2(t *testing.T) {
 }
 
 func TestGoexitDeadlock(t *testing.T) {
-	// External linking brings in cgo, causing deadlock detection not working.
-	testenv.MustInternalLink(t)
-
 	output := runTestProg(t, "testprog", "GoexitDeadlock")
 	want := "no goroutines (main called runtime.Goexit) - deadlock!"
 	if !strings.Contains(output, want) {
@@ -280,22 +289,7 @@ func TestRecursivePanic4(t *testing.T) {
 
 }
 
-func TestRecursivePanic5(t *testing.T) {
-	output := runTestProg(t, "testprog", "RecursivePanic5")
-	want := `first panic
-second panic
-panic: third panic
-`
-	if !strings.HasPrefix(output, want) {
-		t.Fatalf("output does not start with %q:\n%s", want, output)
-	}
-
-}
-
 func TestGoexitCrash(t *testing.T) {
-	// External linking brings in cgo, causing deadlock detection not working.
-	testenv.MustInternalLink(t)
-
 	output := runTestProg(t, "testprog", "GoexitExit")
 	want := "no goroutines (main called runtime.Goexit) - deadlock!"
 	if !strings.Contains(output, want) {
@@ -354,9 +348,6 @@ func TestBreakpoint(t *testing.T) {
 }
 
 func TestGoexitInPanic(t *testing.T) {
-	// External linking brings in cgo, causing deadlock detection not working.
-	testenv.MustInternalLink(t)
-
 	// see issue 8774: this code used to trigger an infinite recursion
 	output := runTestProg(t, "testprog", "GoexitInPanic")
 	want := "fatal error: no goroutines (main called runtime.Goexit) - deadlock!"
@@ -403,7 +394,7 @@ func TestRuntimePanicWithRuntimeError(t *testing.T) {
 	}
 }
 
-func panicValue(fn func()) (recovered any) {
+func panicValue(fn func()) (recovered interface{}) {
 	defer func() {
 		recovered = recover()
 	}()
@@ -421,9 +412,6 @@ func TestPanicAfterGoexit(t *testing.T) {
 }
 
 func TestRecoveredPanicAfterGoexit(t *testing.T) {
-	// External linking brings in cgo, causing deadlock detection not working.
-	testenv.MustInternalLink(t)
-
 	output := runTestProg(t, "testprog", "RecoveredPanicAfterGoexit")
 	want := "fatal error: no goroutines (main called runtime.Goexit) - deadlock!"
 	if !strings.HasPrefix(output, want) {
@@ -432,9 +420,6 @@ func TestRecoveredPanicAfterGoexit(t *testing.T) {
 }
 
 func TestRecoverBeforePanicAfterGoexit(t *testing.T) {
-	// External linking brings in cgo, causing deadlock detection not working.
-	testenv.MustInternalLink(t)
-
 	t.Parallel()
 	output := runTestProg(t, "testprog", "RecoverBeforePanicAfterGoexit")
 	want := "fatal error: no goroutines (main called runtime.Goexit) - deadlock!"
@@ -444,9 +429,6 @@ func TestRecoverBeforePanicAfterGoexit(t *testing.T) {
 }
 
 func TestRecoverBeforePanicAfterGoexit2(t *testing.T) {
-	// External linking brings in cgo, causing deadlock detection not working.
-	testenv.MustInternalLink(t)
-
 	t.Parallel()
 	output := runTestProg(t, "testprog", "RecoverBeforePanicAfterGoexit2")
 	want := "fatal error: no goroutines (main called runtime.Goexit) - deadlock!"
@@ -456,6 +438,14 @@ func TestRecoverBeforePanicAfterGoexit2(t *testing.T) {
 }
 
 func TestNetpollDeadlock(t *testing.T) {
+	if os.Getenv("GO_BUILDER_NAME") == "darwin-amd64-10_12" {
+		// A suspected kernel bug in macOS 10.12 occasionally results in
+		// an apparent deadlock when dialing localhost. The errors have not
+		// been observed on newer versions of the OS, so we don't plan to work
+		// around them. See https://golang.org/issue/22019.
+		testenv.SkipFlaky(t, 22019)
+	}
+
 	t.Parallel()
 	output := runTestProg(t, "testprognet", "NetpollDeadlock")
 	want := "done\n"
@@ -677,16 +667,7 @@ func TestBadTraceback(t *testing.T) {
 }
 
 func TestTimePprof(t *testing.T) {
-	// This test is unreliable on any system in which nanotime
-	// calls into libc.
-	switch runtime.GOOS {
-	case "aix", "darwin", "illumos", "openbsd", "solaris":
-		t.Skipf("skipping on %s because nanotime calls libc", runtime.GOOS)
-	}
-
-	// Pass GOTRACEBACK for issue #41120 to try to get more
-	// information on timeout.
-	fn := runTestProg(t, "testprog", "TimeProf", "GOTRACEBACK=crash")
+	fn := runTestProg(t, "testprog", "TimeProf")
 	fn = strings.TrimSpace(fn)
 	defer os.Remove(fn)
 

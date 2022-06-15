@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build dragonfly || freebsd || netbsd || openbsd || solaris
+// +build dragonfly freebsd netbsd openbsd solaris
 
 package runtime
 
@@ -13,12 +13,12 @@ import (
 // Don't split the stack as this function may be invoked without a valid G,
 // which prevents us from allocating more stack.
 //go:nosplit
-func sysAlloc(n uintptr, sysStat *sysMemStat) unsafe.Pointer {
+func sysAlloc(n uintptr, sysStat *uint64) unsafe.Pointer {
 	v, err := mmap(nil, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_PRIVATE, -1, 0)
 	if err != 0 {
 		return nil
 	}
-	sysStat.add(int64(n))
+	mSysStatInc(sysStat, n)
 	return v
 }
 
@@ -35,8 +35,8 @@ func sysHugePage(v unsafe.Pointer, n uintptr) {
 // Don't split the stack as this function may be invoked without a valid G,
 // which prevents us from allocating more stack.
 //go:nosplit
-func sysFree(v unsafe.Pointer, n uintptr, sysStat *sysMemStat) {
-	sysStat.add(-int64(n))
+func sysFree(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+	mSysStatDec(sysStat, n)
 	munmap(v, n)
 }
 
@@ -65,15 +65,14 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 const _sunosEAGAIN = 11
 const _ENOMEM = 12
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *sysMemStat) {
-	sysStat.add(int64(n))
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+	mSysStatInc(sysStat, n)
 
 	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_FIXED|_MAP_PRIVATE, -1, 0)
 	if err == _ENOMEM || ((GOOS == "solaris" || GOOS == "illumos") && err == _sunosEAGAIN) {
 		throw("runtime: out of memory")
 	}
 	if p != v || err != 0 {
-		print("runtime: mmap(", v, ", ", n, ") returned ", p, ", ", err, "\n")
 		throw("runtime: cannot map pages in arena address space")
 	}
 }

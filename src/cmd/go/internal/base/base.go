@@ -7,12 +7,11 @@
 package base
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	exec "internal/execabs"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 
@@ -25,7 +24,7 @@ import (
 type Command struct {
 	// Run runs the command.
 	// The args are the arguments after the command name.
-	Run func(ctx context.Context, cmd *Command, args []string)
+	Run func(cmd *Command, args []string)
 
 	// UsageLine is the one-line usage message.
 	// The words between "go" and the first flag or argument in the line are taken to be the command name.
@@ -54,20 +53,6 @@ var Go = &Command{
 	UsageLine: "go",
 	Long:      `Go is a tool for managing Go source code.`,
 	// Commands initialized in package main
-}
-
-// hasFlag reports whether a command or any of its subcommands contain the given
-// flag.
-func hasFlag(c *Command, name string) bool {
-	if f := c.Flag.Lookup(name); f != nil {
-		return true
-	}
-	for _, sub := range c.Commands {
-		if hasFlag(sub, name) {
-			return true
-		}
-	}
-	return false
 }
 
 // LongName returns the command's long name: all the words in the usage line between "go" and a flag or argument,
@@ -117,12 +102,12 @@ func Exit() {
 	os.Exit(exitStatus)
 }
 
-func Fatalf(format string, args ...any) {
+func Fatalf(format string, args ...interface{}) {
 	Errorf(format, args...)
 	Exit()
 }
 
-func Errorf(format string, args ...any) {
+func Errorf(format string, args ...interface{}) {
 	log.Printf(format, args...)
 	SetExitStatus(1)
 }
@@ -151,7 +136,7 @@ func GetExitStatus() int {
 // Run runs the command, with stdout and stderr
 // connected to the go command's own stdout and stderr.
 // If the command fails, Run reports the error using Errorf.
-func Run(cmdargs ...any) {
+func Run(cmdargs ...interface{}) {
 	cmdline := str.StringList(cmdargs...)
 	if cfg.BuildN || cfg.BuildX {
 		fmt.Printf("%s\n", strings.Join(cmdline, " "))

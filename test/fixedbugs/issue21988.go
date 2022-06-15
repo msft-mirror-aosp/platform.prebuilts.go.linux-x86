@@ -8,7 +8,7 @@
 
 package p
 
-const X = Wrong(0) // ERROR "undefined: Wrong|undefined name .*Wrong"
+const X = Wrong(0) // ERROR "undefined: Wrong"
 
 func _() {
 	switch 0 {

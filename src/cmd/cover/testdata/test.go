@@ -13,7 +13,6 @@ package main
 import _ "unsafe" // for go:linkname
 
 //go:linkname some_name some_name
-var some_name int
 
 const anything = 1e9 // Just some unlikely value that means "we got here, don't care how often"
 
@@ -151,7 +150,7 @@ func testSwitch() {
 }
 
 func testTypeSwitch() {
-	var x = []any{1, 2.0, "hi"}
+	var x = []interface{}{1, 2.0, "hi"}
 	for _, v := range x {
 		switch func() { check(LINE, 3) }(); v.(type) {
 		case int:
@@ -215,7 +214,7 @@ func testEmptySwitches() {
 	switch 3 {
 	}
 	check(LINE, 1)
-	switch i := (any)(3).(int); i {
+	switch i := (interface{})(3).(int); i {
 	}
 	check(LINE, 1)
 	c := make(chan int)

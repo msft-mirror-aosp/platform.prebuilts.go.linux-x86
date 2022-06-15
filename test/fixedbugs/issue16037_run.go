@@ -1,4 +1,4 @@
-// +build !nacl,!js,!android,!gccgo
+// +build !nacl,!js,!android
 // run
 
 // Copyright 2016 The Go Authors. All rights reserved.

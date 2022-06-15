@@ -5,7 +5,9 @@
 // This file contains a driver.UI implementation
 // that provides the readline functionality if possible.
 
-//go:build (darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || windows) && !appengine && !android
+// +build darwin dragonfly freebsd linux netbsd openbsd solaris windows
+// +build !appengine
+// +build !android
 
 package main
 
@@ -16,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/google/pprof/driver"
-	"golang.org/x/term"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 func init() {
@@ -24,11 +26,11 @@ func init() {
 }
 
 // readlineUI implements driver.UI interface using the
-// golang.org/x/term package.
+// golang.org/x/crypto/ssh/terminal package.
 // The upstream pprof command implements the same functionality
 // using the github.com/chzyer/readline package.
 type readlineUI struct {
-	term *term.Terminal
+	term *terminal.Terminal
 }
 
 func newReadlineUI() driver.UI {
@@ -36,19 +38,19 @@ func newReadlineUI() driver.UI {
 	if v := strings.ToLower(os.Getenv("TERM")); v == "" || v == "dumb" {
 		return nil
 	}
-	// test if we can use term.ReadLine
+	// test if we can use terminal.ReadLine
 	// that assumes operation in the raw mode.
-	oldState, err := term.MakeRaw(0)
+	oldState, err := terminal.MakeRaw(0)
 	if err != nil {
 		return nil
 	}
-	term.Restore(0, oldState)
+	terminal.Restore(0, oldState)
 
 	rw := struct {
 		io.Reader
 		io.Writer
 	}{os.Stdin, os.Stderr}
-	return &readlineUI{term: term.NewTerminal(rw, "")}
+	return &readlineUI{term: terminal.NewTerminal(rw, "")}
 }
 
 // Read returns a line of text (a command) read from the user.
@@ -58,8 +60,8 @@ func (r *readlineUI) ReadLine(prompt string) (string, error) {
 
 	// skip error checking because we tested it
 	// when creating this readlineUI initially.
-	oldState, _ := term.MakeRaw(0)
-	defer term.Restore(0, oldState)
+	oldState, _ := terminal.MakeRaw(0)
+	defer terminal.Restore(0, oldState)
 
 	s, err := r.term.ReadLine()
 	return s, err
@@ -69,18 +71,18 @@ func (r *readlineUI) ReadLine(prompt string) (string, error) {
 // It formats the text as fmt.Print would and adds a final \n if not already present.
 // For line-based UI, Print writes to standard error.
 // (Standard output is reserved for report data.)
-func (r *readlineUI) Print(args ...any) {
+func (r *readlineUI) Print(args ...interface{}) {
 	r.print(false, args...)
 }
 
 // PrintErr shows an error message to the user.
 // It formats the text as fmt.Print would and adds a final \n if not already present.
 // For line-based UI, PrintErr writes to standard error.
-func (r *readlineUI) PrintErr(args ...any) {
+func (r *readlineUI) PrintErr(args ...interface{}) {
 	r.print(true, args...)
 }
 
-func (r *readlineUI) print(withColor bool, args ...any) {
+func (r *readlineUI) print(withColor bool, args ...interface{}) {
 	text := fmt.Sprint(args...)
 	if !strings.HasSuffix(text, "\n") {
 		text += "\n"
@@ -103,7 +105,7 @@ func colorize(msg string) string {
 // interactive terminal (as opposed to being redirected to a file).
 func (r *readlineUI) IsTerminal() bool {
 	const stdout = 1
-	return term.IsTerminal(stdout)
+	return terminal.IsTerminal(stdout)
 }
 
 // WantBrowser indicates whether browser should be opened with the -http option.

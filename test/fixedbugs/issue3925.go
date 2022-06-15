@@ -18,6 +18,6 @@ var _ = map[string]string{
 var _ = []string{
 	"foo",
 	"bar",
-	20, // ERROR "cannot use|incompatible type|cannot convert"
+	20, // ERROR "cannot use|incompatible type"
 }
 

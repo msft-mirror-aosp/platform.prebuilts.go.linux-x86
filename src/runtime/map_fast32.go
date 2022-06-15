@@ -5,15 +5,14 @@
 package runtime
 
 import (
-	"internal/abi"
-	"internal/goarch"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
 func mapaccess1_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer {
 	if raceenabled && h != nil {
 		callerpc := getcallerpc()
-		racereadpc(unsafe.Pointer(h), callerpc, abi.FuncPCABIInternal(mapaccess1_fast32))
+		racereadpc(unsafe.Pointer(h), callerpc, funcPC(mapaccess1_fast32))
 	}
 	if h == nil || h.count == 0 {
 		return unsafe.Pointer(&zeroVal[0])
@@ -53,7 +52,7 @@ func mapaccess1_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer {
 func mapaccess2_fast32(t *maptype, h *hmap, key uint32) (unsafe.Pointer, bool) {
 	if raceenabled && h != nil {
 		callerpc := getcallerpc()
-		racereadpc(unsafe.Pointer(h), callerpc, abi.FuncPCABIInternal(mapaccess2_fast32))
+		racereadpc(unsafe.Pointer(h), callerpc, funcPC(mapaccess2_fast32))
 	}
 	if h == nil || h.count == 0 {
 		return unsafe.Pointer(&zeroVal[0]), false
@@ -96,7 +95,7 @@ func mapassign_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer {
 	}
 	if raceenabled {
 		callerpc := getcallerpc()
-		racewritepc(unsafe.Pointer(h), callerpc, abi.FuncPCABIInternal(mapassign_fast32))
+		racewritepc(unsafe.Pointer(h), callerpc, funcPC(mapassign_fast32))
 	}
 	if h.flags&hashWriting != 0 {
 		throw("concurrent map writes")
@@ -115,7 +114,7 @@ again:
 	if h.growing() {
 		growWork_fast32(t, h, bucket)
 	}
-	b := (*bmap)(add(h.buckets, bucket*uintptr(t.bucketsize)))
+	b := (*bmap)(unsafe.Pointer(uintptr(h.buckets) + bucket*uintptr(t.bucketsize)))
 
 	var insertb *bmap
 	var inserti uintptr
@@ -159,7 +158,7 @@ bucketloop:
 	}
 
 	if insertb == nil {
-		// The current bucket and all the overflow buckets connected to it are full, allocate a new one.
+		// all current buckets are full, allocate a new one.
 		insertb = h.newoverflow(t, b)
 		inserti = 0 // not necessary, but avoids needlessly spilling inserti
 	}
@@ -186,7 +185,7 @@ func mapassign_fast32ptr(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer
 	}
 	if raceenabled {
 		callerpc := getcallerpc()
-		racewritepc(unsafe.Pointer(h), callerpc, abi.FuncPCABIInternal(mapassign_fast32))
+		racewritepc(unsafe.Pointer(h), callerpc, funcPC(mapassign_fast32))
 	}
 	if h.flags&hashWriting != 0 {
 		throw("concurrent map writes")
@@ -205,7 +204,7 @@ again:
 	if h.growing() {
 		growWork_fast32(t, h, bucket)
 	}
-	b := (*bmap)(add(h.buckets, bucket*uintptr(t.bucketsize)))
+	b := (*bmap)(unsafe.Pointer(uintptr(h.buckets) + bucket*uintptr(t.bucketsize)))
 
 	var insertb *bmap
 	var inserti uintptr
@@ -249,7 +248,7 @@ bucketloop:
 	}
 
 	if insertb == nil {
-		// The current bucket and all the overflow buckets connected to it are full, allocate a new one.
+		// all current buckets are full, allocate a new one.
 		insertb = h.newoverflow(t, b)
 		inserti = 0 // not necessary, but avoids needlessly spilling inserti
 	}
@@ -273,7 +272,7 @@ done:
 func mapdelete_fast32(t *maptype, h *hmap, key uint32) {
 	if raceenabled && h != nil {
 		callerpc := getcallerpc()
-		racewritepc(unsafe.Pointer(h), callerpc, abi.FuncPCABIInternal(mapdelete_fast32))
+		racewritepc(unsafe.Pointer(h), callerpc, funcPC(mapdelete_fast32))
 	}
 	if h == nil || h.count == 0 {
 		return
@@ -300,12 +299,8 @@ search:
 				continue
 			}
 			// Only clear key if there are pointers in it.
-			// This can only happen if pointers are 32 bit
-			// wide as 64 bit pointers do not fit into a 32 bit key.
-			if goarch.PtrSize == 4 && t.key.ptrdata != 0 {
-				// The key must be a pointer as we checked pointers are
-				// 32 bits wide and the key is 32 bits wide also.
-				*(*unsafe.Pointer)(k) = nil
+			if t.key.ptrdata != 0 {
+				memclrHasPointers(k, t.key.size)
 			}
 			e := add(unsafe.Pointer(b), dataOffset+bucketCnt*4+i*uintptr(t.elemsize))
 			if t.elem.ptrdata != 0 {
@@ -345,11 +340,6 @@ search:
 			}
 		notLast:
 			h.count--
-			// Reset the hash seed to make it more difficult for attackers to
-			// repeatedly trigger hash collisions. See issue 25237.
-			if h.count == 0 {
-				h.hash0 = fastrand()
-			}
 			break search
 		}
 	}
@@ -428,7 +418,7 @@ func evacuate_fast32(t *maptype, h *hmap, oldbucket uintptr) {
 				dst.b.tophash[dst.i&(bucketCnt-1)] = top // mask dst.i as an optimization, to avoid a bounds check
 
 				// Copy key.
-				if goarch.PtrSize == 4 && t.key.ptrdata != 0 && writeBarrier.enabled {
+				if sys.PtrSize == 4 && t.key.ptrdata != 0 && writeBarrier.enabled {
 					// Write with a write barrier.
 					*(*unsafe.Pointer)(dst.k) = *(*unsafe.Pointer)(k)
 				} else {

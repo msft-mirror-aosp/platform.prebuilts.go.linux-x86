@@ -14,6 +14,6 @@ func init() {
 
 func main() {
 	init()         // ERROR "undefined.*init"
-	runtime.init() // ERROR "undefined.*runtime\.init|reference to undefined name|undefined: runtime"
+	runtime.init() // ERROR "undefined.*runtime\.init"
 	var _ = init   // ERROR "undefined.*init"
 }

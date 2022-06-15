@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build (!darwin && !linux) || (darwin && !go1.12)
-// +build !darwin,!linux darwin,!go1.12
+// +build !darwin,!linux
 
 package ld
 
+import "errors"
+
 func (out *OutBuf) fallocate(size uint64) error {
-	return errNoFallocate
+	return errors.New(fallocateNotSupportedErr)
 }

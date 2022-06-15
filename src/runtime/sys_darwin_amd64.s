@@ -9,9 +9,6 @@
 #include "go_asm.h"
 #include "go_tls.h"
 #include "textflag.h"
-#include "cgo/abi_amd64.h"
-
-#define CLOCK_REALTIME		0
 
 // Exit the entire program (like C exit)
 TEXT runtime·exit_trampoline(SB),NOSPLIT,$0
@@ -106,9 +103,6 @@ TEXT runtime·madvise_trampoline(SB), NOSPLIT, $0
 	POPQ	BP
 	RET
 
-TEXT runtime·mlock_trampoline(SB), NOSPLIT, $0
-	UNDEF // unimplemented
-
 GLOBL timebase<>(SB),NOPTR,$(machTimebaseInfo__size)
 
 TEXT runtime·nanotime_trampoline(SB),NOSPLIT,$0
@@ -143,9 +137,9 @@ initialized:
 TEXT runtime·walltime_trampoline(SB),NOSPLIT,$0
 	PUSHQ	BP			// make a frame; keep stack aligned
 	MOVQ	SP, BP
-	MOVQ	DI, SI			// arg 2 timespec
-	MOVL	$CLOCK_REALTIME, DI	// arg 1 clock_id
-	CALL	libc_clock_gettime(SB)
+	// DI already has *timeval
+	XORL	SI, SI // no timezone needed
+	CALL	libc_gettimeofday(SB)
 	POPQ	BP
 	RET
 
@@ -213,38 +207,36 @@ TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
 
 // This is the function registered during sigaction and is invoked when
 // a signal is received. It just redirects to the Go function sigtrampgo.
-// Called using C ABI.
 TEXT runtime·sigtramp(SB),NOSPLIT,$0
-	// Transition from C ABI to Go ABI.
-	PUSH_REGS_HOST_TO_ABI0()
+	// This runs on the signal stack, so we have lots of stack available.
+	// We allocate our own stack space, because if we tell the linker
+	// how much we're using, the NOSPLIT check fails.
+	PUSHQ	BP
+	MOVQ	SP, BP
+	SUBQ	$64, SP
+
+	// Save callee-save registers.
+	MOVQ	BX, 24(SP)
+	MOVQ	R12, 32(SP)
+	MOVQ	R13, 40(SP)
+	MOVQ	R14, 48(SP)
+	MOVQ	R15, 56(SP)
 
 	// Call into the Go signal handler
-	NOP	SP		// disable vet stack checking
-	ADJSP	$24
-	MOVL	DI, 0(SP)	// sig
-	MOVQ	SI, 8(SP)	// info
-	MOVQ	DX, 16(SP)	// ctx
-	CALL	·sigtrampgo(SB)
-	ADJSP	$-24
+	MOVL	DI, 0(SP)  // sig
+	MOVQ	SI, 8(SP)  // info
+	MOVQ	DX, 16(SP) // ctx
+	CALL runtime·sigtrampgo(SB)
 
-	POP_REGS_HOST_TO_ABI0()
-	RET
+	// Restore callee-save registers.
+	MOVQ	24(SP), BX
+	MOVQ	32(SP), R12
+	MOVQ	40(SP), R13
+	MOVQ	48(SP), R14
+	MOVQ	56(SP), R15
 
-// Called using C ABI.
-TEXT runtime·sigprofNonGoWrapper<>(SB),NOSPLIT,$0
-	// Transition from C ABI to Go ABI.
-	PUSH_REGS_HOST_TO_ABI0()
-
-	// Call into the Go signal handler
-	NOP	SP		// disable vet stack checking
-	ADJSP	$24
-	MOVL	DI, 0(SP)	// sig
-	MOVQ	SI, 8(SP)	// info
-	MOVQ	DX, 16(SP)	// ctx
-	CALL	·sigprofNonGo(SB)
-	ADJSP	$-24
-
-	POP_REGS_HOST_TO_ABI0()
+	MOVQ	BP, SP
+	POPQ	BP
 	RET
 
 // Used instead of sigtramp in programs that use cgo.
@@ -314,12 +306,12 @@ sigtrampnog:
 	JNZ	sigtramp  // Skip stack trace if already locked.
 
 	// Jump to the traceback function in runtime/cgo.
-	// It will call back to sigprofNonGo, via sigprofNonGoWrapper, to convert
-	// the arguments to the Go calling convention.
+	// It will call back to sigprofNonGo, which will ignore the
+	// arguments passed in registers.
 	// First three arguments to traceback function are in registers already.
 	MOVQ	runtime·cgoTraceback(SB), CX
 	MOVQ	$runtime·sigprofCallers(SB), R8
-	MOVQ	$runtime·sigprofNonGoWrapper<>(SB), R9
+	MOVQ	$runtime·sigprofNonGo(SB), R9
 	MOVQ	_cgo_callers(SB), AX
 	JMP	AX
 
@@ -374,24 +366,12 @@ TEXT runtime·sysctl_trampoline(SB),NOSPLIT,$0
 	PUSHQ	BP
 	MOVQ	SP, BP
 	MOVL	8(DI), SI		// arg 2 miblen
-	MOVQ	16(DI), DX		// arg 3 oldp
-	MOVQ	24(DI), CX		// arg 4 oldlenp
-	MOVQ	32(DI), R8		// arg 5 newp
-	MOVQ	40(DI), R9		// arg 6 newlen
+	MOVQ	16(DI), DX		// arg 3 out
+	MOVQ	24(DI), CX		// arg 4 size
+	MOVQ	32(DI), R8		// arg 5 dst
+	MOVQ	40(DI), R9		// arg 6 ndst
 	MOVQ	0(DI), DI		// arg 1 mib
 	CALL	libc_sysctl(SB)
-	POPQ	BP
-	RET
-
-TEXT runtime·sysctlbyname_trampoline(SB),NOSPLIT,$0
-	PUSHQ	BP
-	MOVQ	SP, BP
-	MOVQ	8(DI), SI		// arg 2 oldp
-	MOVQ	16(DI), DX		// arg 3 oldlenp
-	MOVQ	24(DI), CX		// arg 4 newp
-	MOVQ	32(DI), R8		// arg 5 newlen
-	MOVQ	0(DI), DI		// arg 1 name
-	CALL	libc_sysctlbyname(SB)
 	POPQ	BP
 	RET
 
@@ -439,8 +419,13 @@ TEXT runtime·mstart_stub(SB),NOSPLIT,$0
 	// DI points to the m.
 	// We are already on m's g0 stack.
 
-	// Transition from C ABI to Go ABI.
-	PUSH_REGS_HOST_TO_ABI0()
+	// Save callee-save registers.
+	SUBQ	$40, SP
+	MOVQ	BX, 0(SP)
+	MOVQ	R12, 8(SP)
+	MOVQ	R13, 16(SP)
+	MOVQ	R14, 24(SP)
+	MOVQ	R15, 32(SP)
 
 	MOVQ	m_g0(DI), DX // g
 
@@ -448,14 +433,24 @@ TEXT runtime·mstart_stub(SB),NOSPLIT,$0
 	// See cmd/link/internal/ld/sym.go:computeTLSOffset.
 	MOVQ	DX, 0x30(GS)
 
+	// Someday the convention will be D is always cleared.
+	CLD
+
 	CALL	runtime·mstart(SB)
 
-	POP_REGS_HOST_TO_ABI0()
+	// Restore callee-save registers.
+	MOVQ	0(SP), BX
+	MOVQ	8(SP), R12
+	MOVQ	16(SP), R13
+	MOVQ	24(SP), R14
+	MOVQ	32(SP), R15
 
 	// Go is all done with this OS thread.
 	// Tell pthread everything is ok (we never join with this thread, so
 	// the value here doesn't really matter).
 	XORL	AX, AX
+
+	ADDQ	$40, SP
 	RET
 
 // These trampolines help convert from Go calling convention to C calling convention.
@@ -831,10 +826,9 @@ ok:
 	POPQ	BP
 	RET
 
-// syscall_x509 is for crypto/x509. It is like syscall6 but does not check for errors,
-// takes 5 uintptrs and 1 float64, and only returns one value,
-// for use with standard C ABI functions.
-TEXT runtime·syscall_x509(SB),NOSPLIT,$0
+// syscallNoErr is like syscall6 but does not check for errors, and
+// only returns one value, for use with standard C ABI library functions.
+TEXT runtime·syscallNoErr(SB),NOSPLIT,$0
 	PUSHQ	BP
 	MOVQ	SP, BP
 	SUBQ	$16, SP
@@ -843,7 +837,7 @@ TEXT runtime·syscall_x509(SB),NOSPLIT,$0
 	MOVQ	(3*8)(DI), DX // a3
 	MOVQ	(4*8)(DI), CX // a4
 	MOVQ	(5*8)(DI), R8 // a5
-	MOVQ	(6*8)(DI), X0 // f1
+	MOVQ	(6*8)(DI), R9 // a6
 	MOVQ	DI, (SP)
 	MOVQ	(1*8)(DI), DI // a1
 	XORL	AX, AX	      // vararg: say "no float args"

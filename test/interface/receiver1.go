@@ -37,14 +37,14 @@ func main() {
 	var sp SP
 
 	v = t
-	p = t // ERROR "does not implement|requires a pointer|cannot use"
+	p = t // ERROR "does not implement|requires a pointer"
 	_, _ = v, p
 	v = &t
 	p = &t
 	_, _ = v, p
 
 	v = s
-	p = s // ERROR "does not implement|requires a pointer|cannot use"
+	p = s // ERROR "does not implement|requires a pointer"
 	_, _ = v, p
 	v = &s
 	p = &s

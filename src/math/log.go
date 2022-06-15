@@ -77,12 +77,7 @@ package math
 //	Log(0) = -Inf
 //	Log(x < 0) = NaN
 //	Log(NaN) = NaN
-func Log(x float64) float64 {
-	if haveArchLog {
-		return archLog(x)
-	}
-	return log(x)
-}
+func Log(x float64) float64
 
 func log(x float64) float64 {
 	const (
