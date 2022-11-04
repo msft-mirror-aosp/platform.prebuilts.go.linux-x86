@@ -173,7 +173,7 @@ func computeInterfaceTypeSet(check *Checker, pos syntax.Pos, ityp *Interface) *_
 			pos = ityp.methods[0].pos
 		}
 
-		check.trace(pos, "type set for %s", ityp)
+		check.trace(pos, "-- type set for %s", ityp)
 		check.indent++
 		defer func() {
 			check.indent--
@@ -248,7 +248,7 @@ func computeInterfaceTypeSet(check *Checker, pos syntax.Pos, ityp *Interface) *_
 					err.errorf(mpos[other.(*Func)], "other declaration of %s", m.name)
 					check.report(&err)
 				}
-			})
+			}).describef(pos, "duplicate method check for %s", m.name)
 		}
 	}
 
@@ -406,7 +406,7 @@ func computeUnionTypeSet(check *Checker, unionSets map[*Union]*_TypeSet, pos syn
 			// For now we don't permit type parameters as constraints.
 			assert(!isTypeParam(t.typ))
 			terms = computeInterfaceTypeSet(check, pos, ui).terms
-		} else if t.typ == Typ[Invalid] {
+		} else if u == Typ[Invalid] {
 			continue
 		} else {
 			if t.tilde && !Identical(t.typ, u) {
