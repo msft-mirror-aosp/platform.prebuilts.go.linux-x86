@@ -13,6 +13,7 @@ package syscall
 
 import (
 	"internal/itoa"
+	"runtime"
 	"unsafe"
 )
 
@@ -94,6 +95,7 @@ func Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno) 
 }
 
 func rawSyscallNoError(trap, a1, a2, a3 uintptr) (r1, r2 uintptr)
+func rawVforkSyscall(trap, a1, a2 uintptr) (r1 uintptr, err Errno)
 
 /*
  * Wrapped
@@ -115,6 +117,13 @@ func Creat(path string, mode uint32) (fd int, err error) {
 	return Open(path, O_CREAT|O_WRONLY|O_TRUNC, mode)
 }
 
+func EpollCreate(size int) (fd int, err error) {
+	if size <= 0 {
+		return -1, EINVAL
+	}
+	return EpollCreate1(0)
+}
+
 func isGroupMember(gid int) bool {
 	groups, err := Getgroups()
 	if err != nil {
@@ -129,11 +138,35 @@ func isGroupMember(gid int) bool {
 	return false
 }
 
+func isCapDacOverrideSet() bool {
+	const _CAP_DAC_OVERRIDE = 1
+	var c caps
+	c.hdr.version = _LINUX_CAPABILITY_VERSION_3
+
+	_, _, err := RawSyscall(SYS_CAPGET, uintptr(unsafe.Pointer(&c.hdr)), uintptr(unsafe.Pointer(&c.data[0])), 0)
+
+	return err == 0 && c.data[0].effective&capToMask(_CAP_DAC_OVERRIDE) != 0
+}
+
 //sys	faccessat(dirfd int, path string, mode uint32) (err error)
+//sys	faccessat2(dirfd int, path string, mode uint32, flags int) (err error) = _SYS_faccessat2
 
 func Faccessat(dirfd int, path string, mode uint32, flags int) (err error) {
-	if flags & ^(_AT_SYMLINK_NOFOLLOW|_AT_EACCESS) != 0 {
-		return EINVAL
+	if flags == 0 {
+		return faccessat(dirfd, path, mode)
+	}
+
+	// Attempt to use the newer faccessat2, which supports flags directly,
+	// falling back if it doesn't exist.
+	//
+	// Don't attempt on Android, which does not allow faccessat2 through
+	// its seccomp policy [1] on any version of Android as of 2022-12-20.
+	//
+	// [1] https://cs.android.com/android/platform/superproject/+/master:bionic/libc/SECCOMP_BLOCKLIST_APP.TXT;l=4;drc=dbb8670dfdcc677f7e3b9262e93800fa14c4e417
+	if runtime.GOOS != "android" {
+		if err := faccessat2(dirfd, path, mode, flags); err != ENOSYS && err != EPERM {
+			return err
+		}
 	}
 
 	// The Linux kernel faccessat system call does not take any flags.
@@ -142,8 +175,8 @@ func Faccessat(dirfd int, path string, mode uint32, flags int) (err error) {
 	// Because people naturally expect syscall.Faccessat to act
 	// like C faccessat, we do the same.
 
-	if flags == 0 {
-		return faccessat(dirfd, path, mode)
+	if flags & ^(_AT_SYMLINK_NOFOLLOW|_AT_EACCESS) != 0 {
+		return EINVAL
 	}
 
 	var st Stat_t
@@ -156,9 +189,16 @@ func Faccessat(dirfd int, path string, mode uint32, flags int) (err error) {
 		return nil
 	}
 
+	// Fallback to checking permission bits.
 	var uid int
 	if flags&_AT_EACCESS != 0 {
 		uid = Geteuid()
+		if uid != 0 && isCapDacOverrideSet() {
+			// If CAP_DAC_OVERRIDE is set, file access check is
+			// done by the kernel in the same way as for root
+			// (see generic_permission() in the Linux sources).
+			uid = 0
+		}
 	} else {
 		uid = Getuid()
 	}
@@ -628,21 +668,6 @@ func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
 		return sa, nil
 	}
 	return nil, EAFNOSUPPORT
-}
-
-func Accept(fd int) (nfd int, sa Sockaddr, err error) {
-	var rsa RawSockaddrAny
-	var len _Socklen = SizeofSockaddrAny
-	nfd, err = accept4(fd, &rsa, &len, 0)
-	if err != nil {
-		return
-	}
-	sa, err = anyToSockaddr(&rsa)
-	if err != nil {
-		Close(nfd)
-		nfd = 0
-	}
-	return
 }
 
 func Accept4(fd int, flags int) (nfd int, sa Sockaddr, err error) {
