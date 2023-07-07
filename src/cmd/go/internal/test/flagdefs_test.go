@@ -9,13 +9,15 @@ import (
 	"cmd/go/internal/test/internal/genflags"
 	"flag"
 	"internal/testenv"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
 
 func TestMain(m *testing.M) {
-	cfg.SetGOROOT(testenv.GOROOT(nil))
+	cfg.SetGOROOT(testenv.GOROOT(nil), false)
+	os.Exit(m.Run())
 }
 
 func TestPassFlagToTestIncludesAllTestFlags(t *testing.T) {
@@ -25,7 +27,8 @@ func TestPassFlagToTestIncludesAllTestFlags(t *testing.T) {
 		}
 		name := strings.TrimPrefix(f.Name, "test.")
 		switch name {
-		case "testlogfile", "paniconexit0", "fuzzcachedir", "fuzzworker":
+		case "testlogfile", "paniconexit0", "fuzzcachedir", "fuzzworker",
+			"gocoverdir":
 			// These are internal flags.
 		default:
 			if !passFlagToTest[name] {
@@ -47,6 +50,8 @@ func TestPassFlagToTestIncludesAllTestFlags(t *testing.T) {
 }
 
 func TestVetAnalyzersSetIsCorrect(t *testing.T) {
+	testenv.MustHaveGoBuild(t) // runs 'go tool vet -flags'
+
 	vetAns, err := genflags.VetAnalyzers()
 	if err != nil {
 		t.Fatal(err)
