@@ -1,0 +1,16 @@
+name: "Go"
+description: "The Go programming language"
+
+third_party {
+  url {
+    type: HOMEPAGE
+    value: "https://go.dev"
+  }
+  url {
+    type: GIT
+    value: "https://github.com/golang/go"
+  }
+  version: "go1.20.2"
+  last_upgrade_date { year: 2023 month: 3 day: 15 }
+  license_type: NOTICE
+}
