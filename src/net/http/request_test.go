@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -31,7 +32,7 @@ func TestQuery(t *testing.T) {
 	}
 }
 
-// Issue #25192: Test that ParseForm fails but still parses the form when an URL
+// Issue #25192: Test that ParseForm fails but still parses the form when a URL
 // containing a semicolon is provided.
 func TestParseFormSemicolonSeparator(t *testing.T) {
 	for _, method := range []string{"POST", "PATCH", "PUT", "GET"} {
@@ -379,7 +380,7 @@ func TestMultipartRequest(t *testing.T) {
 }
 
 // Issue #25192: Test that ParseMultipartForm fails but still parses the
-// multi-part form when an URL containing a semicolon is provided.
+// multi-part form when a URL containing a semicolon is provided.
 func TestParseMultipartFormSemicolonSeparator(t *testing.T) {
 	req := newTestMultipartRequest(t)
 	req.URL = &url.URL{RawQuery: "q=foo;q=bar"}
@@ -766,18 +767,18 @@ func TestRequestWriteBufferedWriter(t *testing.T) {
 	}
 }
 
-func TestRequestBadHost(t *testing.T) {
+func TestRequestBadHostHeader(t *testing.T) {
 	got := []string{}
 	req, err := NewRequest("GET", "http://foo/after", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Host = "foo.com with spaces"
-	req.URL.Host = "foo.com with spaces"
+	req.Host = "foo.com\nnewline"
+	req.URL.Host = "foo.com\nnewline"
 	req.Write(logWrites{t, &got})
 	want := []string{
 		"GET /after HTTP/1.1\r\n",
-		"Host: foo.com\r\n",
+		"Host: \r\n",
 		"User-Agent: " + DefaultUserAgent + "\r\n",
 		"\r\n",
 	}
@@ -1386,5 +1387,11 @@ func runFileAndServerBenchmarks(b *testing.B, mode testMode, f *os.File, n int64
 
 		res.Body.Close()
 		b.SetBytes(n)
+	}
+}
+
+func TestErrNotSupported(t *testing.T) {
+	if !errors.Is(ErrNotSupported, errors.ErrUnsupported) {
+		t.Error("errors.Is(ErrNotSupported, errors.ErrUnsupported) failed")
 	}
 }
