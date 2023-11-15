@@ -53,6 +53,18 @@ var verifyTests = []verifyTest{
 		},
 	},
 	{
+		name:          "Valid (fqdn)",
+		leaf:          googleLeaf,
+		intermediates: []string{gtsIntermediate},
+		roots:         []string{gtsRoot},
+		currentTime:   1677615892,
+		dnsName:       "www.google.com.",
+
+		expectedChains: [][]string{
+			{"www.google.com", "GTS CA 1C3", "GTS Root R1"},
+		},
+	},
+	{
 		name:          "MixedCase",
 		leaf:          googleLeaf,
 		intermediates: []string{gtsIntermediate},
@@ -500,22 +512,21 @@ func testVerify(t *testing.T, test verifyTest, useSystemRoots bool) {
 		return true
 	}
 
-	// Every expected chain should match 1 returned chain
+	// Every expected chain should match one (or more) returned chain. We tolerate multiple
+	// matches, as due to root store semantics it is plausible that (at least on the system
+	// verifiers) multiple identical (looking) chains may be returned when two roots with the
+	// same subject are present.
 	for _, expectedChain := range test.expectedChains {
-		nChainMatched := 0
+		var match bool
 		for _, chain := range chains {
 			if doesMatch(expectedChain, chain) {
-				nChainMatched++
+				match = true
+				break
 			}
 		}
 
-		if nChainMatched != 1 {
-			t.Errorf("Got %v matches instead of %v for expected chain %v", nChainMatched, 1, expectedChain)
-			for _, chain := range chains {
-				if doesMatch(expectedChain, chain) {
-					t.Errorf("\t matched %v", chainToDebugString(chain))
-				}
-			}
+		if !match {
+			t.Errorf("No match found for %v", expectedChain)
 		}
 	}
 
@@ -1909,8 +1920,13 @@ type trustGraphEdge struct {
 	MutateTemplate func(*Certificate)
 }
 
+type rootDescription struct {
+	Subject        string
+	MutateTemplate func(*Certificate)
+}
+
 type trustGraphDescription struct {
-	Roots []string
+	Roots []rootDescription
 	Leaf  string
 	Graph []trustGraphEdge
 }
@@ -1965,10 +1981,10 @@ func buildTrustGraph(t *testing.T, d trustGraphDescription) (*CertPool, *CertPoo
 		if err != nil {
 			t.Fatalf("failed to generate test key: %s", err)
 		}
-		root := genCertEdge(t, r, k, nil, rootCertificate, nil, nil)
+		root := genCertEdge(t, r.Subject, k, r.MutateTemplate, rootCertificate, nil, nil)
 		roots = append(roots, root)
-		certs[r] = root
-		keys[r] = k
+		certs[r.Subject] = root
+		keys[r.Subject] = k
 	}
 
 	intermediates := []*Certificate{}
@@ -2060,7 +2076,7 @@ func TestPathBuilding(t *testing.T) {
 			//       +----+
 			name: "bad EKU",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2136,7 +2152,7 @@ func TestPathBuilding(t *testing.T) {
 			//       +----+
 			name: "bad EKU",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2218,7 +2234,7 @@ func TestPathBuilding(t *testing.T) {
 			//            +----+
 			name: "all paths",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2282,7 +2298,7 @@ func TestPathBuilding(t *testing.T) {
 			//       +----+
 			name: "ignore cross-sig loops",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2335,7 +2351,7 @@ func TestPathBuilding(t *testing.T) {
 			// the leaf has SANs.
 			name: "leaf with same subject, key, as parent but with SAN",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "root",
 				Graph: []trustGraphEdge{
 					{
@@ -2357,7 +2373,7 @@ func TestPathBuilding(t *testing.T) {
 			// through C should be ignored, because it has invalid EKU nesting.
 			name: "ignore invalid EKU path",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2400,6 +2416,70 @@ func TestPathBuilding(t *testing.T) {
 				"CN=leaf -> CN=inter b -> CN=inter a -> CN=root",
 			},
 		},
+		{
+			// A name constraint on the root should apply to any names that appear
+			// on the intermediate, meaning there is no valid chain.
+			name: "constrained root, invalid intermediate",
+			graph: trustGraphDescription{
+				Roots: []rootDescription{
+					{
+						Subject: "root",
+						MutateTemplate: func(t *Certificate) {
+							t.PermittedDNSDomains = []string{"example.com"}
+						},
+					},
+				},
+				Leaf: "leaf",
+				Graph: []trustGraphEdge{
+					{
+						Issuer:  "root",
+						Subject: "inter",
+						Type:    intermediateCertificate,
+						MutateTemplate: func(t *Certificate) {
+							t.DNSNames = []string{"beep.com"}
+						},
+					},
+					{
+						Issuer:  "inter",
+						Subject: "leaf",
+						Type:    leafCertificate,
+						MutateTemplate: func(t *Certificate) {
+							t.DNSNames = []string{"www.example.com"}
+						},
+					},
+				},
+			},
+			expectedErr: "x509: a root or intermediate certificate is not authorized to sign for this name: DNS name \"beep.com\" is not permitted by any constraint",
+		},
+		{
+			// A name constraint on the intermediate does not apply to the intermediate
+			// itself, so this is a valid chain.
+			name: "constrained intermediate, non-matching SAN",
+			graph: trustGraphDescription{
+				Roots: []rootDescription{{Subject: "root"}},
+				Leaf:  "leaf",
+				Graph: []trustGraphEdge{
+					{
+						Issuer:  "root",
+						Subject: "inter",
+						Type:    intermediateCertificate,
+						MutateTemplate: func(t *Certificate) {
+							t.DNSNames = []string{"beep.com"}
+							t.PermittedDNSDomains = []string{"example.com"}
+						},
+					},
+					{
+						Issuer:  "inter",
+						Subject: "leaf",
+						Type:    leafCertificate,
+						MutateTemplate: func(t *Certificate) {
+							t.DNSNames = []string{"www.example.com"}
+						},
+					},
+				},
+			},
+			expectedChains: []string{"CN=leaf -> CN=inter -> CN=root"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -2411,6 +2491,9 @@ func TestPathBuilding(t *testing.T) {
 			})
 			if err != nil && err.Error() != tc.expectedErr {
 				t.Fatalf("unexpected error: got %q, want %q", err, tc.expectedErr)
+			}
+			if len(tc.expectedChains) == 0 {
+				return
 			}
 			gotChains := chainsToStrings(chains)
 			if !reflect.DeepEqual(gotChains, tc.expectedChains) {
