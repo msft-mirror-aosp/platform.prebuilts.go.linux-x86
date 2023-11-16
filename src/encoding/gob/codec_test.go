@@ -1544,6 +1544,10 @@ type LargeSliceStruct struct {
 	S []StringPair
 }
 
+type LargeSliceString struct {
+	S []string
+}
+
 func testEncodeDecode(t *testing.T, in, out any) {
 	t.Helper()
 	var b bytes.Buffer
@@ -1592,4 +1596,26 @@ func TestLargeSlice(t *testing.T) {
 		rt := &LargeSliceStruct{}
 		testEncodeDecode(t, st, rt)
 	})
+	t.Run("string", func(t *testing.T) {
+		t.Parallel()
+		s := make([]string, 1<<21)
+		for i := range s {
+			s[i] = string(rune(i))
+		}
+		st := &LargeSliceString{S: s}
+		rt := &LargeSliceString{}
+		testEncodeDecode(t, st, rt)
+	})
+}
+
+func TestLocalRemoteTypesMismatch(t *testing.T) {
+	// Test data is from https://go.dev/issue/62117.
+	testData := []byte{9, 127, 3, 1, 2, 255, 128, 0, 0, 0, 3, 255, 128, 0}
+
+	var v []*struct{}
+	buf := bytes.NewBuffer(testData)
+	err := NewDecoder(buf).Decode(&v)
+	if err == nil {
+		t.Error("Encode/Decode: expected error but got err == nil")
+	}
 }
