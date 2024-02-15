@@ -9,10 +9,13 @@ import (
 	"internal/poll"
 	"internal/syscall/windows"
 	"runtime"
+	"sync"
 	"syscall"
-	"unicode/utf16"
 	"unsafe"
 )
+
+// This matches the value in syscall/syscall_windows.go.
+const _UTIME_OMIT = -1
 
 // file is the real representation of *File.
 // The extra level of indirection ensures that no clients of os
@@ -228,7 +231,7 @@ func (f *File) seek(offset int64, whence int) (ret int64, err error) {
 // Truncate changes the size of the named file.
 // If the file is a symbolic link, it changes the size of the link's target.
 func Truncate(name string, size int64) error {
-	f, e := OpenFile(name, O_WRONLY|O_CREATE, 0666)
+	f, e := OpenFile(name, O_WRONLY, 0666)
 	if e != nil {
 		return e
 	}
@@ -299,11 +302,23 @@ func Pipe() (r *File, w *File, err error) {
 	return newFile(p[0], "|0", "pipe"), newFile(p[1], "|1", "pipe"), nil
 }
 
+var (
+	useGetTempPath2Once sync.Once
+	useGetTempPath2     bool
+)
+
 func tempDir() string {
+	useGetTempPath2Once.Do(func() {
+		useGetTempPath2 = (windows.ErrorLoadingGetTempPath2() == nil)
+	})
+	getTempPath := syscall.GetTempPath
+	if useGetTempPath2 {
+		getTempPath = windows.GetTempPath2
+	}
 	n := uint32(syscall.MAX_PATH)
 	for {
 		b := make([]uint16, n)
-		n, _ = syscall.GetTempPath(uint32(len(b)), &b[0])
+		n, _ = getTempPath(uint32(len(b)), &b[0])
 		if n > uint32(len(b)) {
 			continue
 		}
@@ -313,7 +328,7 @@ func tempDir() string {
 			// Otherwise remove terminating \.
 			n--
 		}
-		return string(utf16.Decode(b[:n]))
+		return syscall.UTF16ToString(b[:n])
 	}
 }
 
