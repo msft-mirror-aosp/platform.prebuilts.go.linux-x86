@@ -109,6 +109,8 @@ var wincleantests = []PathTest{
 	{`//abc`, `\\abc`},
 	{`///abc`, `\\\abc`},
 	{`//abc//`, `\\abc\\`},
+	{`\\?\C:\`, `\\?\C:\`},
+	{`\\?\C:\a`, `\\?\C:\a`},
 
 	// Don't allow cleaning to move an element with a colon to the start of the path.
 	{`a/../c:`, `.\c:`},
@@ -584,23 +586,10 @@ func tempDirCanonical(t *testing.T) string {
 func TestWalk(t *testing.T) {
 	walk := func(root string, fn fs.WalkDirFunc) error {
 		return filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
-			return fn(path, &statDirEntry{info}, err)
+			return fn(path, fs.FileInfoToDirEntry(info), err)
 		})
 	}
 	testWalk(t, walk, 1)
-}
-
-type statDirEntry struct {
-	info fs.FileInfo
-}
-
-func (d *statDirEntry) Name() string               { return d.info.Name() }
-func (d *statDirEntry) IsDir() bool                { return d.info.IsDir() }
-func (d *statDirEntry) Type() fs.FileMode          { return d.info.Mode().Type() }
-func (d *statDirEntry) Info() (fs.FileInfo, error) { return d.info, nil }
-
-func (d *statDirEntry) String() string {
-	return fs.FormatDirEntry(d)
 }
 
 func TestWalkDir(t *testing.T) {
@@ -1610,10 +1599,13 @@ var volumenametests = []VolumeNameTest{
 	{`//.`, `\\.`},
 	{`//./`, `\\.\`},
 	{`//./NUL`, `\\.\NUL`},
-	{`//?/`, `\\?`},
+	{`//?`, `\\?`},
+	{`//?/`, `\\?\`},
+	{`//?/NUL`, `\\?\NUL`},
+	{`/??`, `\??`},
+	{`/??/`, `\??\`},
+	{`/??/NUL`, `\??\NUL`},
 	{`//./a/b`, `\\.\a`},
-	{`//?/`, `\\?`},
-	{`//?/`, `\\?`},
 	{`//./C:`, `\\.\C:`},
 	{`//./C:/`, `\\.\C:`},
 	{`//./C:/a/b/c`, `\\.\C:`},
@@ -1622,8 +1614,8 @@ var volumenametests = []VolumeNameTest{
 	{`//./UNC/host\`, `\\.\UNC\host\`},
 	{`//./UNC`, `\\.\UNC`},
 	{`//./UNC/`, `\\.\UNC\`},
-	{`\\?\x`, `\\?`},
-	{`\??\x`, `\??`},
+	{`\\?\x`, `\\?\x`},
+	{`\??\x`, `\??\x`},
 }
 
 func TestVolumeName(t *testing.T) {
