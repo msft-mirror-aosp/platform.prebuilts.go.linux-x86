@@ -106,7 +106,7 @@ func Check(t *testing.T) {
 	}
 
 	var nextFiles []string
-	if strings.Contains(runtime.Version(), "devel") {
+	if v := runtime.Version(); strings.Contains(v, "devel") || strings.Contains(v, "beta") {
 		next, err := filepath.Glob(filepath.Join(testenv.GOROOT(t), "api/next/*.txt"))
 		if err != nil {
 			t.Fatal(err)
@@ -490,7 +490,8 @@ func (w *Walker) loadImports() {
 		if w.context.Dir != "" {
 			cmd.Dir = w.context.Dir
 		}
-		out, err := cmd.CombinedOutput()
+		cmd.Stderr = os.Stderr
+		out, err := cmd.Output()
 		if err != nil {
 			log.Fatalf("loading imports: %v\n%s", err, out)
 		}
@@ -956,16 +957,16 @@ func (w *Walker) emitType(obj *types.TypeName) {
 	if w.isDeprecated(obj) {
 		w.emitf("type %s //deprecated", name)
 	}
+	typ := obj.Type()
+	if obj.IsAlias() {
+		w.emitf("type %s = %s", name, w.typeString(typ))
+		return
+	}
 	if tparams := obj.Type().(*types.Named).TypeParams(); tparams != nil {
 		var buf bytes.Buffer
 		buf.WriteString(name)
 		w.writeTypeParams(&buf, tparams, true)
 		name = buf.String()
-	}
-	typ := obj.Type()
-	if obj.IsAlias() {
-		w.emitf("type %s = %s", name, w.typeString(typ))
-		return
 	}
 	switch typ := typ.Underlying().(type) {
 	case *types.Struct:
