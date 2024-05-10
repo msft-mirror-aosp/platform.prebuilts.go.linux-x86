@@ -73,6 +73,7 @@ func readSetCookies(h Header) []*Cookie {
 		if !ok {
 			continue
 		}
+		name = textproto.TrimString(name)
 		if !isCookieNameValid(name) {
 			continue
 		}
@@ -162,7 +163,7 @@ func readSetCookies(h Header) []*Cookie {
 	return cookies
 }
 
-// SetCookie adds a Set-Cookie header to the provided ResponseWriter's headers.
+// SetCookie adds a Set-Cookie header to the provided [ResponseWriter]'s headers.
 // The provided cookie must have a valid Name. Invalid cookies may be
 // silently dropped.
 func SetCookie(w ResponseWriter, cookie *Cookie) {
@@ -171,7 +172,7 @@ func SetCookie(w ResponseWriter, cookie *Cookie) {
 	}
 }
 
-// String returns the serialization of the cookie for use in a Cookie
+// String returns the serialization of the cookie for use in a [Cookie]
 // header (if only Name and Value are set) or a Set-Cookie response
 // header (if other fields are set).
 // If c is nil or c.Name is invalid, the empty string is returned.
@@ -246,7 +247,7 @@ func (c *Cookie) Valid() error {
 	if !isCookieNameValid(c.Name) {
 		return errors.New("http: invalid Cookie.Name")
 	}
-	if !validCookieExpires(c.Expires) {
+	if !c.Expires.IsZero() && !validCookieExpires(c.Expires) {
 		return errors.New("http: invalid Cookie.Expires")
 	}
 	for i := 0; i < len(c.Value); i++ {
@@ -272,7 +273,7 @@ func (c *Cookie) Valid() error {
 // readCookies parses all "Cookie" values from the header h and
 // returns the successfully parsed Cookies.
 //
-// if filter isn't empty, only cookies of that name are returned
+// if filter isn't empty, only cookies of that name are returned.
 func readCookies(h Header, filter string) []*Cookie {
 	lines := h["Cookie"]
 	if len(lines) == 0 {
@@ -291,6 +292,7 @@ func readCookies(h Header, filter string) []*Cookie {
 				continue
 			}
 			name, val, _ := strings.Cut(part, "=")
+			name = textproto.TrimString(name)
 			if !isCookieNameValid(name) {
 				continue
 			}

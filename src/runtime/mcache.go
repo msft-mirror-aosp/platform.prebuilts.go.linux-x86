@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"runtime/internal/atomic"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -15,9 +16,9 @@ import (
 //
 // mcaches are allocated from non-GC'd memory, so any heap pointers
 // must be specially handled.
-//
-//go:notinheap
 type mcache struct {
+	_ sys.NotInHeap
+
 	// The following members are accessed on every malloc,
 	// so they are grouped here for better caching.
 	nextSample uintptr // trigger heap sample after allocating this many bytes
@@ -49,7 +50,7 @@ type mcache struct {
 	// was last flushed. If flushGen != mheap_.sweepgen, the spans
 	// in this mcache are stale and need to the flushed so they
 	// can be swept. This is done in acquirep.
-	flushGen uint32
+	flushGen atomic.Uint32
 }
 
 // A gclink is a node in a linked list of blocks, like mlink,
@@ -86,7 +87,7 @@ func allocmcache() *mcache {
 	systemstack(func() {
 		lock(&mheap_.lock)
 		c = (*mcache)(mheap_.cachealloc.alloc())
-		c.flushGen = mheap_.sweepgen
+		c.flushGen.Store(mheap_.sweepgen)
 		unlock(&mheap_.lock)
 	})
 	for i := range c.alloc {
@@ -147,7 +148,7 @@ func (c *mcache) refill(spc spanClass) {
 	// Return the current cached span to the central lists.
 	s := c.alloc[spc]
 
-	if uintptr(s.allocCount) != s.nelems {
+	if s.allocCount != s.nelems {
 		throw("refill of span with free space remaining")
 	}
 	if s != &emptymspan {
@@ -183,7 +184,7 @@ func (c *mcache) refill(spc spanClass) {
 		throw("out of memory")
 	}
 
-	if uintptr(s.allocCount) == s.nelems {
+	if s.allocCount == s.nelems {
 		throw("span has no free space")
 	}
 
@@ -251,7 +252,7 @@ func (c *mcache) allocLarge(size uintptr, noscan bool) *mspan {
 	// visible to the background sweeper.
 	mheap_.central[spc].mcentral.fullSwept(mheap_.sweepgen).push(s)
 	s.limit = s.base() + size
-	heapBitsForAddr(s.base()).initSpan(s)
+	s.initHeapBits(false)
 	return s
 }
 
@@ -283,7 +284,7 @@ func (c *mcache) releaseAll() {
 				//
 				// If this span was cached before sweep, then gcController.heapLive was totally
 				// recomputed since caching this span, so we don't do this for stale spans.
-				dHeapLive -= int64(uintptr(s.nelems)-uintptr(s.allocCount)) * int64(s.elemsize)
+				dHeapLive -= int64(s.nelems-s.allocCount) * int64(s.elemsize)
 			}
 
 			// Release the span to the mcentral.
@@ -317,13 +318,14 @@ func (c *mcache) prepareForSweep() {
 	// allocate-black. However, with this approach it's difficult
 	// to avoid spilling mark bits into the *next* GC cycle.
 	sg := mheap_.sweepgen
-	if c.flushGen == sg {
+	flushGen := c.flushGen.Load()
+	if flushGen == sg {
 		return
-	} else if c.flushGen != sg-2 {
-		println("bad flushGen", c.flushGen, "in prepareForSweep; sweepgen", sg)
+	} else if flushGen != sg-2 {
+		println("bad flushGen", flushGen, "in prepareForSweep; sweepgen", sg)
 		throw("bad flushGen")
 	}
 	c.releaseAll()
 	stackcache_clear(c)
-	atomic.Store(&c.flushGen, mheap_.sweepgen) // Synchronizes with gcStart
+	c.flushGen.Store(mheap_.sweepgen) // Synchronizes with gcStart
 }
