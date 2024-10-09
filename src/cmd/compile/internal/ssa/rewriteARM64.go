@@ -470,13 +470,23 @@ func rewriteValueARM64(v *Value) bool {
 		v.Op = OpARM64LoweredAtomicAdd64Variant
 		return true
 	case OpAtomicAnd32:
-		return rewriteValueARM64_OpAtomicAnd32(v)
+		v.Op = OpARM64LoweredAtomicAnd32
+		return true
 	case OpAtomicAnd32Variant:
-		return rewriteValueARM64_OpAtomicAnd32Variant(v)
+		v.Op = OpARM64LoweredAtomicAnd32Variant
+		return true
+	case OpAtomicAnd64:
+		v.Op = OpARM64LoweredAtomicAnd64
+		return true
+	case OpAtomicAnd64Variant:
+		v.Op = OpARM64LoweredAtomicAnd64Variant
+		return true
 	case OpAtomicAnd8:
-		return rewriteValueARM64_OpAtomicAnd8(v)
+		v.Op = OpARM64LoweredAtomicAnd8
+		return true
 	case OpAtomicAnd8Variant:
-		return rewriteValueARM64_OpAtomicAnd8Variant(v)
+		v.Op = OpARM64LoweredAtomicAnd8Variant
+		return true
 	case OpAtomicCompareAndSwap32:
 		v.Op = OpARM64LoweredAtomicCas32
 		return true
@@ -514,13 +524,23 @@ func rewriteValueARM64(v *Value) bool {
 		v.Op = OpARM64LDAR
 		return true
 	case OpAtomicOr32:
-		return rewriteValueARM64_OpAtomicOr32(v)
+		v.Op = OpARM64LoweredAtomicOr32
+		return true
 	case OpAtomicOr32Variant:
-		return rewriteValueARM64_OpAtomicOr32Variant(v)
+		v.Op = OpARM64LoweredAtomicOr32Variant
+		return true
+	case OpAtomicOr64:
+		v.Op = OpARM64LoweredAtomicOr64
+		return true
+	case OpAtomicOr64Variant:
+		v.Op = OpARM64LoweredAtomicOr64Variant
+		return true
 	case OpAtomicOr8:
-		return rewriteValueARM64_OpAtomicOr8(v)
+		v.Op = OpARM64LoweredAtomicOr8
+		return true
 	case OpAtomicOr8Variant:
-		return rewriteValueARM64_OpAtomicOr8Variant(v)
+		v.Op = OpARM64LoweredAtomicOr8Variant
+		return true
 	case OpAtomicStore32:
 		v.Op = OpARM64STLRW
 		return true
@@ -8307,39 +8327,6 @@ func rewriteValueARM64_OpARM64MOVBUloadidx(v *Value) bool {
 }
 func rewriteValueARM64_OpARM64MOVBUreg(v *Value) bool {
 	v_0 := v.Args[0]
-	// match: (MOVBUreg x:(MOVBUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(MOVBUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(MOVBUreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
 	// match: (MOVBUreg (ANDconst [c] x))
 	// result: (ANDconst [c&(1<<8-1)] x)
 	for {
@@ -8362,160 +8349,6 @@ func rewriteValueARM64_OpARM64MOVBUreg(v *Value) bool {
 		c := auxIntToInt64(v_0.AuxInt)
 		v.reset(OpARM64MOVDconst)
 		v.AuxInt = int64ToAuxInt(int64(uint8(c)))
-		return true
-	}
-	// match: (MOVBUreg x:(Equal _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64Equal {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(NotEqual _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64NotEqual {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(LessThan _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64LessThan {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(LessThanU _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64LessThanU {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(LessThanF _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64LessThanF {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(LessEqual _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64LessEqual {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(LessEqualU _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64LessEqualU {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(LessEqualF _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64LessEqualF {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(GreaterThan _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64GreaterThan {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(GreaterThanU _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64GreaterThanU {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(GreaterThanF _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64GreaterThanF {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(GreaterEqual _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64GreaterEqual {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(GreaterEqualU _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64GreaterEqualU {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBUreg x:(GreaterEqualF _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64GreaterEqualF {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
 		return true
 	}
 	// match: (MOVBUreg x)
@@ -8748,39 +8581,6 @@ func rewriteValueARM64_OpARM64MOVBloadidx(v *Value) bool {
 }
 func rewriteValueARM64_OpARM64MOVBreg(v *Value) bool {
 	v_0 := v.Args[0]
-	// match: (MOVBreg x:(MOVBload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBreg x:(MOVBloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVBreg x:(MOVBreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
 	// match: (MOVBreg (MOVDconst [c]))
 	// result: (MOVDconst [int64(int8(c))])
 	for {
@@ -10353,83 +10153,6 @@ func rewriteValueARM64_OpARM64MOVHUloadidx2(v *Value) bool {
 }
 func rewriteValueARM64_OpARM64MOVHUreg(v *Value) bool {
 	v_0 := v.Args[0]
-	// match: (MOVHUreg x:(MOVBUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHUreg x:(MOVHUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHUreg x:(MOVBUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHUreg x:(MOVHUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHUreg x:(MOVHUloadidx2 _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUloadidx2 {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHUreg x:(MOVBUreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHUreg x:(MOVHUreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
 	// match: (MOVHUreg (ANDconst [c] x))
 	// result: (ANDconst [c&(1<<16-1)] x)
 	for {
@@ -10790,116 +10513,6 @@ func rewriteValueARM64_OpARM64MOVHloadidx2(v *Value) bool {
 }
 func rewriteValueARM64_OpARM64MOVHreg(v *Value) bool {
 	v_0 := v.Args[0]
-	// match: (MOVHreg x:(MOVBload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVBUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVHload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVBloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVBUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVHloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVHloadidx2 _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHloadidx2 {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVBreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVBUreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVHreg x:(MOVHreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
 	// match: (MOVHreg (MOVDconst [c]))
 	// result: (MOVDconst [int64(int16(c))])
 	for {
@@ -11955,127 +11568,6 @@ func rewriteValueARM64_OpARM64MOVWUloadidx4(v *Value) bool {
 }
 func rewriteValueARM64_OpARM64MOVWUreg(v *Value) bool {
 	v_0 := v.Args[0]
-	// match: (MOVWUreg x:(MOVBUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVHUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVWUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVWUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVBUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVHUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVWUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVWUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVHUloadidx2 _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUloadidx2 {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVWUloadidx4 _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVWUloadidx4 {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVBUreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVHUreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWUreg x:(MOVWUreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVWUreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
 	// match: (MOVWUreg (ANDconst [c] x))
 	// result: (ANDconst [c&(1<<32-1)] x)
 	for {
@@ -12106,17 +11598,6 @@ func rewriteValueARM64_OpARM64MOVWUreg(v *Value) bool {
 	for {
 		x := v_0
 		if !(v.Type.Size() <= 4) {
-			break
-		}
-		v.copyOf(x)
-		return true
-	}
-	// match: (MOVWUreg x)
-	// cond: zeroUpper32Bits(x, 3)
-	// result: x
-	for {
-		x := v_0
-		if !(zeroUpper32Bits(x, 3)) {
 			break
 		}
 		v.copyOf(x)
@@ -12428,193 +11909,6 @@ func rewriteValueARM64_OpARM64MOVWloadidx4(v *Value) bool {
 }
 func rewriteValueARM64_OpARM64MOVWreg(v *Value) bool {
 	v_0 := v.Args[0]
-	// match: (MOVWreg x:(MOVBload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVBUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVHload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVHUload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVWload _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVWload {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVBloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVBUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVHloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVHUloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVWloadidx _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVWloadidx {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVHloadidx2 _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHloadidx2 {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVHUloadidx2 _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHUloadidx2 {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVWloadidx4 _ _ _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVWloadidx4 {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVBreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVBUreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVBUreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVHreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVHreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
-	// match: (MOVWreg x:(MOVWreg _))
-	// result: (MOVDreg x)
-	for {
-		x := v_0
-		if x.Op != OpARM64MOVWreg {
-			break
-		}
-		v.reset(OpARM64MOVDreg)
-		v.AddArg(x)
-		return true
-	}
 	// match: (MOVWreg (MOVDconst [c]))
 	// result: (MOVDconst [int64(int32(c))])
 	for {
@@ -18506,158 +17800,6 @@ func rewriteValueARM64_OpAddr(v *Value) bool {
 		v.reset(OpARM64MOVDaddr)
 		v.Aux = symToAux(sym)
 		v.AddArg(base)
-		return true
-	}
-}
-func rewriteValueARM64_OpAtomicAnd32(v *Value) bool {
-	v_2 := v.Args[2]
-	v_1 := v.Args[1]
-	v_0 := v.Args[0]
-	b := v.Block
-	typ := &b.Func.Config.Types
-	// match: (AtomicAnd32 ptr val mem)
-	// result: (Select1 (LoweredAtomicAnd32 ptr val mem))
-	for {
-		ptr := v_0
-		val := v_1
-		mem := v_2
-		v.reset(OpSelect1)
-		v0 := b.NewValue0(v.Pos, OpARM64LoweredAtomicAnd32, types.NewTuple(typ.UInt32, types.TypeMem))
-		v0.AddArg3(ptr, val, mem)
-		v.AddArg(v0)
-		return true
-	}
-}
-func rewriteValueARM64_OpAtomicAnd32Variant(v *Value) bool {
-	v_2 := v.Args[2]
-	v_1 := v.Args[1]
-	v_0 := v.Args[0]
-	b := v.Block
-	typ := &b.Func.Config.Types
-	// match: (AtomicAnd32Variant ptr val mem)
-	// result: (Select1 (LoweredAtomicAnd32Variant ptr val mem))
-	for {
-		ptr := v_0
-		val := v_1
-		mem := v_2
-		v.reset(OpSelect1)
-		v0 := b.NewValue0(v.Pos, OpARM64LoweredAtomicAnd32Variant, types.NewTuple(typ.UInt32, types.TypeMem))
-		v0.AddArg3(ptr, val, mem)
-		v.AddArg(v0)
-		return true
-	}
-}
-func rewriteValueARM64_OpAtomicAnd8(v *Value) bool {
-	v_2 := v.Args[2]
-	v_1 := v.Args[1]
-	v_0 := v.Args[0]
-	b := v.Block
-	typ := &b.Func.Config.Types
-	// match: (AtomicAnd8 ptr val mem)
-	// result: (Select1 (LoweredAtomicAnd8 ptr val mem))
-	for {
-		ptr := v_0
-		val := v_1
-		mem := v_2
-		v.reset(OpSelect1)
-		v0 := b.NewValue0(v.Pos, OpARM64LoweredAtomicAnd8, types.NewTuple(typ.UInt8, types.TypeMem))
-		v0.AddArg3(ptr, val, mem)
-		v.AddArg(v0)
-		return true
-	}
-}
-func rewriteValueARM64_OpAtomicAnd8Variant(v *Value) bool {
-	v_2 := v.Args[2]
-	v_1 := v.Args[1]
-	v_0 := v.Args[0]
-	b := v.Block
-	typ := &b.Func.Config.Types
-	// match: (AtomicAnd8Variant ptr val mem)
-	// result: (Select1 (LoweredAtomicAnd8Variant ptr val mem))
-	for {
-		ptr := v_0
-		val := v_1
-		mem := v_2
-		v.reset(OpSelect1)
-		v0 := b.NewValue0(v.Pos, OpARM64LoweredAtomicAnd8Variant, types.NewTuple(typ.UInt8, types.TypeMem))
-		v0.AddArg3(ptr, val, mem)
-		v.AddArg(v0)
-		return true
-	}
-}
-func rewriteValueARM64_OpAtomicOr32(v *Value) bool {
-	v_2 := v.Args[2]
-	v_1 := v.Args[1]
-	v_0 := v.Args[0]
-	b := v.Block
-	typ := &b.Func.Config.Types
-	// match: (AtomicOr32 ptr val mem)
-	// result: (Select1 (LoweredAtomicOr32 ptr val mem))
-	for {
-		ptr := v_0
-		val := v_1
-		mem := v_2
-		v.reset(OpSelect1)
-		v0 := b.NewValue0(v.Pos, OpARM64LoweredAtomicOr32, types.NewTuple(typ.UInt32, types.TypeMem))
-		v0.AddArg3(ptr, val, mem)
-		v.AddArg(v0)
-		return true
-	}
-}
-func rewriteValueARM64_OpAtomicOr32Variant(v *Value) bool {
-	v_2 := v.Args[2]
-	v_1 := v.Args[1]
-	v_0 := v.Args[0]
-	b := v.Block
-	typ := &b.Func.Config.Types
-	// match: (AtomicOr32Variant ptr val mem)
-	// result: (Select1 (LoweredAtomicOr32Variant ptr val mem))
-	for {
-		ptr := v_0
-		val := v_1
-		mem := v_2
-		v.reset(OpSelect1)
-		v0 := b.NewValue0(v.Pos, OpARM64LoweredAtomicOr32Variant, types.NewTuple(typ.UInt32, types.TypeMem))
-		v0.AddArg3(ptr, val, mem)
-		v.AddArg(v0)
-		return true
-	}
-}
-func rewriteValueARM64_OpAtomicOr8(v *Value) bool {
-	v_2 := v.Args[2]
-	v_1 := v.Args[1]
-	v_0 := v.Args[0]
-	b := v.Block
-	typ := &b.Func.Config.Types
-	// match: (AtomicOr8 ptr val mem)
-	// result: (Select1 (LoweredAtomicOr8 ptr val mem))
-	for {
-		ptr := v_0
-		val := v_1
-		mem := v_2
-		v.reset(OpSelect1)
-		v0 := b.NewValue0(v.Pos, OpARM64LoweredAtomicOr8, types.NewTuple(typ.UInt8, types.TypeMem))
-		v0.AddArg3(ptr, val, mem)
-		v.AddArg(v0)
-		return true
-	}
-}
-func rewriteValueARM64_OpAtomicOr8Variant(v *Value) bool {
-	v_2 := v.Args[2]
-	v_1 := v.Args[1]
-	v_0 := v.Args[0]
-	b := v.Block
-	typ := &b.Func.Config.Types
-	// match: (AtomicOr8Variant ptr val mem)
-	// result: (Select1 (LoweredAtomicOr8Variant ptr val mem))
-	for {
-		ptr := v_0
-		val := v_1
-		mem := v_2
-		v.reset(OpSelect1)
-		v0 := b.NewValue0(v.Pos, OpARM64LoweredAtomicOr8Variant, types.NewTuple(typ.UInt8, types.TypeMem))
-		v0.AddArg3(ptr, val, mem)
-		v.AddArg(v0)
 		return true
 	}
 }
