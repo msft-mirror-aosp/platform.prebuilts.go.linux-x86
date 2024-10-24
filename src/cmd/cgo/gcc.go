@@ -924,7 +924,7 @@ func (p *Package) rewriteCall(f *File, call *Call) (string, bool) {
 			if rtype != name.FuncType.Result.Go {
 				needsUnsafe = true
 			}
-			sb.WriteString(gofmtLine(rtype))
+			sb.WriteString(gofmt(rtype))
 			result = true
 		}
 
@@ -960,7 +960,7 @@ func (p *Package) rewriteCall(f *File, call *Call) (string, bool) {
 				needsUnsafe = true
 			}
 			fmt.Fprintf(&sb, "var _cgo%d %s = %s; ", i,
-				gofmtLine(ptype), gofmtPos(arg, origArg.Pos()))
+				gofmt(ptype), gofmtPos(arg, origArg.Pos()))
 			continue
 		}
 
@@ -1601,8 +1601,8 @@ func (p *Package) rewriteName(f *File, r *Ref, addPosition bool) ast.Expr {
 			break
 		}
 		if r.Context == ctxCall2 {
-			if r.Name.Go == "_CMalloc" {
-				error_(r.Pos(), "no two-result form for C.malloc")
+			if builtinDefs[r.Name.Go] != "" {
+				error_(r.Pos(), "no two-result form for C.%s", r.Name.Go)
 				break
 			}
 			// Invent new Name for the two-result function.
@@ -1682,7 +1682,7 @@ func (p *Package) rewriteName(f *File, r *Ref, addPosition bool) ast.Expr {
 // gofmtPos returns the gofmt-formatted string for an AST node,
 // with a comment setting the position before the node.
 func gofmtPos(n ast.Expr, pos token.Pos) string {
-	s := gofmtLine(n)
+	s := gofmt(n)
 	p := fset.Position(pos)
 	if p.Column == 0 {
 		return s
@@ -2579,6 +2579,11 @@ func (c *typeConv) loadType(dtype dwarf.Type, pos token.Pos, parent string) *Typ
 		if dt.BitSize > 0 {
 			fatalf("%s: unexpected: %d-bit int type - %s", lineno(pos), dt.BitSize, dtype)
 		}
+
+		if t.Align = t.Size; t.Align >= c.ptrSize {
+			t.Align = c.ptrSize
+		}
+
 		switch t.Size {
 		default:
 			fatalf("%s: unexpected: %d-byte int type - %s", lineno(pos), t.Size, dtype)
@@ -2595,9 +2600,8 @@ func (c *typeConv) loadType(dtype dwarf.Type, pos token.Pos, parent string) *Typ
 				Len: c.intExpr(t.Size),
 				Elt: c.uint8,
 			}
-		}
-		if t.Align = t.Size; t.Align >= c.ptrSize {
-			t.Align = c.ptrSize
+			// t.Align is the alignment of the Go type.
+			t.Align = 1
 		}
 
 	case *dwarf.PtrType:
@@ -2826,6 +2830,11 @@ func (c *typeConv) loadType(dtype dwarf.Type, pos token.Pos, parent string) *Typ
 		if dt.BitSize > 0 {
 			fatalf("%s: unexpected: %d-bit uint type - %s", lineno(pos), dt.BitSize, dtype)
 		}
+
+		if t.Align = t.Size; t.Align >= c.ptrSize {
+			t.Align = c.ptrSize
+		}
+
 		switch t.Size {
 		default:
 			fatalf("%s: unexpected: %d-byte uint type - %s", lineno(pos), t.Size, dtype)
@@ -2842,9 +2851,8 @@ func (c *typeConv) loadType(dtype dwarf.Type, pos token.Pos, parent string) *Typ
 				Len: c.intExpr(t.Size),
 				Elt: c.uint8,
 			}
-		}
-		if t.Align = t.Size; t.Align >= c.ptrSize {
-			t.Align = c.ptrSize
+			// t.Align is the alignment of the Go type.
+			t.Align = 1
 		}
 
 	case *dwarf.VoidType:
@@ -3110,10 +3118,11 @@ func (c *typeConv) Struct(dt *dwarf.StructType, pos token.Pos) (expr *ast.Struct
 		}
 
 		// Round off up to talign, assumed to be a power of 2.
+		origOff := off
 		off = (off + talign - 1) &^ (talign - 1)
 
 		if f.ByteOffset > off {
-			fld, sizes = c.pad(fld, sizes, f.ByteOffset-off)
+			fld, sizes = c.pad(fld, sizes, f.ByteOffset-origOff)
 			off = f.ByteOffset
 		}
 		if f.ByteOffset < off {
