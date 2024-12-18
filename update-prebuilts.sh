@@ -76,7 +76,7 @@ https://ci.android.com/builds/branches/aosp-build-tools-release/grid?head=${BUIL
 Update script: toolchain/go/update-prebuilts.sh
 
 Test: Treehugger presubmit"
-  repo upload --cbr -t -y .
+  repo upload --cbr -t -y . -o banned-words~skip -o nokeycheck
 
   popd
 }
