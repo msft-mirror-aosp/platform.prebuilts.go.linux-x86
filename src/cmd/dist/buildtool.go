@@ -49,6 +49,7 @@ var bootstrapDirs = []string{
 	"cmd/internal/macho",
 	"cmd/internal/obj/...",
 	"cmd/internal/objabi",
+	"cmd/internal/par",
 	"cmd/internal/pgo",
 	"cmd/internal/pkgpath",
 	"cmd/internal/quoted",
@@ -80,7 +81,6 @@ var bootstrapDirs = []string{
 	"internal/goroot",
 	"internal/gover",
 	"internal/goversion",
-	"internal/itoa",
 	// internal/lazyregexp is provided by Go 1.17, which permits it to
 	// be imported by other packages in this list, but is not provided
 	// by the Go 1.17 version of gccgo. It's on this list only to
@@ -90,7 +90,9 @@ var bootstrapDirs = []string{
 	"internal/platform",
 	"internal/profile",
 	"internal/race",
+	"internal/runtime/gc",
 	"internal/saferio",
+	"internal/strconv",
 	"internal/syscall/unix",
 	"internal/types/errors",
 	"internal/unsafeheader",
@@ -122,7 +124,7 @@ var ignoreSuffixes = []string{
 	"~",
 }
 
-const minBootstrap = "go1.22.6"
+const minBootstrap = "go1.24.6"
 
 var tryDirs = []string{
 	"sdk/" + minBootstrap,
