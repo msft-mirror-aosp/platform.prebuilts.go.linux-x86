@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"internal/godebug"
 	"io"
 	"net"
 	"sync"
@@ -55,6 +54,7 @@ type Conn struct {
 	ocspResponse     []byte   // stapled OCSP response
 	scts             [][]byte // signed certificate timestamps from server
 	peerCertificates []*x509.Certificate
+	localCertificate [][]byte
 	// verifiedChains contains the certificate chains that we built, as
 	// opposed to the ones presented by the server.
 	verifiedChains [][]*x509.Certificate
@@ -220,9 +220,7 @@ func (hc *halfConn) changeCipherSpec() error {
 	hc.mac = hc.nextMac
 	hc.nextCipher = nil
 	hc.nextMac = nil
-	for i := range hc.seq {
-		hc.seq[i] = 0
-	}
+	clear(hc.seq[:])
 	return nil
 }
 
@@ -234,9 +232,7 @@ func (hc *halfConn) setTrafficSecret(suite *cipherSuiteTLS13, level QUICEncrypti
 	hc.level = level
 	key, iv := suite.trafficKey(secret)
 	hc.cipher = suite.aead(key, iv)
-	for i := range hc.seq {
-		hc.seq[i] = 0
-	}
+	clear(hc.seq[:])
 }
 
 // incSeq increments the sequence number.
@@ -700,7 +696,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 	}
 
-	if typ != recordTypeAlert && typ != recordTypeChangeCipherSpec && len(data) > 0 {
+	if (typ == recordTypeApplicationData || (typ == recordTypeHandshake && !handshakeComplete)) && len(data) > 0 {
 		// This is a state-advancing message: reset the retry count.
 		c.retryCount = 0
 	}
@@ -804,29 +800,6 @@ func (c *Conn) retryReadRecord(expectChangeCipherSpec bool) error {
 	return c.readRecordOrCCS(expectChangeCipherSpec)
 }
 
-// atLeastReader reads from R, stopping with EOF once at least N bytes have been
-// read. It is different from an io.LimitedReader in that it doesn't cut short
-// the last Read call, and in that it considers an early EOF an error.
-type atLeastReader struct {
-	R io.Reader
-	N int64
-}
-
-func (r *atLeastReader) Read(p []byte) (int, error) {
-	if r.N <= 0 {
-		return 0, io.EOF
-	}
-	n, err := r.R.Read(p)
-	r.N -= int64(n) // won't underflow unless len(p) >= n > 9223372036854775809
-	if r.N > 0 && err == io.EOF {
-		return n, io.ErrUnexpectedEOF
-	}
-	if r.N <= 0 && err == nil {
-		return n, io.EOF
-	}
-	return n, err
-}
-
 // readFromUntil reads from r into c.rawInput until c.rawInput contains
 // at least n bytes or else returns an error.
 func (c *Conn) readFromUntil(r io.Reader, n int) error {
@@ -837,9 +810,31 @@ func (c *Conn) readFromUntil(r io.Reader, n int) error {
 	// There might be extra input waiting on the wire. Make a best effort
 	// attempt to fetch it so that it can be used in (*Conn).Read to
 	// "predict" closeNotify alerts.
+	// TODO(dmo): we use bytes.MinRead here because we used the buffer
+	// ReadFrom mechanism to avoid allocations, but we've hoisted this
+	// loop for performance. We really should use our own heuristic here
+	// for how much to read ahead.
 	c.rawInput.Grow(needs + bytes.MinRead)
-	_, err := c.rawInput.ReadFrom(&atLeastReader{r, int64(needs)})
-	return err
+	for {
+		buf := c.rawInput.AvailableBuffer()[:c.rawInput.Available()]
+		n, err := r.Read(buf)
+		// This write is just to update the internal state of the
+		// rawInput bytes.Buffer. It cannot fail.
+		c.rawInput.Write(buf[:n])
+		needs -= n
+		if needs <= 0 {
+			if err == io.EOF {
+				err = nil
+			}
+			return err
+		}
+		if err == io.EOF {
+			return io.ErrUnexpectedEOF
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 // sendAlertLocked sends a TLS alert message.
@@ -1529,37 +1524,23 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 	}
 
 	handshakeCtx, cancel := context.WithCancel(ctx)
-	// Note: defer this before starting the "interrupter" goroutine
+	// Note: defer this before calling context.AfterFunc
 	// so that we can tell the difference between the input being canceled and
 	// this cancellation. In the former case, we need to close the connection.
 	defer cancel()
 
 	if c.quic != nil {
-		c.quic.cancelc = handshakeCtx.Done()
+		c.quic.ctx = handshakeCtx
 		c.quic.cancel = cancel
 	} else if ctx.Done() != nil {
-		// Start the "interrupter" goroutine, if this context might be canceled.
-		// (The background context cannot).
-		//
-		// The interrupter goroutine waits for the input context to be done and
-		// closes the connection if this happens before the function returns.
-		done := make(chan struct{})
-		interruptRes := make(chan error, 1)
+		// Close the connection if ctx is canceled before the function returns.
+		stop := context.AfterFunc(ctx, func() {
+			_ = c.conn.Close()
+		})
 		defer func() {
-			close(done)
-			if ctxErr := <-interruptRes; ctxErr != nil {
+			if !stop() {
 				// Return context error to user.
-				ret = ctxErr
-			}
-		}()
-		go func() {
-			select {
-			case <-handshakeCtx.Done():
-				// Close the connection, discarding the error
-				_ = c.conn.Close()
-				interruptRes <- handshakeCtx.Err()
-			case <-done:
-				interruptRes <- nil
+				ret = ctx.Err()
 			}
 		}()
 	}
@@ -1603,9 +1584,9 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 				return err
 			}
 		} else {
-			var a alert
 			c.out.Lock()
-			if !errors.As(c.out.err, &a) {
+			a, ok := errors.AsType[alert](c.out.err)
+			if !ok {
 				a = alertInternalError
 			}
 			c.out.Unlock()
@@ -1623,13 +1604,17 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 }
 
 // ConnectionState returns basic TLS details about the connection.
+//
+// The returned [ConnectionState] is only meaningful after the handshake has
+// completed, as reported by [ConnectionState.HandshakeComplete]; before then
+// its fields are not populated. The handshake is run automatically by the
+// first [Conn.Read] or [Conn.Write], or it can be triggered explicitly with
+// [Conn.Handshake].
 func (c *Conn) ConnectionState() ConnectionState {
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
 	return c.connectionStateLocked()
 }
-
-var tlsunsafeekm = godebug.New("tlsunsafeekm")
 
 func (c *Conn) connectionStateLocked() ConnectionState {
 	var state ConnectionState
@@ -1637,13 +1622,14 @@ func (c *Conn) connectionStateLocked() ConnectionState {
 	state.Version = c.vers
 	state.NegotiatedProtocol = c.clientProtocol
 	state.DidResume = c.didResume
-	state.testingOnlyDidHRR = c.didHRR
+	state.HelloRetryRequest = c.didHRR
 	state.testingOnlyPeerSignatureAlgorithm = c.peerSigAlg
 	state.CurveID = c.curveID
 	state.NegotiatedProtocolIsMutual = true
 	state.ServerName = c.serverName
 	state.CipherSuite = c.cipherSuite
 	state.PeerCertificates = c.peerCertificates
+	state.LocalCertificate = c.localCertificate
 	state.VerifiedChains = c.verifiedChains
 	state.SignedCertificateTimestamps = c.scts
 	state.OCSPResponse = c.ocspResponse
@@ -1657,13 +1643,7 @@ func (c *Conn) connectionStateLocked() ConnectionState {
 	if c.config.Renegotiation != RenegotiateNever {
 		state.ekm = noEKMBecauseRenegotiation
 	} else if c.vers != VersionTLS13 && !c.extMasterSecret {
-		state.ekm = func(label string, context []byte, length int) ([]byte, error) {
-			if tlsunsafeekm.Value() == "1" {
-				tlsunsafeekm.IncNonDefault()
-				return c.ekm(label, context, length)
-			}
-			return noEKMBecauseNoEMS(label, context, length)
-		}
+		state.ekm = noEKMBecauseNoEMS
 	} else {
 		state.ekm = c.ekm
 	}
