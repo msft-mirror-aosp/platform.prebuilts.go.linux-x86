@@ -8,10 +8,8 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"internal/obscuretestdata"
 	"io"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -24,14 +22,6 @@ func mustDecodeHex(s string) []byte {
 }
 
 func mustLoadFile(f string) []byte {
-	if strings.HasSuffix(f, ".base64") {
-		b, err := obscuretestdata.ReadFile(f)
-		if err != nil {
-			panic(fmt.Sprintf("obscuretestdata.ReadFile(%s): %v", f, err))
-		}
-		return b
-	}
-
 	b, err := os.ReadFile(f)
 	if err != nil {
 		panic(err)
@@ -116,7 +106,7 @@ func TestReader(t *testing.T) {
 		}(),
 	}, {
 		desc:  "RLE2 buffer overrun - issue 5747",
-		input: mustLoadFile("testdata/fail-issue5747.bz2.base64"),
+		input: mustLoadFile("testdata/fail-issue5747.bz2"),
 		fail:  true,
 	}, {
 		desc: "out-of-range selector - issue 8363",

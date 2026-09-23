@@ -186,25 +186,17 @@ func (c *UDPConn) writeMsgAddrPort(b, oob []byte, addr netip.AddrPort) (n, oobn 
 
 	switch c.fd.family {
 	case syscall.AF_INET:
-		var sap *syscall.SockaddrInet4
-		if addr.IsValid() {
-			sa, err := addrPortToSockaddrInet4(addr)
-			if err != nil {
-				return 0, 0, err
-			}
-			sap = &sa
+		sa, err := addrPortToSockaddrInet4(addr)
+		if err != nil {
+			return 0, 0, err
 		}
-		return c.fd.writeMsgInet4(b, oob, sap)
+		return c.fd.writeMsgInet4(b, oob, &sa)
 	case syscall.AF_INET6:
-		var sap *syscall.SockaddrInet6
-		if addr.IsValid() {
-			sa, err := addrPortToSockaddrInet6(addr)
-			if err != nil {
-				return 0, 0, err
-			}
-			sap = &sa
+		sa, err := addrPortToSockaddrInet6(addr)
+		if err != nil {
+			return 0, 0, err
 		}
-		return c.fd.writeMsgInet6(b, oob, sap)
+		return c.fd.writeMsgInet6(b, oob, &sa)
 	default:
 		return 0, 0, &AddrError{Err: "invalid address family", Addr: addr.Addr().String()}
 	}

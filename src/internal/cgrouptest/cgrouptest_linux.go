@@ -50,8 +50,9 @@ func (c *CgroupV2) SetCPUMax(quota, period int64) error {
 //
 // This must not be used in parallel tests, as it affects the entire process.
 func InCgroupV2(t *testing.T, fn func(*CgroupV2)) {
-	orig := findCurrent(t)
-	parent := findOwnedParent(t, orig)
+	mount, rel := findCurrent(t)
+	parent := findOwnedParent(t, mount, rel)
+	orig := filepath.Join(mount, rel)
 
 	// Make sure the parent allows children to control cpu.
 	b, err := os.ReadFile(filepath.Join(parent, "cgroup.subtree_control"))
@@ -92,25 +93,34 @@ func InCgroupV2(t *testing.T, fn func(*CgroupV2)) {
 	fn(c)
 }
 
-// Returns the filesystem path to the current cgroup the process is in.
-func findCurrent(t *testing.T) string {
+// Returns the mount and relative directory of the current cgroup the process
+// is in.
+func findCurrent(t *testing.T) (string, string) {
 	// Find the path to our current CPU cgroup. Currently this package is
 	// only used for CPU cgroup testing, so the distinction of different
 	// controllers doesn't matter.
 	var scratch [cgroup.ParseSize]byte
 	buf := make([]byte, cgroup.PathSize)
-	n, ver, err := cgroup.FindCPU(buf, scratch[:])
+	n, err := cgroup.FindCPUMountPoint(buf, scratch[:])
 	if err != nil {
 		t.Skipf("cgroup: unable to find current cgroup mount: %v", err)
+	}
+	mount := string(buf[:n])
+
+	n, ver, err := cgroup.FindCPURelativePath(buf, scratch[:])
+	if err != nil {
+		t.Skipf("cgroup: unable to find current cgroup path: %v", err)
 	}
 	if ver != cgroup.V2 {
 		t.Skipf("cgroup: running on cgroup v%d want v2", ver)
 	}
-	return string(buf[:n])
+	rel := string(buf[1:n])       // The returned path always starts with /, skip it.
+	rel = filepath.Join(".", rel) // Make sure this isn't empty string at root.
+	return mount, rel
 }
 
 // Returns a parent directory in which we can create our own cgroup subdirectory.
-func findOwnedParent(t *testing.T, orig string) string {
+func findOwnedParent(t *testing.T, mount, rel string) string {
 	// There are many ways cgroups may be set up on a system. We don't try
 	// to cover all of them, just common ones.
 	//
@@ -132,7 +142,7 @@ func findOwnedParent(t *testing.T, orig string) string {
 
 	// We want to create our own subdirectory that we can migrate into and
 	// then manipulate at will. It is tempting to create a new subdirectory
-	// inside the current cgroup we are already in, however that will likely
+	// inside the current cgroup we are already in, however that will likey
 	// not work. cgroup v2 only allows processes to be in leaf cgroups. Our
 	// current cgroup likely contains multiple processes (at least this one
 	// and the cmd/go test runner). If we make a subdirectory and try to
@@ -156,29 +166,27 @@ func findOwnedParent(t *testing.T, orig string) string {
 	// is empty. As far as I tell, the only purpose of this is to allow
 	// reorganizing processes into a new set of subdirectories and then
 	// adding controllers once done.
-	var stat syscall.Stat_t
-	err := syscall.Stat(orig, &stat)
+	root, err := os.OpenRoot(mount)
 	if err != nil {
-		t.Fatalf("error stating orig cgroup: %v", err)
+		t.Fatalf("error opening cgroup mount root: %v", err)
 	}
 
 	uid := os.Getuid()
 	var prev string
-	cur := filepath.Dir(orig)
-	for cur != "/" {
-		var curStat syscall.Stat_t
-		err = syscall.Stat(cur, &curStat)
+	for rel != "." {
+		fi, err := root.Stat(rel)
 		if err != nil {
 			t.Fatalf("error stating cgroup path: %v", err)
 		}
 
-		if int(curStat.Uid) != uid || curStat.Dev != stat.Dev {
-			// Stop at first directory we don't own or filesystem boundary.
+		st := fi.Sys().(*syscall.Stat_t)
+		if int(st.Uid) != uid {
+			// Stop at first directory we don't own.
 			break
 		}
 
-		prev = cur
-		cur = filepath.Dir(cur)
+		prev = rel
+		rel = filepath.Join(rel, "..")
 	}
 
 	if prev == "" {
@@ -186,7 +194,7 @@ func findOwnedParent(t *testing.T, orig string) string {
 	}
 
 	// We actually want the last directory where we were the owner.
-	return prev
+	return filepath.Join(mount, prev)
 }
 
 // Migrate the current process to the cgroup directory dst.

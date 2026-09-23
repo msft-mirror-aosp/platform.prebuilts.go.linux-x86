@@ -1,5 +1,4 @@
-# Test for #15410
-[short] skip 'builds a go program and a git repo'
+[!net:insecure.go-get-issue-15410.appspot.com] skip
 [!git] skip
 
 env PATH=$WORK/tmp/bin${:}$PATH
@@ -10,23 +9,24 @@ env GOPATH=$WORK/m/gp
 mkdir $WORK/m
 cp module_file $WORK/m/go.mod
 cd $WORK/m
-env GOPROXY=${GOPROXY},direct
+env GO111MODULE=on
+env GOPROXY=''
 
-# Modules: Try go get of HTTP-only repo (should fail).
-! go get -d vcs-test.golang.org/insecure/go/insecure@6fecd21
+# Modules: Try go get -d of HTTP-only repo (should fail).
+! go get -d insecure.go-get-issue-15410.appspot.com/pkg/p
 
 # Modules: Try again with GOINSECURE (should succeed).
-env GOINSECURE=vcs-test.golang.org/insecure/go/insecure
-env GONOSUMDB=vcs-test.golang.org/insecure
-go get -d vcs-test.golang.org/insecure/go/insecure@6fecd21
+env GOINSECURE=insecure.go-get-issue-15410.appspot.com
+env GONOSUMDB=insecure.go-get-issue-15410.appspot.com
+go get -d insecure.go-get-issue-15410.appspot.com/pkg/p
 
 # Modules: Try updating without GOINSECURE (should fail).
 env GOINSECURE=''
 env GONOSUMDB=''
-! go get -d -u -f vcs-test.golang.org/insecure/go/insecure@6fecd21
+! go get -d -u -f insecure.go-get-issue-15410.appspot.com/pkg/p
 
 go list -m ...
-stdout 'vcs-test.golang.org/insecure/go/insecure'
+stdout 'insecure.go-get-issue'
 
 -- ssh.go --
 // stub out uses of ssh by go get

@@ -112,11 +112,6 @@ type File struct {
 	infos []lineInfo
 }
 
-// String returns a brief description of the File.
-func (f *File) String() string {
-	return fmt.Sprintf("%s(%d-%d)", f.Name(), f.Base(), f.End())
-}
-
 // Name returns the file name of file f as registered with AddFile.
 func (f *File) Name() string {
 	return f.name
@@ -130,11 +125,6 @@ func (f *File) Base() int {
 // Size returns the size of file f as registered with AddFile.
 func (f *File) Size() int {
 	return f.size
-}
-
-// End returns the end position of file f as registered with AddFile.
-func (f *File) End() Pos {
-	return Pos(f.base + f.size)
 }
 
 // LineCount returns the number of lines in file f.
@@ -281,12 +271,26 @@ func (f *File) AddLineColumnInfo(offset int, filename string, line, column int) 
 
 // fixOffset fixes an out-of-bounds offset such that 0 <= offset <= f.size.
 func (f *File) fixOffset(offset int) int {
-	if debug && !(0 <= offset && offset <= f.size) {
+	switch {
+	case offset < 0:
+		if !debug {
+			return 0
+		}
+	case offset > f.size:
+		if !debug {
+			return f.size
+		}
+	default:
+		return offset
+	}
+
+	// only generate this code if needed
+	if debug {
 		panic(fmt.Sprintf("offset %d out of bounds [%d, %d] (position %d out of bounds [%d, %d])",
 			0 /* for symmetry */, offset, f.size,
 			f.base+offset, f.base, f.base+f.size))
 	}
-	return max(min(f.size, offset), 0)
+	return 0
 }
 
 // Pos returns the Pos value for the given file offset.
@@ -507,7 +511,7 @@ func (s *FileSet) AddExistingFiles(files ...*File) {
 	//	}
 	//
 	// because all calls to AddFile must be in increasing order.
-	// AddExistingFiles lets us augment an existing FileSet
+	// AddExistingFilesFiles lets us augment an existing FileSet
 	// sequentially, so long as all sets of files have disjoint ranges.
 	// This approach also does not preserve line directives.
 
@@ -527,10 +531,10 @@ func (s *FileSet) AddExistingFiles(files ...*File) {
 //
 // Removing a file that does not belong to the set has no effect.
 func (s *FileSet) RemoveFile(file *File) {
+	s.last.CompareAndSwap(file, nil) // clear last file cache
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-
-	s.last.CompareAndSwap(file, nil) // clear last file cache
 
 	pn, _ := s.tree.locate(file.key())
 	if *pn != nil && (*pn).file == file {

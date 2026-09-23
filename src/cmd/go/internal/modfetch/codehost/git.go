@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -92,21 +91,9 @@ func newGitRepo(ctx context.Context, remote string, local bool) (Repo, error) {
 				break
 			}
 		}
-		gitSupportsSHA256, gitVersErr := gitSupportsSHA256()
-		if gitVersErr != nil {
-			return nil, fmt.Errorf("unable to resolve git version: %w", gitVersErr)
-		}
 		objFormatFlag := []string{}
-		// If git is sufficiently recent to support sha256,
-		// always initialize with an explicit object-format.
 		if repoSha256Hash {
-			// We always set --object-format=sha256 if the repo
-			// we're cloning uses sha256 hashes because if the git
-			// version is too old, it'll fail either way, so we
-			// might as well give it one last chance.
 			objFormatFlag = []string{"--object-format=sha256"}
-		} else if gitSupportsSHA256 {
-			objFormatFlag = []string{"--object-format=sha1"}
 		}
 		if _, err := Run(ctx, r.dir, "git", "init", "--bare", objFormatFlag); err != nil {
 			os.RemoveAll(r.dir)
@@ -186,7 +173,7 @@ func (r *gitRepo) loadLocalTags(ctx context.Context) {
 		return
 	}
 
-	for line := range strings.SplitSeq(string(out), "\n") {
+	for _, line := range strings.Split(string(out), "\n") {
 		if line != "" {
 			r.localTags.Store(line, true)
 		}
@@ -267,7 +254,7 @@ func (r *gitRepo) loadRefs(ctx context.Context) (map[string]string, error) {
 		if gitErr != nil {
 			if rerr, ok := gitErr.(*RunError); ok {
 				if bytes.Contains(rerr.Stderr, []byte("fatal: could not read Username")) {
-					rerr.HelpText = "Confirm the import path was entered correctly.\nIf this is a private repository, see https://go.dev/doc/faq#git_https for additional information."
+					rerr.HelpText = "Confirm the import path was entered correctly.\nIf this is a private repository, see https://golang.org/doc/faq#git_https for additional information."
 				}
 			}
 
@@ -286,7 +273,7 @@ func (r *gitRepo) loadRefs(ctx context.Context) (map[string]string, error) {
 		}
 
 		refs := make(map[string]string)
-		for line := range strings.SplitSeq(string(out), "\n") {
+		for _, line := range strings.Split(string(out), "\n") {
 			f := strings.Fields(line)
 			if len(f) != 2 {
 				continue
@@ -400,9 +387,26 @@ func (r *gitRepo) Latest(ctx context.Context) (*RevInfo, error) {
 	return info, nil
 }
 
+// findRef finds some ref name for the given hash,
+// for use when the server requires giving a ref instead of a hash.
+// There may be multiple ref names for a given hash,
+// in which case this returns some name - it doesn't matter which.
+func (r *gitRepo) findRef(ctx context.Context, hash string) (ref string, ok bool) {
+	refs, err := r.loadRefs(ctx)
+	if err != nil {
+		return "", false
+	}
+	for ref, h := range refs {
+		if h == hash {
+			return ref, true
+		}
+	}
+	return "", false
+}
+
 func (r *gitRepo) checkConfigSHA256(ctx context.Context) bool {
 	if hashType, sha256CfgErr := r.runGit(ctx, "git", "config", "extensions.objectformat"); sha256CfgErr == nil {
-		return strings.TrimSpace(string(hashType)) == "sha256"
+		return "sha256" == strings.TrimSpace(string(hashType))
 	}
 	return false
 }
@@ -758,7 +762,7 @@ func (r *gitRepo) RecentTag(ctx context.Context, rev, prefix string, allowed fun
 
 		// prefixed tags aren't valid semver tags so compare without prefix, but only tags with correct prefix
 		var highest string
-		for line := range strings.SplitSeq(string(out), "\n") {
+		for _, line := range strings.Split(string(out), "\n") {
 			line = strings.TrimSpace(line)
 			// git do support lstrip in for-each-ref format, but it was added in v2.13.0. Stripping here
 			// instead gives support for git v2.7.0.
@@ -807,18 +811,15 @@ func (r *gitRepo) RecentTag(ctx context.Context, rev, prefix string, allowed fun
 	// There are plausible tags, but we don't know if rev is a descendent of any of them.
 	// Fetch the history to find out.
 
-	// Note: do not use defer unlock, because describe calls allowed,
-	// which uses retracted, which calls ReadFile, which may end up
-	// back at a method that acquires r.mu.
 	unlock, err := r.mu.Lock()
 	if err != nil {
 		return "", err
 	}
+	defer unlock()
+
 	if err := r.fetchRefsLocked(ctx); err != nil {
-		unlock()
 		return "", err
 	}
-	unlock()
 
 	// If we've reached this point, we have all of the commits that are reachable
 	// from all heads and tags.
@@ -984,37 +985,4 @@ func (r *gitRepo) runGit(ctx context.Context, cmdline ...any) ([]byte, error) {
 		args.env = []string{"GIT_DIR=" + r.dir}
 	}
 	return RunWithArgs(ctx, args)
-}
-
-// Capture the major, minor and (optionally) patch version, but ignore anything later
-var gitVersLineExtract = regexp.MustCompile(`git version\s+(\d+\.\d+(?:\.\d+)?)`)
-
-func gitVersion() (string, error) {
-	gitOut, runErr := exec.Command("git", "version").CombinedOutput()
-	if runErr != nil {
-		return "v0", fmt.Errorf("failed to execute git version: %w", runErr)
-	}
-	return extractGitVersion(gitOut)
-}
-
-func extractGitVersion(gitOut []byte) (string, error) {
-	matches := gitVersLineExtract.FindSubmatch(gitOut)
-	if len(matches) < 2 {
-		return "v0", fmt.Errorf("git version extraction regexp did not match version line: %q", gitOut)
-	}
-	return "v" + string(matches[1]), nil
-}
-
-func hasAtLeastGitVersion(minVers string) (bool, error) {
-	gitVers, gitVersErr := gitVersion()
-	if gitVersErr != nil {
-		return false, gitVersErr
-	}
-	return semver.Compare(minVers, gitVers) <= 0, nil
-}
-
-const minGitSHA256Vers = "v2.29"
-
-func gitSupportsSHA256() (bool, error) {
-	return hasAtLeastGitVersion(minGitSHA256Vers)
 }

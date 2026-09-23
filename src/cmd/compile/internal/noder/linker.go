@@ -338,7 +338,6 @@ func (l *linker) linkname(w *pkgbits.Encoder, name *ir.Name) {
 	linkname := name.Sym().Linkname
 	if !l.lsymIdx(w, linkname, name.Linksym()) {
 		w.String(linkname)
-		w.Bool(name.Linksym().IsLinknameStd())
 	}
 }
 

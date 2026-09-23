@@ -47,6 +47,5 @@ var stdPkgs = []string{
 	"unicode",
 	"unique",
 	"unsafe",
-	"uuid",
 	"weak",
 }

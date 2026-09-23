@@ -16,6 +16,7 @@ import (
 	"internal/testenv"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -449,6 +450,7 @@ func TestLinker(t *testing.T) {
 	if testing.Short() {
 		t.Skip("test requires running 'go build'")
 	}
+	testenv.MustHaveGoBuild(t)
 
 	dir := t.TempDir()
 	hello := filepath.Join(dir, "hello.go")
@@ -458,16 +460,17 @@ func TestLinker(t *testing.T) {
 	}
 
 	run := func(args ...string) string {
-		cmd := testenv.Command(t, args[0], args[1:]...)
+		cmd := exec.Command(args[0], args[1:]...)
 		cmd.Dir = dir
-		out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, string(out))
 		}
 		return string(out)
 	}
 
-	run(testenv.GoToolPath(t), "build", "-o", "hello.exe", "hello.go")
+	goBin := testenv.GoToolPath(t)
+	run(goBin, "build", "-o", "hello.exe", "hello.go")
 	if out := run("./hello.exe"); out != "OK\n" {
 		t.Error("unexpected output:", out)
 	}
@@ -475,7 +478,7 @@ func TestLinker(t *testing.T) {
 	// List all text symbols under crypto/... and make sure there are some for
 	// P256, but none for the other curves.
 	var consistent bool
-	nm := run(testenv.GoToolPath(t), "tool", "nm", "hello.exe")
+	nm := run(goBin, "tool", "nm", "hello.exe")
 	for _, match := range regexp.MustCompile(`(?m)T (crypto/.*)$`).FindAllStringSubmatch(nm, -1) {
 		symbol := strings.ToLower(match[1])
 		if strings.Contains(symbol, "p256") {

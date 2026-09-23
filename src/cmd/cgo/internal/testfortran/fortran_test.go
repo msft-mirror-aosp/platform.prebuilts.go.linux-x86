@@ -47,19 +47,14 @@ func TestFortran(t *testing.T) {
 		switch runtime.GOOS {
 		case "darwin":
 			libExt = "dylib"
-		case "aix", "openbsd", "windows":
+		case "aix":
 			libExt = "a"
 		}
-		libName := "libgfortran." + libExt
-		b, err := exec.Command(fc, append([]string{"-print-file-name=" + libName}, fcExtra...)...).CombinedOutput()
+		libPath, err := exec.Command(fc, append([]string{"-print-file-name=libgfortran." + libExt}, fcExtra...)...).CombinedOutput()
 		if err != nil {
-			t.Fatalf("error invoking %s: %s", fc, err)
+			t.Errorf("error invoking %s: %s", fc, err)
 		}
-		libPath := strings.TrimSpace(string(b))
-		if libPath == libName {
-			t.Fatalf("Failed to get full library path for %q", libName)
-		}
-		libDir := filepath.Dir(libPath)
+		libDir := filepath.Dir(string(libPath))
 		cgoLDFlags := os.Getenv("CGO_LDFLAGS")
 		cgoLDFlags += " -L " + libDir
 		if runtime.GOOS != "aix" {

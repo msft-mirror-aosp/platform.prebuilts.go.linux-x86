@@ -5,54 +5,51 @@
 package x509
 
 import (
-	"crypto/x509/internal/macos"
+	macOS "crypto/x509/internal/macos"
 	"errors"
 	"fmt"
 )
 
-// macOS has no default SSL_CERT_{FILE,DIR} paths.
-var certFiles, certDirectories []string
-
 func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate, err error) {
-	certs := macos.CFArrayCreateMutable()
-	defer macos.ReleaseCFArray(certs)
-	leaf, err := macos.SecCertificateCreateWithData(c.Raw)
+	certs := macOS.CFArrayCreateMutable()
+	defer macOS.ReleaseCFArray(certs)
+	leaf, err := macOS.SecCertificateCreateWithData(c.Raw)
 	if err != nil {
 		return nil, errors.New("invalid leaf certificate")
 	}
-	macos.CFArrayAppendValue(certs, leaf)
+	macOS.CFArrayAppendValue(certs, leaf)
 	if opts.Intermediates != nil {
 		for _, lc := range opts.Intermediates.lazyCerts {
 			c, err := lc.getCert()
 			if err != nil {
 				return nil, err
 			}
-			sc, err := macos.SecCertificateCreateWithData(c.Raw)
+			sc, err := macOS.SecCertificateCreateWithData(c.Raw)
 			if err != nil {
 				return nil, err
 			}
-			macos.CFArrayAppendValue(certs, sc)
+			macOS.CFArrayAppendValue(certs, sc)
 		}
 	}
 
-	policies := macos.CFArrayCreateMutable()
-	defer macos.ReleaseCFArray(policies)
-	sslPolicy, err := macos.SecPolicyCreateSSL(opts.DNSName)
+	policies := macOS.CFArrayCreateMutable()
+	defer macOS.ReleaseCFArray(policies)
+	sslPolicy, err := macOS.SecPolicyCreateSSL(opts.DNSName)
 	if err != nil {
 		return nil, err
 	}
-	macos.CFArrayAppendValue(policies, sslPolicy)
+	macOS.CFArrayAppendValue(policies, sslPolicy)
 
-	trustObj, err := macos.SecTrustCreateWithCertificates(certs, policies)
+	trustObj, err := macOS.SecTrustCreateWithCertificates(certs, policies)
 	if err != nil {
 		return nil, err
 	}
-	defer macos.CFRelease(trustObj)
+	defer macOS.CFRelease(trustObj)
 
 	if !opts.CurrentTime.IsZero() {
-		dateRef := macos.TimeToCFDateRef(opts.CurrentTime)
-		defer macos.CFRelease(dateRef)
-		if err := macos.SecTrustSetVerifyDate(trustObj, dateRef); err != nil {
+		dateRef := macOS.TimeToCFDateRef(opts.CurrentTime)
+		defer macOS.CFRelease(dateRef)
+		if err := macOS.SecTrustSetVerifyDate(trustObj, dateRef); err != nil {
 			return nil, err
 		}
 	}
@@ -62,13 +59,13 @@ func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate
 	// always enforce its SCT requirements, and there are still _some_ people
 	// using TLS or OCSP for that.
 
-	if ret, err := macos.SecTrustEvaluateWithError(trustObj); err != nil {
+	if ret, err := macOS.SecTrustEvaluateWithError(trustObj); err != nil {
 		switch ret {
-		case macos.ErrSecCertificateExpired:
+		case macOS.ErrSecCertificateExpired:
 			return nil, CertificateInvalidError{c, Expired, err.Error()}
-		case macos.ErrSecHostNameMismatch:
+		case macOS.ErrSecHostNameMismatch:
 			return nil, HostnameError{c, opts.DNSName}
-		case macos.ErrSecNotTrusted:
+		case macOS.ErrSecNotTrusted:
 			return nil, UnknownAuthorityError{Cert: c}
 		default:
 			return nil, fmt.Errorf("x509: %s", err)
@@ -76,13 +73,12 @@ func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate
 	}
 
 	chain := [][]*Certificate{{}}
-	chainRef, err := macos.SecTrustCopyCertificateChain(trustObj)
-	if err != nil {
-		return nil, err
-	}
-	defer macos.CFRelease(chainRef)
-	for i := 0; i < macos.CFArrayGetCount(chainRef); i++ {
-		certRef := macos.CFArrayGetValueAtIndex(chainRef, i)
+	numCerts := macOS.SecTrustGetCertificateCount(trustObj)
+	for i := 0; i < numCerts; i++ {
+		certRef, err := macOS.SecTrustGetCertificateAtIndex(trustObj, i)
+		if err != nil {
+			return nil, err
+		}
 		cert, err := exportCertificate(certRef)
 		if err != nil {
 			return nil, err
@@ -91,7 +87,7 @@ func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate
 	}
 	if len(chain[0]) == 0 {
 		// This should _never_ happen, but to be safe
-		return nil, errors.New("x509: macos certificate verification internal error")
+		return nil, errors.New("x509: macOS certificate verification internal error")
 	}
 
 	if opts.DNSName != "" {
@@ -121,10 +117,14 @@ func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate
 }
 
 // exportCertificate returns a *Certificate for a SecCertificateRef.
-func exportCertificate(cert macos.CFRef) (*Certificate, error) {
-	data, err := macos.SecCertificateCopyData(cert)
+func exportCertificate(cert macOS.CFRef) (*Certificate, error) {
+	data, err := macOS.SecCertificateCopyData(cert)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCertificate(data)
+}
+
+func loadSystemRoots() (*CertPool, error) {
+	return &CertPool{systemPool: true}, nil
 }

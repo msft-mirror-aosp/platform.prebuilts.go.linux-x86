@@ -9,6 +9,7 @@ import (
 	"internal/testenv"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -18,9 +19,8 @@ import (
 // such as TinyGo. See also the "crypto/...:purego" test in cmd/dist, which
 // ensures the packages build correctly.
 func TestPureGoTag(t *testing.T) {
-	cmd := testenv.Command(t, testenv.GoToolPath(t), "list", "-e", "crypto/...", "math/big")
-	cmd = testenv.CleanCmdEnv(cmd)
-	cmd.Env = append(cmd.Environ(), "GOOS=linux", "GOFIPS140=off")
+	cmd := exec.Command(testenv.GoToolPath(t), "list", "-e", "crypto/...", "math/big")
+	cmd.Env = append(cmd.Env, "GOOS=linux")
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
@@ -28,9 +28,9 @@ func TestPureGoTag(t *testing.T) {
 	}
 	pkgs := strings.Split(strings.TrimSpace(string(out)), "\n")
 
-	cmd = testenv.Command(t, testenv.GoToolPath(t), "tool", "dist", "list")
+	cmd = exec.Command(testenv.GoToolPath(t), "tool", "dist", "list")
 	cmd.Stderr = os.Stderr
-	out, err = testenv.CleanCmdEnv(cmd).Output()
+	out, err = cmd.Output()
 	if err != nil {
 		log.Fatalf("loading architecture list: %v\n%s", err, out)
 	}

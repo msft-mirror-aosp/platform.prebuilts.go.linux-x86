@@ -18,4 +18,6 @@ func _[P any]() {
 	_ = unsafe.Sizeof(struct{ T[P] }{})
 }
 
-const _ = unsafe /* ERROR "not constant" */ .Sizeof(T /* ERROR "invalid recursive type" */ [int]{})
+// TODO(gri) This is a follow-on error due to T[int] being invalid.
+//           We should try to avoid it.
+const _ = unsafe /* ERROR "not constant" */ .Sizeof(T[int]{})

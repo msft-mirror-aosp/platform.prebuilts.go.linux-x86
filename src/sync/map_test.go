@@ -161,7 +161,7 @@ func TestConcurrentRange(t *testing.T) {
 
 	m := new(sync.Map)
 	for n := int64(1); n <= mapSize; n++ {
-		m.Store(n, n)
+		m.Store(n, int64(n))
 	}
 
 	done := make(chan struct{})

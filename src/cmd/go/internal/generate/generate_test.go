@@ -79,7 +79,7 @@ var defEnvMap = map[string]string{
 	"_X":      "Y",
 }
 
-// TestGenerateCommandShorthand - similar to TestGenerateCommandParse,
+// TestGenerateCommandShortHand - similar to TestGenerateCommandParse,
 // except:
 //  1. if the result starts with -command, record that shorthand
 //     before moving on to the next test.

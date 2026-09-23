@@ -839,13 +839,7 @@ func (dir dirFS) ReadLink(name string) (string, error) {
 	if err != nil {
 		return "", &PathError{Op: "readlink", Path: name, Err: err}
 	}
-	f, err := Readlink(fullname)
-	if err != nil {
-		// See comment in dirFS.Open.
-		err.(*PathError).Path = name
-		return "", err
-	}
-	return f, nil
+	return Readlink(fullname)
 }
 
 // join returns the path for name in dir.
@@ -867,7 +861,6 @@ func (dir dirFS) join(name string) (string, error) {
 // A successful call returns err == nil, not err == EOF.
 // Because ReadFile reads the whole file, it does not treat an EOF from Read
 // as an error to be reported.
-// If there is an error, it will be of type [*PathError].
 func ReadFile(name string) ([]byte, error) {
 	f, err := Open(name)
 	if err != nil {

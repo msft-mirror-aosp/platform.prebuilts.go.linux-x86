@@ -302,7 +302,7 @@ func TestInterfacesWithNetsh(t *testing.T) {
 	}
 	slices.Sort(want)
 
-	if !slices.Equal(want, have) {
+	if strings.Join(want, "/") != strings.Join(have, "/") {
 		t.Fatalf("unexpected interface list %q, want %q", have, want)
 	}
 }
@@ -487,7 +487,7 @@ func TestInterfaceAddrsWithNetsh(t *testing.T) {
 		want = append(want, wantIPv6...)
 		slices.Sort(want)
 
-		if !slices.Equal(want, have) {
+		if strings.Join(want, "/") != strings.Join(have, "/") {
 			t.Errorf("%s: unexpected addresses list %q, want %q", ifi.Name, have, want)
 		}
 	}

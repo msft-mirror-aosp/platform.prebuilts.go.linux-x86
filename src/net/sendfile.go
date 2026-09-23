@@ -12,8 +12,6 @@ import (
 	"syscall"
 )
 
-var testHookSupportsSendfile func() bool
-
 // sendFile copies the contents of r to c using the sendfile
 // system call to minimize copies.
 //

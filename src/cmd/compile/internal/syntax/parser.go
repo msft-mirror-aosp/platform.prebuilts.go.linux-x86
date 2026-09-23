@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"go/build/constraint"
 	"io"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -162,13 +161,6 @@ func (p *parser) updateBase(pos Pos, tline, tcol uint, text string) {
 	if filename == "" && ok2 {
 		filename = p.base.Filename()
 		trimmed = p.base.Trimmed()
-	} else if filename != "" {
-		filename = filepath.Clean(filename)
-		if !filepath.IsAbs(filename) {
-			if dir := filepath.Dir(p.file.Filename()); dir != "." {
-				filename = filepath.Join(dir, filename)
-			}
-		}
 	}
 
 	p.base = NewLineBase(pos, filename, trimmed, line, col)
@@ -805,9 +797,9 @@ func (p *parser) funcDeclOrNil() *FuncDecl {
 	f.pos = p.pos()
 	f.Pragma = p.takePragma()
 
-	hasRecv := false
+	var context string
 	if p.got(_Lparen) {
-		hasRecv = true
+		context = "method"
 		rcvr := p.paramList(nil, nil, _Rparen, false, false)
 		switch len(rcvr) {
 		case 0:
@@ -822,13 +814,13 @@ func (p *parser) funcDeclOrNil() *FuncDecl {
 
 	if p.tok == _Name {
 		f.Name = p.name()
-		f.TParamList, f.Type = p.funcType("")
+		f.TParamList, f.Type = p.funcType(context)
 	} else {
 		f.Name = NewName(p.pos(), "_")
 		f.Type = new(FuncType)
 		f.Type.pos = p.pos()
 		msg := "expected name or ("
-		if hasRecv {
+		if context != "" {
 			msg = "expected name"
 		}
 		p.syntaxError(msg)

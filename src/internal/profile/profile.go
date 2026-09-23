@@ -175,11 +175,9 @@ func (p *Profile) Write(w io.Writer) error {
 	p.preEncode()
 	b := marshal(p)
 	zw := gzip.NewWriter(w)
-	if _, err := zw.Write(b); err != nil {
-		zw.Close()
-		return err
-	}
-	return zw.Close()
+	defer zw.Close()
+	_, err := zw.Write(b)
+	return err
 }
 
 // CheckValid tests whether the profile is valid. Checks include, but are

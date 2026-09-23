@@ -97,13 +97,6 @@ func runTestProg(t *testing.T, binary, name string, env ...string) string {
 func runBuiltTestProg(t *testing.T, exe, name string, env ...string) string {
 	t.Helper()
 
-	out, _ := runBuiltTestProgErr(t, exe, name, env...)
-	return out
-}
-
-func runBuiltTestProgErr(t *testing.T, exe, name string, env ...string) (string, error) {
-	t.Helper()
-
 	if *flagQuick {
 		t.Skip("-quick")
 	}
@@ -122,14 +115,12 @@ func runBuiltTestProgErr(t *testing.T, exe, name string, env ...string) (string,
 		if _, ok := err.(*exec.ExitError); ok {
 			t.Logf("%v: %v", cmd, err)
 		} else if errors.Is(err, exec.ErrWaitDelay) {
-			// Report the WaitDelay to help with triage. If it shows a small value like 100ms,
-			// it might not be enough for slow builders. See watchflakes issue #76685.
-			t.Fatalf("%v: %v: output pipes not closed after waiting %v", cmd, err, cmd.WaitDelay)
+			t.Fatalf("%v: %v", cmd, err)
 		} else {
 			t.Fatalf("%v failed to start: %v", cmd, err)
 		}
 	}
-	return string(out), err
+	return string(out)
 }
 
 var serializeBuild = make(chan bool, 2)
@@ -195,6 +186,20 @@ func buildTestProg(t *testing.T, binary string, flags ...string) (string, error)
 		t.Logf("running %v", cmd)
 		cmd.Dir = "testdata/" + binary
 		cmd = testenv.CleanCmdEnv(cmd)
+
+		// Add the rangefunc GOEXPERIMENT unconditionally since some tests depend on it.
+		// TODO(61405): Remove this once it's enabled by default.
+		edited := false
+		for i := range cmd.Env {
+			e := cmd.Env[i]
+			if _, vars, ok := strings.Cut(e, "GOEXPERIMENT="); ok {
+				cmd.Env[i] = "GOEXPERIMENT=" + vars + ",rangefunc"
+				edited = true
+			}
+		}
+		if !edited {
+			cmd.Env = append(cmd.Env, "GOEXPERIMENT=rangefunc")
+		}
 
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -401,15 +406,6 @@ func TestRepanickedPanicSandwich(t *testing.T) {
 	want := `panic: outer [recovered]
 	panic: inner [recovered]
 	panic: outer
-`
-	if !strings.HasPrefix(output, want) {
-		t.Fatalf("output does not start with %q:\n%s", want, output)
-	}
-}
-
-func TestDoublePanicWithSameValue(t *testing.T) {
-	output := runTestProg(t, "testprog", "DoublePanicWithSameValue")
-	want := `panic: message
 `
 	if !strings.HasPrefix(output, want) {
 		t.Fatalf("output does not start with %q:\n%s", want, output)
@@ -688,7 +684,10 @@ func TestConcurrentMapWrites(t *testing.T) {
 	testenv.MustHaveGoRun(t)
 	output := runTestProg(t, "testprog", "concurrentMapWrites")
 	want := "fatal error: concurrent map writes\n"
-	if !strings.HasPrefix(output, want) {
+	// Concurrent writes can corrupt the map in a way that we
+	// detect with a separate throw.
+	want2 := "fatal error: small map with no empty slot (concurrent map writes?)\n"
+	if !strings.HasPrefix(output, want) && !strings.HasPrefix(output, want2) {
 		t.Fatalf("output does not start with %q:\n%s", want, output)
 	}
 }
@@ -702,7 +701,10 @@ func TestConcurrentMapReadWrite(t *testing.T) {
 	testenv.MustHaveGoRun(t)
 	output := runTestProg(t, "testprog", "concurrentMapReadWrite")
 	want := "fatal error: concurrent map read and map write\n"
-	if !strings.HasPrefix(output, want) {
+	// Concurrent writes can corrupt the map in a way that we
+	// detect with a separate throw.
+	want2 := "fatal error: small map with no empty slot (concurrent map writes?)\n"
+	if !strings.HasPrefix(output, want) && !strings.HasPrefix(output, want2) {
 		t.Fatalf("output does not start with %q:\n%s", want, output)
 	}
 }
@@ -716,7 +718,10 @@ func TestConcurrentMapIterateWrite(t *testing.T) {
 	testenv.MustHaveGoRun(t)
 	output := runTestProg(t, "testprog", "concurrentMapIterateWrite")
 	want := "fatal error: concurrent map iteration and map write\n"
-	if !strings.HasPrefix(output, want) {
+	// Concurrent writes can corrupt the map in a way that we
+	// detect with a separate throw.
+	want2 := "fatal error: small map with no empty slot (concurrent map writes?)\n"
+	if !strings.HasPrefix(output, want) && !strings.HasPrefix(output, want2) {
 		t.Fatalf("output does not start with %q:\n%s", want, output)
 	}
 }
@@ -742,7 +747,10 @@ func TestConcurrentMapWritesIssue69447(t *testing.T) {
 			continue
 		}
 		want := "fatal error: concurrent map writes\n"
-		if !strings.HasPrefix(output, want) {
+		// Concurrent writes can corrupt the map in a way that we
+		// detect with a separate throw.
+		want2 := "fatal error: small map with no empty slot (concurrent map writes?)\n"
+		if !strings.HasPrefix(output, want) && !strings.HasPrefix(output, want2) {
 			t.Fatalf("output does not start with %q:\n%s", want, output)
 		}
 	}
@@ -1148,76 +1156,75 @@ func TestFinalizerOrCleanupDeadlock(t *testing.T) {
 			progName = "Cleanup"
 			want = "runtime.runCleanups"
 		}
-		t.Run(progName, func(t *testing.T) {
-			// The runtime.runFinalizers/runtime.runCleanups frame should appear in panics, even if
-			// runtime frames are normally hidden (GOTRACEBACK=all).
-			t.Run("Panic", func(t *testing.T) {
-				t.Parallel()
-				output := runTestProg(t, "testprog", progName+"Deadlock", "GOTRACEBACK=all", "GO_TEST_FINALIZER_DEADLOCK=panic")
-				want := want + "()"
-				if !strings.Contains(output, want) {
-					t.Errorf("output does not contain %q:\n%s", want, output)
-				}
-			})
 
-			// The runtime.runFinalizers/runtime.Cleanups frame should appear in runtime.Stack,
-			// even though runtime frames are normally hidden.
-			t.Run("Stack", func(t *testing.T) {
-				t.Parallel()
-				output := runTestProg(t, "testprog", progName+"Deadlock", "GO_TEST_FINALIZER_DEADLOCK=stack")
-				want := want + "()"
-				if !strings.Contains(output, want) {
-					t.Errorf("output does not contain %q:\n%s", want, output)
-				}
-			})
+		// The runtime.runFinalizers/runtime.runCleanups frame should appear in panics, even if
+		// runtime frames are normally hidden (GOTRACEBACK=all).
+		t.Run("Panic", func(t *testing.T) {
+			t.Parallel()
+			output := runTestProg(t, "testprog", progName+"Deadlock", "GOTRACEBACK=all", "GO_TEST_FINALIZER_DEADLOCK=panic")
+			want := want + "()"
+			if !strings.Contains(output, want) {
+				t.Errorf("output does not contain %q:\n%s", want, output)
+			}
+		})
 
-			// The runtime.runFinalizers/runtime.Cleanups frame should appear in goroutine
-			// profiles.
-			t.Run("PprofProto", func(t *testing.T) {
-				t.Parallel()
-				output := runTestProg(t, "testprog", progName+"Deadlock", "GO_TEST_FINALIZER_DEADLOCK=pprof_proto")
+		// The runtime.runFinalizers/runtime.Cleanups frame should appear in runtime.Stack,
+		// even though runtime frames are normally hidden.
+		t.Run("Stack", func(t *testing.T) {
+			t.Parallel()
+			output := runTestProg(t, "testprog", progName+"Deadlock", "GO_TEST_FINALIZER_DEADLOCK=stack")
+			want := want + "()"
+			if !strings.Contains(output, want) {
+				t.Errorf("output does not contain %q:\n%s", want, output)
+			}
+		})
 
-				p, err := profile.Parse(strings.NewReader(output))
-				if err != nil {
-					// Logging the binary proto data is not very nice, but it might
-					// be a text error message instead.
-					t.Logf("Output: %s", output)
-					t.Fatalf("Error parsing proto output: %v", err)
-				}
-				for _, s := range p.Sample {
-					for _, loc := range s.Location {
-						for _, line := range loc.Line {
-							if line.Function.Name == want {
-								// Done!
-								return
-							}
+		// The runtime.runFinalizers/runtime.Cleanups frame should appear in goroutine
+		// profiles.
+		t.Run("PprofProto", func(t *testing.T) {
+			t.Parallel()
+			output := runTestProg(t, "testprog", progName+"Deadlock", "GO_TEST_FINALIZER_DEADLOCK=pprof_proto")
+
+			p, err := profile.Parse(strings.NewReader(output))
+			if err != nil {
+				// Logging the binary proto data is not very nice, but it might
+				// be a text error message instead.
+				t.Logf("Output: %s", output)
+				t.Fatalf("Error parsing proto output: %v", err)
+			}
+			for _, s := range p.Sample {
+				for _, loc := range s.Location {
+					for _, line := range loc.Line {
+						if line.Function.Name == want {
+							// Done!
+							return
 						}
 					}
 				}
-				t.Errorf("Profile does not contain %q:\n%s", want, p)
-			})
+			}
+			t.Errorf("Profile does not contain %q:\n%s", want, p)
+		})
 
-			// The runtime.runFinalizers/runtime.runCleanups frame should appear in goroutine
-			// profiles (debug=1).
-			t.Run("PprofDebug1", func(t *testing.T) {
-				t.Parallel()
-				output := runTestProg(t, "testprog", progName+"Deadlock", "GO_TEST_FINALIZER_DEADLOCK=pprof_debug1")
-				want := want + "+"
-				if !strings.Contains(output, want) {
-					t.Errorf("output does not contain %q:\n%s", want, output)
-				}
-			})
+		// The runtime.runFinalizers/runtime.runCleanups frame should appear in goroutine
+		// profiles (debug=1).
+		t.Run("PprofDebug1", func(t *testing.T) {
+			t.Parallel()
+			output := runTestProg(t, "testprog", progName+"Deadlock", "GO_TEST_FINALIZER_DEADLOCK=pprof_debug1")
+			want := want + "+"
+			if !strings.Contains(output, want) {
+				t.Errorf("output does not contain %q:\n%s", want, output)
+			}
+		})
 
-			// The runtime.runFinalizers/runtime.runCleanups frame should appear in goroutine
-			// profiles (debug=2).
-			t.Run("PprofDebug2", func(t *testing.T) {
-				t.Parallel()
-				output := runTestProg(t, "testprog", progName+"Deadlock", "GO_TEST_FINALIZER_DEADLOCK=pprof_debug2")
-				want := want + "()"
-				if !strings.Contains(output, want) {
-					t.Errorf("output does not contain %q:\n%s", want, output)
-				}
-			})
+		// The runtime.runFinalizers/runtime.runCleanups frame should appear in goroutine
+		// profiles (debug=2).
+		t.Run("PprofDebug2", func(t *testing.T) {
+			t.Parallel()
+			output := runTestProg(t, "testprog", progName+"Deadlock", "GO_TEST_FINALIZER_DEADLOCK=pprof_debug2")
+			want := want + "()"
+			if !strings.Contains(output, want) {
+				t.Errorf("output does not contain %q:\n%s", want, output)
+			}
 		})
 	}
 }

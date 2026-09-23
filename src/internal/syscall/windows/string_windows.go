@@ -22,14 +22,11 @@ func NewNTUnicodeString(s string) (*NTUnicodeString, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := len(s16) * 2
-	if n > (1<<16)-1 {
-		return nil, syscall.EINVAL
-	}
+	n := uint16(len(s16) * 2)
 	// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdmsec/nf-wdmsec-wdmlibrtlinitunicodestringex
 	return &NTUnicodeString{
-		Length:        uint16(n) - 2, // subtract 2 bytes for the NUL terminator
-		MaximumLength: uint16(n),
+		Length:        n - 2, // subtract 2 bytes for the NUL terminator
+		MaximumLength: n,
 		Buffer:        &s16[0],
 	}, nil
 }

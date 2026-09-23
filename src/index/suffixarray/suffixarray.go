@@ -117,11 +117,11 @@ func writeSlice(w io.Writer, buf []byte, data ints) (n int, err error) {
 	return
 }
 
-var errCorrupted = errors.New("suffixarray: data corrupted")
+var errTooBig = errors.New("suffixarray: data too large")
 
-// readSlice reads data[:n] from r and returns n; maxIndex is the length of the suffix array.
+// readSlice reads data[:n] from r and returns n.
 // It uses buf to buffer the read.
-func readSlice(r io.Reader, buf []byte, data ints, maxIndex uint64) (n int, err error) {
+func readSlice(r io.Reader, buf []byte, data ints) (n int, err error) {
 	// read buffer size
 	var size64 int64
 	size64, err = readInt(r, buf)
@@ -130,7 +130,7 @@ func readSlice(r io.Reader, buf []byte, data ints, maxIndex uint64) (n int, err 
 	}
 	if int64(int(size64)) != size64 || int(size64) < 0 {
 		// We never write chunks this big anyway.
-		return 0, errCorrupted
+		return 0, errTooBig
 	}
 	size := int(size64)
 
@@ -140,16 +140,8 @@ func readSlice(r io.Reader, buf []byte, data ints, maxIndex uint64) (n int, err 
 	}
 
 	// decode as many elements as present in buf
-	len := data.len()
 	for p := binary.MaxVarintLen64; p < size; n++ {
 		x, w := binary.Uvarint(buf[p:])
-		// - prevent index-out-of-bounds panic if there are more indices than expected
-		// (was go.dev/issue/53352)
-		// - prevent index-out-of-bounds panic in a future Lookup
-		// by ensuring all indices x satisfy x < maxIndex
-		if n >= len || x >= maxIndex {
-			return n, errCorrupted
-		}
 		data.set(n, int64(x))
 		p += w
 	}
@@ -170,7 +162,7 @@ func (x *Index) Read(r io.Reader) error {
 		return err
 	}
 	if int64(int(n64)) != n64 || int(n64) < 0 {
-		return errCorrupted
+		return errTooBig
 	}
 	n := int(n64)
 
@@ -200,7 +192,7 @@ func (x *Index) Read(r io.Reader) error {
 	// read index
 	sa := x.sa
 	for sa.len() > 0 {
-		n, err := readSlice(r, buf, sa, uint64(n))
+		n, err := readSlice(r, buf, sa)
 		if err != nil {
 			return err
 		}

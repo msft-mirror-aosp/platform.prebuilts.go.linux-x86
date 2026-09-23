@@ -709,6 +709,7 @@ func TestBufferedDecodingPadding(t *testing.T) {
 	}
 
 	for _, testcase := range testcases {
+		testcase := testcase
 		pr, pw := io.Pipe()
 		go func() {
 			for _, chunk := range testcase.chunks {

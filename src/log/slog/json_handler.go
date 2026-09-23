@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"internal/goexperiment"
 	"io"
 	"log/slog/internal/buffer"
 	"strconv"
@@ -96,7 +95,6 @@ func appendJSONTime(s *handleState, t time.Time) {
 		// RFC 3339 is clear that years are 4 digits exactly.
 		// See golang.org/issue/4556#c15 for more discussion.
 		s.appendError(errors.New("time.Time year outside of range [0,9999]"))
-		return
 	}
 	s.buf.WriteByte('"')
 	*s.buf = t.AppendFormat(*s.buf, time.RFC3339Nano)
@@ -139,40 +137,15 @@ func appendJSONValue(s *handleState, v Value) error {
 	return nil
 }
 
-type jsonEncoder struct {
-	buf *bytes.Buffer
-	// Use a json.Encoder to avoid escaping HTML.
-	json *json.Encoder
-}
-
-var jsonEncoderPool = &sync.Pool{
-	New: func() any {
-		enc := &jsonEncoder{
-			buf: new(bytes.Buffer),
-		}
-		enc.json = json.NewEncoder(enc.buf)
-		enc.json.SetEscapeHTML(false)
-		return enc
-	},
-}
-
 func appendJSONMarshal(buf *buffer.Buffer, v any) error {
-	j := jsonEncoderPool.Get().(*jsonEncoder)
-	defer func() {
-		// To reduce peak allocation, return only smaller buffers to the pool.
-		const maxBufferSize = 16 << 10
-		if j.buf.Cap() > maxBufferSize {
-			return
-		}
-		j.buf.Reset()
-		jsonEncoderPool.Put(j)
-	}()
-
-	if err := j.json.Encode(v); err != nil {
+	// Use a json.Encoder to avoid escaping HTML.
+	var bb bytes.Buffer
+	enc := json.NewEncoder(&bb)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		return err
 	}
-
-	bs := j.buf.Bytes()
+	bs := bb.Bytes()
 	buf.Write(bs[:len(bs)-1]) // remove final newline
 	return nil
 }
@@ -221,11 +194,7 @@ func appendEscapedJSONString(buf []byte, s string) []byte {
 			if start < i {
 				str(s[start:i])
 			}
-			if goexperiment.JSONv2 {
-				str("\ufffd") // see https://go.dev/cl/687116
-			} else {
-				str(`\ufffd`)
-			}
+			str(`\ufffd`)
 			i += size
 			start = i
 			continue

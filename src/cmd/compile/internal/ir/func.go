@@ -7,12 +7,11 @@ package ir
 import (
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/types"
-	"cmd/internal/hash"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
-	"encoding/base64"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -91,7 +90,7 @@ type Func struct {
 	Marks []Mark
 
 	FieldTrack map[*obj.LSym]struct{}
-	DebugInfo  any
+	DebugInfo  interface{}
 	LSym       *obj.LSym // Linker object in this function's native ABI (Func.ABI)
 
 	Inl *Inline
@@ -149,7 +148,7 @@ type Func struct {
 	// a WebAssembly function import.
 	WasmImport *WasmImport
 	// WasmExport is used by the //go:wasmexport directive to store info about
-	// a WebAssembly function export.
+	// a WebAssembly function import.
 	WasmExport *WasmExport
 }
 
@@ -316,9 +315,7 @@ func PkgFuncName(f *Func) string {
 	}
 	s := f.Sym()
 	pkg := s.Pkg
-	if pkg == nil {
-		return "<nil>." + s.Name
-	}
+
 	return pkg.Path + "." + s.Name
 }
 
@@ -431,9 +428,10 @@ func ClosureDebugRuntimeCheck(clo *ClosureExpr) {
 var globClosgen int32
 
 // closureName generates a new unique name for a closure within outerfn at pos.
-// gen is an optional counter for the closure name. If it is 0, the counter
-// will be computed based on outerfn.
-func closureName(outerfn *Func, pos src.XPos, why Op, gen int) *types.Sym {
+func closureName(outerfn *Func, pos src.XPos, why Op) *types.Sym {
+	if outerfn.OClosure != nil && outerfn.OClosure.Func.RangeParent != nil {
+		outerfn = outerfn.OClosure.Func.RangeParent
+	}
 	pkg := types.LocalPkg
 	outer := "glob."
 	var suffix string = "."
@@ -451,6 +449,7 @@ func closureName(outerfn *Func, pos src.XPos, why Op, gen int) *types.Sym {
 	case ODEFER:
 		suffix = ".deferwrap"
 	}
+	gen := &globClosgen
 
 	// There may be multiple functions named "_". In those
 	// cases, we can't use their individual Closgens as it
@@ -458,59 +457,30 @@ func closureName(outerfn *Func, pos src.XPos, why Op, gen int) *types.Sym {
 	if !IsBlank(outerfn.Nname) {
 		pkg = outerfn.Sym().Pkg
 		outer = FuncName(outerfn)
+
+		switch why {
+		case OCLOSURE:
+			gen = &outerfn.funcLitGen
+		case ORANGE:
+			gen = &outerfn.rangeLitGen
+		default:
+			gen = &outerfn.goDeferGen
+		}
 	}
 
-	// If this closure was created due to inlining, find the original
-	// outer function's name for the closure (#60324).
-	var inlHash string
+	// If this closure was created due to inlining, then incorporate any
+	// inlined functions' names into the closure's linker symbol name
+	// too (#60324).
 	if inlIndex := base.Ctxt.InnermostPos(pos).Base().InliningIndex(); inlIndex >= 0 {
-		// The compiler doesn't like multiple symbols with the same
-		// name. We make a unique suffix temporarily for the
-		// compiler, and strip it during object file writing, so
-		// it will not be the linker symbol name. For linking,
-		// we use a content hash to disambiguate instead.
-		// We choose the suffix as a hash of the inline call stack.
-		h := hash.New32()
-		fmt.Fprint(h, inlIndex)
+		names := []string{outer}
 		base.Ctxt.InlTree.AllParents(inlIndex, func(call obj.InlinedCall) {
-			if call.Parent >= 0 {
-				fmt.Fprint(h, " ", call.Parent)
-			}
+			names = append(names, call.Name)
 		})
-		inlHash = base64.StdEncoding.EncodeToString(h.Sum(nil)[:8])
-
-		outer = base.Ctxt.InlTree.InlinedFuncName(inlIndex)
-		if pkgPath := base.Ctxt.InlTree.InlinedFuncPkg(inlIndex); pkgPath != "" {
-			pkg = types.NewPkg(pkgPath, "")
-		}
+		outer = strings.Join(names, ".")
 	}
 
-	if gen == 0 {
-		p := &globClosgen
-		if !IsBlank(outerfn.Nname) {
-			switch why {
-			case OCLOSURE:
-				p = &outerfn.funcLitGen
-			case ORANGE:
-				p = &outerfn.rangeLitGen
-			default:
-				p = &outerfn.goDeferGen
-			}
-		}
-		*p++
-		gen = int(*p)
-	}
-
-	name := fmt.Sprintf("%s%s%d", outer, suffix, gen)
-	if inlHash != "" {
-		// Attach the inline hash (see the comment above).
-		// If it already has a hash, trim it, so we don't include
-		// two hashes for nested closures. The new hash should be
-		// enough to disambiguate.
-		name = obj.TrimInlineHash(name) + "#" + inlHash + "#"
-	}
-
-	return pkg.Lookup(name)
+	*gen++
+	return pkg.Lookup(fmt.Sprintf("%s%s%d", outer, suffix, *gen))
 }
 
 // NewClosureFunc creates a new Func to represent a function literal
@@ -528,18 +498,13 @@ func closureName(outerfn *Func, pos src.XPos, why Op, gen int) *types.Sym {
 // why is the reason we're generating this Func. It can be OCLOSURE
 // (for a normal function literal) or OGO or ODEFER (for wrapping a
 // call expression that has parameters or results).
-//
-// gen is an optional counter for the closure name. If it is 0,
-// the counter will be computed based on outerfn.
-func NewClosureFunc(fpos, cpos src.XPos, why Op, typ *types.Type, outerfn *Func, pkg *Package, gen int) *Func {
+func NewClosureFunc(fpos, cpos src.XPos, why Op, typ *types.Type, outerfn *Func, pkg *Package) *Func {
 	if outerfn == nil {
 		base.FatalfAt(fpos, "outerfn is nil")
 	}
 
-	fn := NewFunc(fpos, fpos, closureName(outerfn, cpos, why, gen), typ)
+	fn := NewFunc(fpos, fpos, closureName(outerfn, cpos, why), typ)
 	fn.SetDupok(outerfn.Dupok()) // if the outer function is dupok, so is the closure
-
-	fn.Linksym().Set(obj.AttrContentAddressable, true)
 
 	clo := &ClosureExpr{Func: fn}
 	clo.op = OCLOSURE

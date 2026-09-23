@@ -4,10 +4,6 @@
 
 package ssa
 
-import (
-	"slices"
-)
-
 // loopRotate converts loops with a check-loop-condition-at-beginning
 // to loops with a check-loop-condition-at-end.
 // This helps loops avoid extra unnecessary jumps.
@@ -45,64 +41,10 @@ func loopRotate(f *Func) {
 
 	// Map from block ID to the moving blocks that should
 	// come right after it.
-	// If a block, which has its ID present in keys of the 'after' map,
-	// occurs in some other block's 'after' list, that represents whole
-	// nested loop, e.g. consider an inner loop I nested into an outer
-	// loop O. It and Ot are corresponding top block for these loops
-	// chosen by our algorithm, and It is in the Ot's 'after' list.
-	//
-	//    Before:                     After:
-	//
-	//       e                       e
-	//       │                       │
-	//       │                       │Ot ◄───┐
-	//       ▼                       ▼▼      │
-	//   ┌───Oh ◄────┐           ┌─┬─Oh      │
-	//   │   │       │           │ │         │
-	//   │   │       │           │ │ It◄───┐ │
-	//   │   ▼       │           │ │ ▼     │ │
-	//   │ ┌─Ih◄───┐ │           │ └►Ih    │ │
-	//   │ │ │     │ │           │ ┌─┤     │ │
-	//   │ │ ▼     │ │           │ │ ▼     │ │
-	//   │ │ Ib    │ │           │ │ Ib    │ │
-	//   │ │ └─►It─┘ │           │ │ └─────┘ │
-	//   │ │         │           │ │         │
-	//   │ └►Ie      │           │ └►Ie      │
-	//   │   └─►Ot───┘           │   └───────┘
-	//   │                       │
-	//   └──►Oe                  └──►Oe
-	//
-	// We build the 'after' lists for each of the top blocks Ot and It:
-	//   after[Ot]: Oh, It, Ie
-	//   after[It]: Ih, Ib
 	after := map[ID][]*Block{}
 
-	// Map from loop header ID to the new top block for the loop.
-	tops := map[ID]*Block{}
-
-	// Order loops to rotate any child loop before adding its top block
-	// to the parent loop's 'after' list.
-	loopOrder := f.Cache.allocIntSlice(len(loopnest.loops))
-	for i := range loopOrder {
-		loopOrder[i] = i
-	}
-	defer f.Cache.freeIntSlice(loopOrder)
-	slices.SortFunc(loopOrder, func(i, j int) int {
-		di := loopnest.loops[i].depth
-		dj := loopnest.loops[j].depth
-		switch {
-		case di > dj:
-			return -1
-		case di < dj:
-			return 1
-		default:
-			return 0
-		}
-	})
-
 	// Check each loop header and decide if we want to move it.
-	for _, loopIdx := range loopOrder {
-		loop := loopnest.loops[loopIdx]
+	for _, loop := range loopnest.loops {
 		b := loop.header
 		var p *Block // b's in-loop predecessor
 		for _, e := range b.Preds {
@@ -117,7 +59,6 @@ func loopRotate(f *Func) {
 		if p == nil {
 			continue
 		}
-		tops[loop.header.ID] = p
 		p.Hotness |= HotInitial
 		if f.IsPgoHot {
 			p.Hotness |= HotPgo
@@ -139,10 +80,8 @@ func loopRotate(f *Func) {
 			if nextb == p { // original loop predecessor is next
 				break
 			}
-			if bloop := loopnest.b2l[nextb.ID]; bloop != nil {
-				if bloop == loop || bloop.outer == loop && tops[bloop.header.ID] == nextb {
-					after[p.ID] = append(after[p.ID], nextb)
-				}
+			if loopnest.b2l[nextb.ID] == loop {
+				after[p.ID] = append(after[p.ID], nextb)
 			}
 			b = nextb
 		}
@@ -151,7 +90,7 @@ func loopRotate(f *Func) {
 		f.Blocks[idToIdx[p.ID]] = loop.header
 		idToIdx[loop.header.ID], idToIdx[p.ID] = idToIdx[p.ID], idToIdx[loop.header.ID]
 
-		// Place loop blocks after p.
+		// Place b after p.
 		for _, b := range after[p.ID] {
 			move[b.ID] = struct{}{}
 		}
@@ -168,23 +107,16 @@ func loopRotate(f *Func) {
 	oldOrder := f.Cache.allocBlockSlice(len(f.Blocks))
 	defer f.Cache.freeBlockSlice(oldOrder)
 	copy(oldOrder, f.Blocks)
-	var moveBlocks func(bs []*Block)
-	moveBlocks = func(blocks []*Block) {
-		for _, a := range blocks {
-			f.Blocks[j] = a
-			j++
-			if nextBlocks, ok := after[a.ID]; ok {
-				moveBlocks(nextBlocks)
-			}
-		}
-	}
 	for _, b := range oldOrder {
 		if _, ok := move[b.ID]; ok {
 			continue
 		}
 		f.Blocks[j] = b
 		j++
-		moveBlocks(after[b.ID])
+		for _, a := range after[b.ID] {
+			f.Blocks[j] = a
+			j++
+		}
 	}
 	if j != len(oldOrder) {
 		f.Fatalf("bad reordering in looprotate")

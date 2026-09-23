@@ -56,13 +56,7 @@ func TestMillerRabin(t *testing.T) {
 					B = "0" + B
 				}
 
-				// Our Miller-Rabin assumes candidates are 3 mod 4.
-				w := decodeHex(t, W)
-				if len(w) == 0 || w[len(w)-1]%4 != 3 {
-					t.Skip("skipping test with W not congruent to 3 mod 4")
-				}
-
-				mr, err := millerRabinSetup(w)
+				mr, err := millerRabinSetup(decodeHex(t, W))
 				if err != nil {
 					t.Logf("W = %s", W)
 					t.Logf("B = %s", B)
@@ -139,13 +133,8 @@ func TestTotient(t *testing.T) {
 					}
 				}
 
-				// a and b must be even and a/2 and b/2 must be odd for totient to work.
-				if a.Bits()[0]%4 != 2 || b.Bits()[0]%4 != 2 {
-					t.Skip("skipping test with invalid input for totient")
-				}
-
 				lcm, err := totient(p, q)
-				if new(big.Int).SetBytes(decodeHex(t, GCD)).BitLen() > 32 {
+				if oddDivisorLargerThan32Bits(decodeHex(t, GCD)) {
 					if err != errDivisorTooLarge {
 						t.Fatalf("expected divisor too large error, got %v", err)
 					}
@@ -165,6 +154,12 @@ func TestTotient(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func oddDivisorLargerThan32Bits(b []byte) bool {
+	x := new(big.Int).SetBytes(b)
+	x.Rsh(x, x.TrailingZeroBits())
+	return x.BitLen() > 32
 }
 
 func addOne(b []byte) []byte {

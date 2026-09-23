@@ -18,12 +18,13 @@ import (
 // possible in this environment.
 func FetchModule(t *testing.T, module, version string) string {
 	testenv.MustHaveExternalNetwork(t)
+	goTool := testenv.GoToolPath(t)
 
 	// If the default GOMODCACHE doesn't exist, use a temporary directory
 	// instead. (For example, run.bash sets GOPATH=/nonexist-gopath.)
-	out, err := testenv.CleanCmdEnv(testenv.Command(t, testenv.GoToolPath(t), "env", "GOMODCACHE")).Output()
+	out, err := testenv.Command(t, goTool, "env", "GOMODCACHE").Output()
 	if err != nil {
-		t.Errorf("%s env GOMODCACHE: %v\n%s", testenv.GoToolPath(t), err, out)
+		t.Errorf("%s env GOMODCACHE: %v\n%s", goTool, err, out)
 		if ee, ok := err.(*exec.ExitError); ok {
 			t.Logf("%s", ee.Stderr)
 		}
@@ -43,21 +44,15 @@ func FetchModule(t *testing.T, module, version string) string {
 
 	t.Logf("fetching %s@%s\n", module, version)
 
-	cmd := testenv.Command(t, testenv.GoToolPath(t), "mod", "download", "-json", module+"@"+version)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	output, err := cmd.Output()
+	output, err := testenv.Command(t, goTool, "mod", "download", "-json", module+"@"+version).CombinedOutput()
 	if err != nil {
-		t.Fatalf("failed to download %s@%s: %s\nstdout:\n%s\nstderr:\n%s\n", module, version, err, output, stderr.Bytes())
-	}
-	if stderr.Len() > 0 {
-		t.Logf("go mod download stderr:\n%s", stderr.Bytes())
+		t.Fatalf("failed to download %s@%s: %s\n%s\n", module, version, err, output)
 	}
 	var j struct {
 		Dir string
 	}
 	if err := json.Unmarshal(output, &j); err != nil {
-		t.Fatalf("failed to parse 'go mod download': %s\nstdout:\n%s\nstderr:\n%s\n", err, output, stderr.Bytes())
+		t.Fatalf("failed to parse 'go mod download': %s\n%s\n", err, output)
 	}
 
 	return j.Dir

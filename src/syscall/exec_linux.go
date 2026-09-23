@@ -8,7 +8,7 @@ package syscall
 
 import (
 	errpkg "errors"
-	"internal/strconv"
+	"internal/itoa"
 	"runtime"
 	"unsafe"
 )
@@ -244,7 +244,7 @@ func forkAndExecInChild1(argv0 *byte, argv, envv []*byte, chroot, dir *byte, att
 		nextfd                    int
 		i                         int
 		caps                      caps
-		fd1, flags, ppid          uintptr
+		fd1, flags                uintptr
 		puid, psetgroups, pgid    []byte
 		uidmap, setgroups, gidmap []byte
 		clone3                    *cloneArgs
@@ -278,9 +278,7 @@ func forkAndExecInChild1(argv0 *byte, argv, envv []*byte, chroot, dir *byte, att
 	}
 
 	// Record parent PID so child can test if it has died.
-	if sys.Pdeathsig != 0 {
-		ppid, _ = rawSyscallNoError(SYS_GETPID, 0, 0, 0)
-	}
+	ppid, _ := rawSyscallNoError(SYS_GETPID, 0, 0, 0)
 
 	// Guard against side effects of shuffling fds below.
 	// Make sure that nextfd is beyond any currently open files so
@@ -367,11 +365,11 @@ func forkAndExecInChild1(argv0 *byte, argv, envv []*byte, chroot, dir *byte, att
 		if _, _, err1 = RawSyscall(SYS_CLOSE, uintptr(mapPipe[1]), 0, 0); err1 != 0 {
 			goto childerror
 		}
-		c, _, err1 = RawSyscall(SYS_READ, uintptr(mapPipe[0]), uintptr(unsafe.Pointer(&err2)), unsafe.Sizeof(err2))
+		pid, _, err1 = RawSyscall(SYS_READ, uintptr(mapPipe[0]), uintptr(unsafe.Pointer(&err2)), unsafe.Sizeof(err2))
 		if err1 != 0 {
 			goto childerror
 		}
-		if c != unsafe.Sizeof(err2) {
+		if pid != unsafe.Sizeof(err2) {
 			err1 = EINVAL
 			goto childerror
 		}
@@ -429,7 +427,7 @@ func forkAndExecInChild1(argv0 *byte, argv, envv []*byte, chroot, dir *byte, att
 			if fd1, _, err1 = RawSyscall6(SYS_OPENAT, uintptr(dirfd), uintptr(unsafe.Pointer(&psetgroups[0])), uintptr(O_WRONLY), 0, 0, 0); err1 != 0 {
 				goto childerror
 			}
-			_, _, err1 = RawSyscall(SYS_WRITE, fd1, uintptr(unsafe.Pointer(&setgroups[0])), uintptr(len(setgroups)))
+			pid, _, err1 = RawSyscall(SYS_WRITE, fd1, uintptr(unsafe.Pointer(&setgroups[0])), uintptr(len(setgroups)))
 			if err1 != 0 {
 				goto childerror
 			}
@@ -440,7 +438,7 @@ func forkAndExecInChild1(argv0 *byte, argv, envv []*byte, chroot, dir *byte, att
 			if fd1, _, err1 = RawSyscall6(SYS_OPENAT, uintptr(dirfd), uintptr(unsafe.Pointer(&pgid[0])), uintptr(O_WRONLY), 0, 0, 0); err1 != 0 {
 				goto childerror
 			}
-			_, _, err1 = RawSyscall(SYS_WRITE, fd1, uintptr(unsafe.Pointer(&gidmap[0])), uintptr(len(gidmap)))
+			pid, _, err1 = RawSyscall(SYS_WRITE, fd1, uintptr(unsafe.Pointer(&gidmap[0])), uintptr(len(gidmap)))
 			if err1 != 0 {
 				goto childerror
 			}
@@ -454,7 +452,7 @@ func forkAndExecInChild1(argv0 *byte, argv, envv []*byte, chroot, dir *byte, att
 			if fd1, _, err1 = RawSyscall6(SYS_OPENAT, uintptr(dirfd), uintptr(unsafe.Pointer(&puid[0])), uintptr(O_WRONLY), 0, 0, 0); err1 != 0 {
 				goto childerror
 			}
-			_, _, err1 = RawSyscall(SYS_WRITE, fd1, uintptr(unsafe.Pointer(&uidmap[0])), uintptr(len(uidmap)))
+			pid, _, err1 = RawSyscall(SYS_WRITE, fd1, uintptr(unsafe.Pointer(&uidmap[0])), uintptr(len(uidmap)))
 			if err1 != 0 {
 				goto childerror
 			}
@@ -521,13 +519,8 @@ func forkAndExecInChild1(argv0 *byte, argv, envv []*byte, chroot, dir *byte, att
 		for _, c = range sys.AmbientCaps {
 			// Add the c capability to the permitted and inheritable capability mask,
 			// otherwise we will not be able to add it to the ambient capability mask.
-			idx := int(capToIndex(c))
-			if idx >= len(caps.data) {
-				err1 = EINVAL
-				goto childerror
-			}
-			caps.data[idx].permitted |= capToMask(c)
-			caps.data[idx].inheritable |= capToMask(c)
+			caps.data[capToIndex(c)].permitted |= capToMask(c)
+			caps.data[capToIndex(c)].inheritable |= capToMask(c)
 		}
 
 		if _, _, err1 = RawSyscall(SYS_CAPSET, uintptr(unsafe.Pointer(&caps.hdr)), uintptr(unsafe.Pointer(&caps.data[0])), 0); err1 != 0 {
@@ -686,7 +679,7 @@ childerror:
 func formatIDMappings(idMap []SysProcIDMap) []byte {
 	var data []byte
 	for _, im := range idMap {
-		data = append(data, strconv.Itoa(im.ContainerID)+" "+strconv.Itoa(im.HostID)+" "+strconv.Itoa(im.Size)+"\n"...)
+		data = append(data, itoa.Itoa(im.ContainerID)+" "+itoa.Itoa(im.HostID)+" "+itoa.Itoa(im.Size)+"\n"...)
 	}
 	return data
 }
@@ -715,7 +708,7 @@ func writeIDMappings(path string, idMap []SysProcIDMap) error {
 // This is needed since kernel 3.19, because you can't write gid_map without
 // disabling setgroups() system call.
 func writeSetgroups(pid int, enable bool) error {
-	sgf := "/proc/" + strconv.Itoa(pid) + "/setgroups"
+	sgf := "/proc/" + itoa.Itoa(pid) + "/setgroups"
 	fd, err := Open(sgf, O_RDWR, 0)
 	if err != nil {
 		return err
@@ -740,7 +733,7 @@ func writeSetgroups(pid int, enable bool) error {
 // for a process and it is called from the parent process.
 func writeUidGidMappings(pid int, sys *SysProcAttr) error {
 	if sys.UidMappings != nil {
-		uidf := "/proc/" + strconv.Itoa(pid) + "/uid_map"
+		uidf := "/proc/" + itoa.Itoa(pid) + "/uid_map"
 		if err := writeIDMappings(uidf, sys.UidMappings); err != nil {
 			return err
 		}
@@ -751,7 +744,7 @@ func writeUidGidMappings(pid int, sys *SysProcAttr) error {
 		if err := writeSetgroups(pid, sys.GidMappingsEnableSetgroups); err != nil && err != ENOENT {
 			return err
 		}
-		gidf := "/proc/" + strconv.Itoa(pid) + "/gid_map"
+		gidf := "/proc/" + itoa.Itoa(pid) + "/gid_map"
 		if err := writeIDMappings(gidf, sys.GidMappings); err != nil {
 			return err
 		}

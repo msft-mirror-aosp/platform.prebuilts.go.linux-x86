@@ -10,73 +10,52 @@ import (
 )
 
 func init() {
-	obj.RegisterRegister(obj.RBaseLOONG64, REG_LAST, RegName)
+	obj.RegisterRegister(obj.RBaseLOONG64, REG_LAST, rconv)
 	obj.RegisterOpcode(obj.ABaseLoong64, Anames)
 }
 
-func arrange(valid int16) string {
-	var regPrefix string
-	var arngName string
-
-	// bits 0-4 indicates register: Vn or Xn
-	// bits 5-9 indicates arrangement: <T>
-	// bits 10 indicates SMID type: 0: LSX, 1: LASX
-	simdType := (valid >> EXT_SIMDTYPE_SHIFT) & EXT_SIMDTYPE_MASK
-	simdReg := (valid >> EXT_REG_SHIFT) & EXT_REG_MASK
-	arngType := (valid >> EXT_TYPE_SHIFT) & EXT_TYPE_MASK
-
-	switch simdType {
-	case LSX:
-		regPrefix = "V"
-	case LASX:
-		regPrefix = "X"
-	default:
-		regPrefix = "#"
-	}
-
-	switch arngType {
+func arrange(a int16) string {
+	switch a {
 	case ARNG_32B:
-		arngName = "B32"
+		return "B32"
 	case ARNG_16H:
-		arngName = "H16"
+		return "H16"
 	case ARNG_8W:
-		arngName = "W8"
+		return "W8"
 	case ARNG_4V:
-		arngName = "V4"
+		return "V4"
 	case ARNG_2Q:
-		arngName = "Q2"
+		return "Q2"
 	case ARNG_16B:
-		arngName = "B16"
+		return "B16"
 	case ARNG_8H:
-		arngName = "H8"
+		return "H8"
 	case ARNG_4W:
-		arngName = "W4"
+		return "W4"
 	case ARNG_2V:
-		arngName = "V2"
+		return "V2"
 	case ARNG_B:
-		arngName = "B"
+		return "B"
 	case ARNG_H:
-		arngName = "H"
+		return "H"
 	case ARNG_W:
-		arngName = "W"
+		return "W"
 	case ARNG_V:
-		arngName = "V"
+		return "V"
 	case ARNG_BU:
-		arngName = "BU"
+		return "BU"
 	case ARNG_HU:
-		arngName = "HU"
+		return "HU"
 	case ARNG_WU:
-		arngName = "WU"
+		return "WU"
 	case ARNG_VU:
-		arngName = "VU"
+		return "VU"
 	default:
-		arngName = "ARNG_???"
+		return "ARNG_???"
 	}
-
-	return fmt.Sprintf("%s%d.%s", regPrefix, simdReg, arngName)
 }
 
-func RegName(r int) string {
+func rconv(r int) string {
 	switch {
 	case r == 0:
 		return "NONE"
@@ -95,10 +74,28 @@ func RegName(r int) string {
 		return fmt.Sprintf("V%d", r-REG_V0)
 	case REG_X0 <= r && r <= REG_X31:
 		return fmt.Sprintf("X%d", r-REG_X0)
+	}
+
+	// bits 0-4 indicates register: Vn or Xn
+	// bits 5-9 indicates arrangement: <T>
+	// bits 10 indicates SMID type: 0: LSX, 1: LASX
+	simd_type := (int16(r) >> EXT_SIMDTYPE_SHIFT) & EXT_SIMDTYPE_MASK
+	reg_num := (int16(r) >> EXT_REG_SHIFT) & EXT_REG_MASK
+	arng_type := (int16(r) >> EXT_TYPE_SHIFT) & EXT_TYPE_MASK
+	reg_prefix := "#"
+	switch simd_type {
+	case LSX:
+		reg_prefix = "V"
+	case LASX:
+		reg_prefix = "X"
+	}
+
+	switch {
 	case REG_ARNG <= r && r < REG_ELEM:
-		return arrange(int16(r - REG_ARNG))
+		return fmt.Sprintf("%s%d.%s", reg_prefix, reg_num, arrange(arng_type))
+
 	case REG_ELEM <= r && r < REG_ELEM_END:
-		return arrange(int16(r - REG_ELEM))
+		return fmt.Sprintf("%s%d.%s", reg_prefix, reg_num, arrange(arng_type))
 	}
 
 	return fmt.Sprintf("badreg(%d)", r-obj.RBaseLOONG64)

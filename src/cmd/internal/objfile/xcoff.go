@@ -44,7 +44,7 @@ func (f *xcoffFile) symbols() ([]Sym, error) {
 		case N_DEBUG:
 			sym.Code = '?'
 		default:
-			if s.SectionNumber < 0 || len(f.xcoff.Sections) < s.SectionNumber {
+			if s.SectionNumber < 0 || len(f.xcoff.Sections) < int(s.SectionNumber) {
 				return nil, fmt.Errorf("invalid section number in symbol table")
 			}
 			sect := f.xcoff.Sections[s.SectionNumber-1]
@@ -87,14 +87,15 @@ func (f *xcoffFile) symbols() ([]Sym, error) {
 	return syms, nil
 }
 
-func (f *xcoffFile) pcln() (textStart uint64, pclntab []byte, err error) {
+func (f *xcoffFile) pcln() (textStart uint64, symtab, pclntab []byte, err error) {
 	if sect := f.xcoff.Section(".text"); sect != nil {
 		textStart = sect.VirtualAddress
 	}
 	if pclntab, err = loadXCOFFTable(f.xcoff, "runtime.pclntab", "runtime.epclntab"); err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
-	return textStart, pclntab, nil
+	symtab, _ = loadXCOFFTable(f.xcoff, "runtime.symtab", "runtime.esymtab") // ignore error, this symbol is not useful anyway
+	return textStart, symtab, pclntab, nil
 }
 
 func (f *xcoffFile) text() (textStart uint64, text []byte, err error) {
@@ -115,7 +116,7 @@ func findXCOFFSymbol(f *xcoff.File, name string) (*xcoff.Symbol, error) {
 		if s.SectionNumber <= 0 {
 			return nil, fmt.Errorf("symbol %s: invalid section number %d", name, s.SectionNumber)
 		}
-		if len(f.Sections) < s.SectionNumber {
+		if len(f.Sections) < int(s.SectionNumber) {
 			return nil, fmt.Errorf("symbol %s: section number %d is larger than max %d", name, s.SectionNumber, len(f.Sections))
 		}
 		return s, nil

@@ -50,8 +50,6 @@ func (e *escape) addr(n ir.Node) hole {
 	case ir.OINDEXMAP:
 		n := n.(*ir.IndexExpr)
 		e.discard(n.X)
-		// Keys used in map assignments must escape.
-		// See "Hashing Pointers" doc in internal/runtime/maps/map.go.
 		e.assignHeap(n.Index, "key of map put", n)
 	}
 

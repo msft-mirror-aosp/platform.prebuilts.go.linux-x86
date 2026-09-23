@@ -16,7 +16,6 @@ import (
 	"crypto/rc4"
 	"crypto/sha1"
 	"crypto/sha256"
-	_ "crypto/sha512" // for crypto.SHA384
 	"fmt"
 	"hash"
 	"internal/cpu"
@@ -150,8 +149,8 @@ type cipherSuite struct {
 }
 
 var cipherSuites = []*cipherSuite{ // TODO: replace with a map, since the order doesn't matter.
-	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
-	{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
+	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
+	{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
 	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM},
@@ -285,7 +284,7 @@ var cipherSuitesPreferenceOrder = []uint16{
 	// AEADs w/ ECDHE
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 
 	// CBC w/ ECDHE
 	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
@@ -314,7 +313,7 @@ var cipherSuitesPreferenceOrder = []uint16{
 
 var cipherSuitesPreferenceOrderNoAES = []uint16{
 	// ChaCha20Poly1305
-	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 
 	// AES-GCM w/ ECDHE
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
@@ -346,16 +345,25 @@ var disabledCipherSuites = map[uint16]bool{
 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA: true,
 	TLS_ECDHE_RSA_WITH_RC4_128_SHA:   true,
 	TLS_RSA_WITH_RC4_128_SHA:         true,
+}
 
-	// RSA key exchange
+// rsaKexCiphers contains the ciphers which use RSA based key exchange,
+// which we also disable by default unless a GODEBUG is set.
+var rsaKexCiphers = map[uint16]bool{
+	TLS_RSA_WITH_RC4_128_SHA:        true,
 	TLS_RSA_WITH_3DES_EDE_CBC_SHA:   true,
 	TLS_RSA_WITH_AES_128_CBC_SHA:    true,
 	TLS_RSA_WITH_AES_256_CBC_SHA:    true,
+	TLS_RSA_WITH_AES_128_CBC_SHA256: true,
 	TLS_RSA_WITH_AES_128_GCM_SHA256: true,
 	TLS_RSA_WITH_AES_256_GCM_SHA384: true,
+}
 
-	// 3DES
+// tdesCiphers contains 3DES ciphers,
+// which we also disable by default unless a GODEBUG is set.
+var tdesCiphers = map[uint16]bool{
 	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA: true,
+	TLS_RSA_WITH_3DES_EDE_CBC_SHA:       true,
 }
 
 var (

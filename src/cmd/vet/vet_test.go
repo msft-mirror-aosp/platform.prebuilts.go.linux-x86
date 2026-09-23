@@ -4,10 +4,6 @@
 
 package main
 
-// TODO(adonovan): replace this test by a script test
-// in cmd/go/testdata/script/vet_suite.txt like we do
-// for 'go fix'.
-
 import (
 	"bytes"
 	"errors"
@@ -32,8 +28,7 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	// Set for subprocesses to inherit.
-	os.Setenv("GO_VETTEST_IS_VET", "1") // ignore error
+	os.Setenv("GO_VETTEST_IS_VET", "1") // Set for subprocesses to inherit.
 	os.Exit(m.Run())
 }
 
@@ -120,7 +115,7 @@ func TestVet(t *testing.T) {
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 		cmd.Dir = "testdata/rangeloop"
 		cmd.Stderr = new(strings.Builder) // all vet output goes to stderr
-		cmd.Run()                         // ignore error
+		cmd.Run()
 		stderr := cmd.Stderr.(fmt.Stringer).String()
 
 		filename := filepath.FromSlash("testdata/rangeloop/rangeloop.go")
@@ -139,7 +134,7 @@ func TestVet(t *testing.T) {
 
 		if err := errorCheck(stderr, false, filename, filepath.Base(filename)); err != nil {
 			t.Errorf("error check failed: %s", err)
-			t.Logf("vet stderr:\n<<%s>>", cmd.Stderr)
+			t.Log("vet stderr:\n", cmd.Stderr)
 		}
 	})
 
@@ -151,7 +146,7 @@ func TestVet(t *testing.T) {
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 		cmd.Dir = "testdata/stdversion"
 		cmd.Stderr = new(strings.Builder) // all vet output goes to stderr
-		cmd.Run()                         // ignore error
+		cmd.Run()
 		stderr := cmd.Stderr.(fmt.Stringer).String()
 
 		filename := filepath.FromSlash("testdata/stdversion/stdversion.go")
@@ -170,7 +165,7 @@ func TestVet(t *testing.T) {
 
 		if err := errorCheck(stderr, false, filename, filepath.Base(filename)); err != nil {
 			t.Errorf("error check failed: %s", err)
-			t.Logf("vet stderr:\n<<%s>>", cmd.Stderr)
+			t.Log("vet stderr:\n", cmd.Stderr)
 		}
 	})
 }
@@ -189,7 +184,7 @@ func cgoEnabled(t *testing.T) bool {
 func errchk(c *exec.Cmd, files []string, t *testing.T) {
 	output, err := c.CombinedOutput()
 	if _, ok := err.(*exec.ExitError); !ok {
-		t.Logf("vet output:\n<<%s>>", output)
+		t.Logf("vet output:\n%s", output)
 		t.Fatal(err)
 	}
 	fullshort := make([]string, 0, len(files)*2)
@@ -210,6 +205,7 @@ func TestTags(t *testing.T) {
 		"x testtag y": 1,
 		"othertag":    2,
 	} {
+		tag, wantFile := tag, wantFile
 		t.Run(tag, func(t *testing.T) {
 			t.Parallel()
 			t.Logf("-tags=%s", tag)
@@ -270,7 +266,7 @@ func errorCheck(outStr string, wantAuto bool, fullshort ...string) (err error) {
 			errmsgs, out = partitionStrings(we.prefix, out)
 		}
 		if len(errmsgs) == 0 {
-			errs = append(errs, fmt.Errorf("%s:%d: missing error %q (prefix: %s)", we.file, we.lineNum, we.reStr, we.prefix))
+			errs = append(errs, fmt.Errorf("%s:%d: missing error %q", we.file, we.lineNum, we.reStr))
 			continue
 		}
 		matched := false

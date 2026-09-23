@@ -96,7 +96,7 @@ func TestArgumentsPositions(t *testing.T) {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "", mainProcessed, parser.AllErrors|parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, "", mainProcessed, parser.AllErrors)
 	if err != nil {
 		fmt.Println(err)
 		return

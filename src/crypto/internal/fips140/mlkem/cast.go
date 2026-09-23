@@ -9,10 +9,9 @@ import (
 	"crypto/internal/fips140"
 	_ "crypto/internal/fips140/check"
 	"errors"
-	"sync"
 )
 
-var fipsSelfTest = sync.OnceFunc(func() {
+func init() {
 	fips140.CAST("ML-KEM-768", func() error {
 		var d = &[32]byte{
 			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -41,12 +40,14 @@ var fipsSelfTest = sync.OnceFunc(func() {
 		dk := &DecapsulationKey768{}
 		kemKeyGen(dk, d, z)
 		ek := dk.EncapsulationKey()
-		var cc [CiphertextSize768]byte
-		Ke, _ := kemEncaps(&cc, ek, m)
-		Kd := kemDecaps(dk, &cc)
+		Ke, c := ek.EncapsulateInternal(m)
+		Kd, err := dk.Decapsulate(c)
+		if err != nil {
+			return err
+		}
 		if !bytes.Equal(Ke, K) || !bytes.Equal(Kd, K) {
 			return errors.New("unexpected result")
 		}
 		return nil
 	})
-})
+}

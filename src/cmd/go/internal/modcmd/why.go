@@ -47,7 +47,7 @@ For example:
 	(main module does not need package golang.org/x/text/encoding)
 	$
 
-See https://go.dev/ref/mod#go-mod-why for more about 'go mod why'.
+See https://golang.org/ref/mod#go-mod-why for more about 'go mod why'.
 	`,
 }
 
@@ -63,10 +63,9 @@ func init() {
 }
 
 func runWhy(ctx context.Context, cmd *base.Command, args []string) {
-	moduleLoader := modload.NewLoader()
-	moduleLoader.InitWorkfile()
-	moduleLoader.ForceUseModules = true
-	moduleLoader.RootMode = modload.NeedRoot
+	modload.InitWorkfile()
+	modload.ForceUseModules = true
+	modload.RootMode = modload.NeedRoot
 	modload.ExplicitWriteGoMod = true // don't write go.mod in ListModules
 
 	loadOpts := modload.PackageOpts{
@@ -84,15 +83,15 @@ func runWhy(ctx context.Context, cmd *base.Command, args []string) {
 			}
 		}
 
-		mods, err := modload.ListModules(moduleLoader, ctx, args, 0, "")
+		mods, err := modload.ListModules(ctx, args, 0, "")
 		if err != nil {
 			base.Fatal(err)
 		}
 
 		byModule := make(map[string][]string)
-		_, pkgs := modload.LoadPackages(moduleLoader, ctx, loadOpts, "all")
+		_, pkgs := modload.LoadPackages(ctx, loadOpts, "all")
 		for _, path := range pkgs {
-			m := moduleLoader.PackageModule(path)
+			m := modload.PackageModule(path)
 			if m.Path != "" {
 				byModule[m.Path] = append(byModule[m.Path], path)
 			}
@@ -102,13 +101,13 @@ func runWhy(ctx context.Context, cmd *base.Command, args []string) {
 			best := ""
 			bestDepth := 1000000000
 			for _, path := range byModule[m.Path] {
-				d := moduleLoader.WhyDepth(path)
+				d := modload.WhyDepth(path)
 				if d > 0 && d < bestDepth {
 					best = path
 					bestDepth = d
 				}
 			}
-			why := moduleLoader.Why(best)
+			why := modload.Why(best)
 			if why == "" {
 				vendoring := ""
 				if *whyVendor {
@@ -121,14 +120,14 @@ func runWhy(ctx context.Context, cmd *base.Command, args []string) {
 		}
 	} else {
 		// Resolve to packages.
-		matches, _ := modload.LoadPackages(moduleLoader, ctx, loadOpts, args...)
+		matches, _ := modload.LoadPackages(ctx, loadOpts, args...)
 
-		modload.LoadPackages(moduleLoader, ctx, loadOpts, "all") // rebuild graph, from main module (not from named packages)
+		modload.LoadPackages(ctx, loadOpts, "all") // rebuild graph, from main module (not from named packages)
 
 		sep := ""
 		for _, m := range matches {
 			for _, path := range m.Pkgs {
-				why := moduleLoader.Why(path)
+				why := modload.Why(path)
 				if why == "" {
 					vendoring := ""
 					if *whyVendor {

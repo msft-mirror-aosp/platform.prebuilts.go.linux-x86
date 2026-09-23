@@ -60,8 +60,6 @@ func (h Hash) String() string {
 		return "BLAKE2b-384"
 	case BLAKE2b_512:
 		return "BLAKE2b-512"
-	case MLDSAMu:
-		return "ML-DSA μ message representative"
 	default:
 		return "unknown hash value " + strconv.Itoa(int(h))
 	}
@@ -77,24 +75,16 @@ const (
 	SHA512                      // import crypto/sha512
 	MD5SHA1                     // no implementation; MD5+SHA1 used for TLS RSA
 	RIPEMD160                   // import golang.org/x/crypto/ripemd160
-	SHA3_224                    // import crypto/sha3
-	SHA3_256                    // import crypto/sha3
-	SHA3_384                    // import crypto/sha3
-	SHA3_512                    // import crypto/sha3
+	SHA3_224                    // import golang.org/x/crypto/sha3
+	SHA3_256                    // import golang.org/x/crypto/sha3
+	SHA3_384                    // import golang.org/x/crypto/sha3
+	SHA3_512                    // import golang.org/x/crypto/sha3
 	SHA512_224                  // import crypto/sha512
 	SHA512_256                  // import crypto/sha512
 	BLAKE2s_256                 // import golang.org/x/crypto/blake2s
 	BLAKE2b_256                 // import golang.org/x/crypto/blake2b
 	BLAKE2b_384                 // import golang.org/x/crypto/blake2b
 	BLAKE2b_512                 // import golang.org/x/crypto/blake2b
-
-	// MLDSAMu is a sentinel value for a [pre-hashed μ message representative].
-	// It has no implementation, but is used as a [SignerOpts.HashFunc] return
-	// value for [crypto/mldsa.PrivateKey.Sign].
-	//
-	// [pre-hashed μ message representative]: https://www.rfc-editor.org/rfc/rfc9881.html#externalmu
-	MLDSAMu
-
 	maxHash
 )
 
@@ -118,7 +108,6 @@ var digestSizes = []uint8{
 	BLAKE2b_256: 32,
 	BLAKE2b_384: 48,
 	BLAKE2b_512: 64,
-	MLDSAMu:     64,
 }
 
 // Size returns the length, in bytes, of a digest resulting from the given hash
@@ -142,7 +131,7 @@ func (h Hash) New() hash.Hash {
 			return f()
 		}
 	}
-	panic("crypto: requested hash function unavailable: " + h.String())
+	panic("crypto: requested hash function #" + strconv.Itoa(int(h)) + " is unavailable")
 }
 
 // Available reports whether the given hash function is linked into the binary.
@@ -154,11 +143,8 @@ func (h Hash) Available() bool {
 // hash function. This is intended to be called from the init function in
 // packages that implement hash functions.
 func RegisterHash(h Hash, f func() hash.Hash) {
-	if h == 0 || h >= maxHash {
+	if h >= maxHash {
 		panic("crypto: RegisterHash of unknown hash function")
-	}
-	if h == MLDSAMu {
-		panic("crypto: cannot RegisterHash for MLDSAMu")
 	}
 	hashes[h] = f
 }
@@ -260,37 +246,10 @@ func SignMessage(signer Signer, rand io.Reader, msg []byte, opts SignerOpts) (si
 	if ms, ok := signer.(MessageSigner); ok {
 		return ms.SignMessage(rand, msg, opts)
 	}
-	if hash := opts.HashFunc(); hash != 0 {
-		if !hash.Available() {
-			return nil, hashUnavailableError(hash)
-		}
-		h := hash.New()
+	if opts.HashFunc() != 0 {
+		h := opts.HashFunc().New()
 		h.Write(msg)
 		msg = h.Sum(nil)
 	}
 	return signer.Sign(rand, msg, opts)
-}
-
-type hashUnavailableError Hash
-
-func (h hashUnavailableError) Error() string {
-	return "crypto: requested hash function unavailable: " + Hash(h).String()
-}
-
-// Decapsulator is an interface for an opaque private KEM key that can be used for
-// decapsulation operations. For example, an ML-KEM key kept in a hardware module.
-//
-// It is implemented, for example, by [crypto/mlkem.DecapsulationKey768].
-type Decapsulator interface {
-	Encapsulator() Encapsulator
-	Decapsulate(ciphertext []byte) (sharedKey []byte, err error)
-}
-
-// Encapsulator is an interface for a public KEM key that can be used for
-// encapsulation operations.
-//
-// It is implemented, for example, by [crypto/mlkem.EncapsulationKey768].
-type Encapsulator interface {
-	Bytes() []byte
-	Encapsulate() (sharedKey, ciphertext []byte)
 }

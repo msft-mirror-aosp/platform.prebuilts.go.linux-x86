@@ -36,7 +36,7 @@ import (
 // In cases 1, 3, and 4, it is possible that the underlying type or methods of
 // N may not be immediately available.
 //  - During type-checking, we allocate N before type-checking its underlying
-//    type or methods, so that we can create recursive references.
+//    type or methods, so that we may resolve recursive references.
 //  - When loading from export data, we may load its methods and underlying
 //    type lazily using a provided load function.
 //  - After instantiating, we lazily expand the underlying type and methods
@@ -50,8 +50,10 @@ import (
 // soon.
 //
 // We achieve this by tracking state with an atomic state variable, and
-// guarding potentially concurrent calculations with a mutex. See [stateMask]
-// for details.
+// guarding potentially concurrent calculations with a mutex. At any point in
+// time this state variable determines which data on N may be accessed. As
+// state monotonically progresses, any data available at state M may be
+// accessed without acquiring the mutex at state N, provided N >= M.
 //
 // GLOSSARY: Here are a few terms used in this file to describe Named types:
 //  - We say that a Named type is "instantiated" if it has been constructed by
@@ -60,19 +62,18 @@ import (
 //    declaration in the source. Instantiated named types correspond to a type
 //    instantiation in the source, not a declaration. But their Origin type is
 //    a declared type.
-//  - We say that a Named type is "unpacked" if its RHS information has been
-//    populated, normalizing its representation for use in type-checking
-//    operations and abstracting away how it was created:
-//      - For a Named type constructed from unified IR, this involves invoking
-//        a lazy loader function to extract details from UIR as needed.
-//      - For an instantiated Named type, this involves extracting information
-//        from its origin and substituting type arguments into a "synthetic"
-//        RHS; this process is called "expanding" the RHS (see below).
+//  - We say that a Named type is "resolved" if its RHS information has been
+//    loaded or fully type-checked. For Named types constructed from export
+//    data, this may involve invoking a loader function to extract information
+//    from export data. For instantiated named types this involves reading
+//    information from their origin.
 //  - We say that a Named type is "expanded" if it is an instantiated type and
-//    type parameters in its RHS and methods have been substituted with the type
-//    arguments from the instantiation. A type may be partially expanded if some
-//    but not all of these details have been substituted. Similarly, we refer to
-//    these individual details (RHS or method) as being "expanded".
+//    type parameters in its underlying type and methods have been substituted
+//    with the type arguments from the instantiation. A type may be partially
+//    expanded if some but not all of these details have been substituted.
+//    Similarly, we refer to these individual details (underlying type or
+//    method) as being "expanded".
+//  - When all information is known for a named type, we say it is "complete".
 //
 // Some invariants to keep in mind: each declared Named type has a single
 // corresponding object, and that object's type is the (possibly generic) Named
@@ -89,8 +90,8 @@ import (
 // presence of a cycle of named types, expansion will eventually find an
 // existing instance in the Context and short-circuit the expansion.
 //
-// Once an instance is fully expanded, we can nil out this shared Context to unpin
-// memory, though the Context may still be held by other incomplete instances
+// Once an instance is complete, we can nil out this shared Context to unpin
+// memory, though this Context may still be held by other incomplete instances
 // in its "lineage".
 
 // A Named represents a named (defined) type.
@@ -109,16 +110,18 @@ type Named struct {
 	check *Checker  // non-nil during type-checking; nil otherwise
 	obj   *TypeName // corresponding declared object for declared types; see above for instantiated types
 
-	allowNilRHS bool // may be true from creation via [NewNamed] until [Named.SetUnderlying]
+	// fromRHS holds the type (on RHS of declaration) this *Named type is derived
+	// from (for cycle reporting). Only used by validType, and therefore does not
+	// require synchronization.
+	fromRHS Type
 
-	inst *instance // information for instantiated types; nil otherwise
+	// information for instantiated types; nil otherwise
+	inst *instance
 
 	mu         sync.Mutex     // guards all fields below
-	state_     uint32         // the current state of this type; must only be accessed atomically or when mu is held
-	fromRHS    Type           // the declaration RHS this type is derived from
+	state_     uint32         // the current state of this type; must only be accessed atomically
+	underlying Type           // possibly a *Named during setup; never a *Named once set up completely
 	tparams    *TypeParamList // type parameters, or nil
-	underlying Type           // underlying type, or nil
-	varSize    bool           // whether the type has variable size
 
 	// methods declared for this type (not the method set of this type)
 	// Signatures are type-checked lazily.
@@ -127,8 +130,8 @@ type Named struct {
 	// accessed.
 	methods []*Func
 
-	// loader may be provided to lazily load type parameters, underlying type, methods, and delayed functions
-	loader func(*Named) ([]*TypeParam, Type, []*Func, []func())
+	// loader may be provided to lazily load type parameters, underlying type, and methods.
+	loader func(*Named) (tparams []*TypeParam, underlying Type, methods []*Func)
 }
 
 // instance holds information that is only necessary for instantiated named
@@ -140,47 +143,13 @@ type instance struct {
 	ctxt            *Context  // local Context; set to nil after full expansion
 }
 
-// stateMask represents each state in the lifecycle of a named type.
-//
-// Each named type begins in the initial state. A named type may transition to a new state
-// according to the below diagram:
-//
-//	initial
-//	lazyLoaded
-//	unpacked
-//	└── hasMethods
-//	└── hasUnder
-//	└── hasVarSize
-//
-// That is, descent down the tree is mostly linear (initial through unpacked), except upon
-// reaching the leaves (hasMethods, hasUnder, and hasVarSize). A type may occupy any
-// combination of the leaf states at once (they are independent states).
-//
-// To represent this independence, the set of active states is represented with a bit set. State
-// transitions are monotonic. Once a state bit is set, it remains set.
-//
-// The above constraints significantly narrow the possible bit sets for a named type. With bits
-// set left-to-right, they are:
-//
-//	00000 | initial
-//	10000 | lazyLoaded
-//	11000 | unpacked, which implies lazyLoaded
-//	11100 | hasMethods, which implies unpacked (which in turn implies lazyLoaded)
-//	11010 | hasUnder, which implies unpacked ...
-//	11001 | hasVarSize, which implies unpacked ...
-//	11110 | both hasMethods and hasUnder which implies unpacked ...
-//	...   | (other combinations of leaf states)
-//
-// To read the state of a named type, use [Named.stateHas]; to write, use [Named.setState].
-type stateMask uint32
+// namedState represents the possible states that a named type may assume.
+type namedState uint32
 
 const (
-	// initially, type parameters, RHS, underlying, and methods might be unavailable
-	lazyLoaded stateMask = 1 << iota // methods are available, but constraints might be unexpanded (for generic types)
-	unpacked                         // methods might be unexpanded (for instances)
-	hasMethods                       // methods are all expanded (for instances)
-	hasUnder                         // underlying type is available
-	hasVarSize                       // varSize is available
+	unresolved namedState = iota // tparams, underlying type and methods might be unavailable
+	resolved                     // resolve has run; methods might be incomplete (for instances)
+	complete                     // all data is known
 )
 
 // NewNamed returns a new named type for the given type name, underlying type, and associated methods.
@@ -190,37 +159,18 @@ func NewNamed(obj *TypeName, underlying Type, methods []*Func) *Named {
 	if asNamed(underlying) != nil {
 		panic("underlying type must not be *Named")
 	}
-	n := (*Checker)(nil).newNamed(obj, underlying, methods)
-	if underlying == nil {
-		n.allowNilRHS = true
-	} else {
-		n.SetUnderlying(underlying)
-	}
-	return n
-
+	return (*Checker)(nil).newNamed(obj, underlying, methods)
 }
 
-// unpack populates the type parameters, methods, and RHS of n.
+// resolve resolves the type parameters, methods, and underlying type of n.
+// This information may be loaded from a provided loader function, or computed
+// from an origin type (in the case of instances).
 //
-// For the purposes of unpacking, there are three categories of named types:
-//  1. Lazy loaded types
-//  2. Instantiated types
-//  3. All others
-//
-// Note that the above form a partition.
-//
-// Lazy loaded types:
-// Type parameters, methods, and RHS of n become accessible and are fully
-// expanded.
-//
-// Instantiated types:
-// Type parameters, methods, and RHS of n become accessible, though methods
-// are lazily populated as needed.
-//
-// All others:
-// Effectively, nothing happens.
-func (n *Named) unpack() *Named {
-	if n.stateHas(lazyLoaded | unpacked) { // avoid locking below
+// After resolution, the type parameters, methods, and underlying type of n are
+// accessible; but if n is an instantiated type, its methods may still be
+// unexpanded.
+func (n *Named) resolve() *Named {
+	if n.state() >= resolved { // avoid locking below
 		return n
 	}
 
@@ -229,29 +179,28 @@ func (n *Named) unpack() *Named {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	// only atomic for consistency; we are holding the mutex
-	if n.stateHas(lazyLoaded | unpacked) {
+	if n.state() >= resolved {
 		return n
 	}
 
 	if n.inst != nil {
-		assert(n.fromRHS == nil) // instantiated types are not declared types
-		assert(n.loader == nil)  // cannot import an instantiation
+		assert(n.underlying == nil) // n is an unresolved instance
+		assert(n.loader == nil)     // instances are created by instantiation, in which case n.loader is nil
 
 		orig := n.inst.orig
-		orig.unpack()
+		orig.resolve()
+		underlying := n.expandUnderlying()
 
-		n.fromRHS = n.expandRHS()
 		n.tparams = orig.tparams
+		n.underlying = underlying
+		n.fromRHS = orig.fromRHS // for cycle detection
 
 		if len(orig.methods) == 0 {
-			n.setState(lazyLoaded | unpacked | hasMethods) // nothing further to do
+			n.setState(complete) // nothing further to do
 			n.inst.ctxt = nil
 		} else {
-			n.setState(lazyLoaded | unpacked)
+			n.setState(resolved)
 		}
-		// underlying comes after unpacking, do not set it
-		assert(!n.stateHas(hasUnder))
 		return n
 	}
 
@@ -263,68 +212,36 @@ func (n *Named) unpack() *Named {
 	// methods would need to support reentrant calls though. It would
 	// also make the API more future-proof towards further extensions.
 	if n.loader != nil {
-		assert(n.fromRHS == nil) // not loaded yet
-		assert(n.inst == nil)    // cannot import an instantiation
+		assert(n.underlying == nil)
+		assert(n.TypeArgs().Len() == 0) // instances are created by instantiation, in which case n.loader is nil
 
-		tparams, underlying, methods, delayed := n.loader(n)
-		n.loader = nil
+		tparams, underlying, methods := n.loader(n)
 
 		n.tparams = bindTParams(tparams)
 		n.underlying = underlying
 		n.fromRHS = underlying // for cycle detection
 		n.methods = methods
-
-		// Careful: A delayed function could need the underlying type of
-		// the type we are loading, so we must advance to hasUnder to
-		// avoid a deadlock (see go.dev/issue/80258).
-		n.setState(lazyLoaded | unpacked | hasMethods | hasUnder)
-		for _, f := range delayed {
-			f()
-		}
-		return n
+		n.loader = nil
 	}
 
-	// underlying comes after unpacking, do not set it
-	n.setState(lazyLoaded | unpacked | hasMethods)
-	assert(!n.stateHas(hasUnder))
+	n.setState(complete)
 	return n
 }
 
-// stateHas atomically determines whether the current state includes any active bit in sm.
-func (n *Named) stateHas(m stateMask) bool {
-	return stateMask(atomic.LoadUint32(&n.state_))&m != 0
+// state atomically accesses the current state of the receiver.
+func (n *Named) state() namedState {
+	return namedState(atomic.LoadUint32(&n.state_))
 }
 
-// setState atomically sets the current state to include each active bit in sm.
+// setState atomically stores the given state for n.
 // Must only be called while holding n.mu.
-func (n *Named) setState(m stateMask) {
-	atomic.OrUint32(&n.state_, uint32(m))
-	// verify state transitions
-	if debug {
-		m := stateMask(atomic.LoadUint32(&n.state_))
-		u := m&unpacked != 0
-		// unpacked => lazyLoaded
-		if u {
-			assert(m&lazyLoaded != 0)
-		}
-		// hasMethods => unpacked
-		if m&hasMethods != 0 {
-			assert(u)
-		}
-		// hasUnder => unpacked
-		if m&hasUnder != 0 {
-			assert(u)
-		}
-		// hasVarSize => unpacked
-		if m&hasVarSize != 0 {
-			assert(u)
-		}
-	}
+func (n *Named) setState(state namedState) {
+	atomic.StoreUint32(&n.state_, uint32(state))
 }
 
 // newNamed is like NewNamed but with a *Checker receiver.
-func (check *Checker) newNamed(obj *TypeName, fromRHS Type, methods []*Func) *Named {
-	typ := &Named{check: check, obj: obj, fromRHS: fromRHS, methods: methods}
+func (check *Checker) newNamed(obj *TypeName, underlying Type, methods []*Func) *Named {
+	typ := &Named{check: check, obj: obj, fromRHS: underlying, underlying: underlying, methods: methods}
 	if obj.typ == nil {
 		obj.typ = typ
 	}
@@ -364,13 +281,25 @@ func (check *Checker) newNamedInstance(pos token.Pos, orig *Named, targs []Type,
 	return typ
 }
 
-func (n *Named) cleanup() {
-	// Instances can have a nil underlying at the end of type checking — they
-	// will lazily expand it as needed. All other types must have one.
-	if n.inst == nil {
-		n.Underlying()
+func (t *Named) cleanup() {
+	assert(t.inst == nil || t.inst.orig.inst == nil)
+	// Ensure that every defined type created in the course of type-checking has
+	// either non-*Named underlying type, or is unexpanded.
+	//
+	// This guarantees that we don't leak any types whose underlying type is
+	// *Named, because any unexpanded instances will lazily compute their
+	// underlying type by substituting in the underlying type of their origin.
+	// The origin must have either been imported or type-checked and expanded
+	// here, and in either case its underlying type will be fully expanded.
+	switch t.underlying.(type) {
+	case nil:
+		if t.TypeArgs().Len() == 0 {
+			panic("nil underlying")
+		}
+	case *Named, *Alias:
+		t.under() // t.under may add entries to check.cleaners
 	}
-	n.check = nil
+	t.check = nil
 }
 
 // Obj returns the type name for the declaration defining the named type t. For
@@ -393,13 +322,13 @@ func (t *Named) Origin() *Named {
 
 // TypeParams returns the type parameters of the named type t, or nil.
 // The result is non-nil for an (originally) generic type even if it is instantiated.
-func (t *Named) TypeParams() *TypeParamList { return t.unpack().tparams }
+func (t *Named) TypeParams() *TypeParamList { return t.resolve().tparams }
 
 // SetTypeParams sets the type parameters of the named type t.
 // t must not have type arguments.
 func (t *Named) SetTypeParams(tparams []*TypeParam) {
 	assert(t.inst == nil)
-	t.unpack().tparams = bindTParams(tparams)
+	t.resolve().tparams = bindTParams(tparams)
 }
 
 // TypeArgs returns the type arguments used to instantiate the named type t.
@@ -412,18 +341,14 @@ func (t *Named) TypeArgs() *TypeList {
 
 // NumMethods returns the number of explicit methods defined for t.
 func (t *Named) NumMethods() int {
-	return len(t.Origin().unpack().methods)
+	return len(t.Origin().resolve().methods)
 }
 
 // Method returns the i'th method of named type t for 0 <= i < t.NumMethods().
 //
-// For an ordinary or instantiated type t, the receiver base type of this method
-// is the named type t. The returned Func's Signature will not have receiver
-// type parameters.
-//
-// For an uninstantiated generic type t, each method receiver is instantiated with
-// its receiver type parameters. The returned Func's Signature will have the
-// receiver type parameters used to instantiate the receiver.
+// For an ordinary or instantiated type t, the receiver base type of this
+// method is the named type t. For an uninstantiated generic type t, each
+// method receiver is instantiated with its receiver type parameters.
 //
 // Methods are numbered deterministically: given the same list of source files
 // presented to the type checker, or the same sequence of NewMethod and AddMethod
@@ -431,13 +356,13 @@ func (t *Named) NumMethods() int {
 // But the specific ordering is not specified and must not be relied on as it may
 // change in the future.
 func (t *Named) Method(i int) *Func {
-	t.unpack()
+	t.resolve()
 
-	if t.stateHas(hasMethods) {
+	if t.state() >= complete {
 		return t.methods[i]
 	}
 
-	assert(t.inst != nil) // only instances should have unexpanded methods
+	assert(t.inst != nil) // only instances should have incomplete methods
 	orig := t.inst.orig
 
 	t.mu.Lock()
@@ -454,9 +379,9 @@ func (t *Named) Method(i int) *Func {
 		t.inst.expandedMethods++
 
 		// Check if we've created all methods at this point. If we have, mark the
-		// type as having all of its methods.
+		// type as fully expanded.
 		if t.inst.expandedMethods == len(orig.methods) {
-			t.setState(hasMethods)
+			t.setState(complete)
 			t.inst.ctxt = nil // no need for a context anymore
 		}
 	}
@@ -465,87 +390,78 @@ func (t *Named) Method(i int) *Func {
 }
 
 // expandMethod substitutes type arguments in the i'th method for an
-// instantiated receiver. A returned Func's Signature never has
-// receiver type parameters.
+// instantiated receiver.
 func (t *Named) expandMethod(i int) *Func {
-	// t.orig.methods is not lazy. orig is the declared function on t, which
-	// must have receiver type parameters (since t is generic).
-	orig := t.inst.orig.Method(i)
-	assert(orig != nil)
+	// t.orig.methods is not lazy. origm is the method instantiated with its
+	// receiver type parameters (the "origin" method).
+	origm := t.inst.orig.Method(i)
+	assert(origm != nil)
 
 	check := t.check
 	// Ensure that the original method is type-checked.
 	if check != nil {
-		check.objDecl(orig)
+		check.objDecl(origm, nil)
 	}
 
-	oldSig := orig.typ.(*Signature)
-	rtpars := oldSig.rparams.list()
-	rtargs := t.inst.targs.list()
+	origSig := origm.typ.(*Signature)
+	rbase, _ := deref(origSig.Recv().Type())
 
-	// Consider:
+	// If rbase is t, then origm is already the instantiated method we're looking
+	// for. In this case, we return origm to preserve the invariant that
+	// traversing Method->Receiver Type->Method should get back to the same
+	// method.
 	//
-	// 	type T[P any] struct{}
-	// 	func (t T[P]) m() { t.m() }
-	//
-	// At t.m, m is expanded for T[P] to get a new Func, which must be different from
-	// the declared Func for the origin method T.m; notably, the Func for t.m lacks
-	// receiver type parameters, since it is instantiated (as opposed to declared)
-	// and thus no longer generic. One must not return the origin method here.
+	// This occurs if t is instantiated with the receiver type parameters, as in
+	// the use of m in func (r T[_]) m() { r.m() }.
+	if rbase == t {
+		return origm
+	}
 
+	sig := origSig
 	// We can only substitute if we have a correspondence between type arguments
 	// and type parameters. This check is necessary in the presence of invalid
 	// code.
-	newSig := oldSig
-	if len(rtpars) == len(rtargs) {
-		smap := makeSubstMap(rtpars, rtargs)
+	if origSig.RecvTypeParams().Len() == t.inst.targs.Len() {
+		smap := makeSubstMap(origSig.RecvTypeParams().list(), t.inst.targs.list())
 		var ctxt *Context
 		if check != nil {
 			ctxt = check.context()
 		}
-		newSig = check.subst(orig.pos, oldSig, smap, t, ctxt).(*Signature)
+		sig = check.subst(origm.pos, origSig, smap, t, ctxt).(*Signature)
 	}
 
-	if newSig == oldSig {
+	if sig == origSig {
 		// No substitution occurred, but we still need to create a new signature to
 		// hold the instantiated receiver.
-		copy := *oldSig
-		newSig = &copy
+		copy := *origSig
+		sig = &copy
 	}
 
 	var rtyp Type
-	if orig.hasPtrRecv() {
+	if origm.hasPtrRecv() {
 		rtyp = NewPointer(t)
 	} else {
 		rtyp = t
 	}
 
-	newSig.recv = cloneVar(oldSig.recv, rtyp)
-	newSig.rparams = nil
-
-	return cloneFunc(orig, newSig)
+	sig.recv = cloneVar(origSig.recv, rtyp)
+	return cloneFunc(origm, sig)
 }
 
 // SetUnderlying sets the underlying type and marks t as complete.
 // t must not have type arguments.
-func (t *Named) SetUnderlying(u Type) {
+func (t *Named) SetUnderlying(underlying Type) {
 	assert(t.inst == nil)
-	if u == nil {
+	if underlying == nil {
 		panic("underlying type must not be nil")
 	}
-	if asNamed(u) != nil {
+	if asNamed(underlying) != nil {
 		panic("underlying type must not be *Named")
 	}
-	// be careful to uphold the state invariants
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.fromRHS = u
-	t.allowNilRHS = false
-	t.setState(lazyLoaded | unpacked | hasMethods) // TODO(markfreeman): Why hasMethods?
-
-	t.underlying = u
-	t.setState(hasUnder)
+	t.resolve().underlying = underlying
+	if t.fromRHS == nil {
+		t.fromRHS = underlying // for cycle detection
+	}
 }
 
 // AddMethod adds method m unless it is already in the method list.
@@ -554,7 +470,7 @@ func (t *Named) SetUnderlying(u Type) {
 func (t *Named) AddMethod(m *Func) {
 	assert(samePkg(t.obj.pkg, m.pkg))
 	assert(t.inst == nil)
-	t.unpack()
+	t.resolve()
 	if t.methodIndex(m.name, false) < 0 {
 		t.methods = append(t.methods, m)
 	}
@@ -583,37 +499,14 @@ func (t *Named) methodIndex(name string, foldCase bool) int {
 	return -1
 }
 
-// rhs returns [Named.fromRHS].
-//
-// In debug mode, it also asserts that n is in an appropriate state.
-func (n *Named) rhs() Type {
-	if debug {
-		assert(n.stateHas(lazyLoaded | unpacked))
-	}
-	return n.fromRHS
-}
-
 // Underlying returns the [underlying type] of the named type t, resolving all
 // forwarding declarations. Underlying types are never Named, TypeParam, or
 // Alias types.
 //
 // [underlying type]: https://go.dev/ref/spec#Underlying_types.
-func (n *Named) Underlying() Type {
-	n.unpack()
-
-	// The gccimporter depends on writing a nil underlying via NewNamed and
-	// immediately reading it back. Rather than putting that in Named.under
-	// and complicating things there, we just check for that special case here.
-	if n.rhs() == nil {
-		assert(n.allowNilRHS)
-		return nil
-	}
-
-	if !n.stateHas(hasUnder) { // minor performance optimization
-		n.resolveUnderlying()
-	}
-
-	return n.underlying
+func (t *Named) Underlying() Type {
+	// TODO(gri) Investigate if Unalias can be moved to where underlying is set.
+	return Unalias(t.resolve().underlying)
 }
 
 func (t *Named) String() string { return TypeString(t, nil) }
@@ -624,75 +517,96 @@ func (t *Named) String() string { return TypeString(t, nil) }
 // TODO(rfindley): reorganize the loading and expansion methods under this
 // heading.
 
-// resolveUnderlying computes the underlying type of n. If n already has an
-// underlying type, nothing happens.
+// under returns the expanded underlying type of n0; possibly by following
+// forward chains of named types. If an underlying type is found, resolve
+// the chain by setting the underlying type for each defined type in the
+// chain before returning it. If no underlying type is found or a cycle
+// is detected, the result is Typ[Invalid]. If a cycle is detected and
+// n0.check != nil, the cycle is reported.
 //
-// It does so by following RHS type chains for alias and named types. If any
-// other type T is found, each named type in the chain has its underlying
-// type set to T. Aliases are skipped because their underlying type is
-// not memoized.
+// This is necessary because the underlying type of named may be itself a
+// named type that is incomplete:
 //
-// resolveUnderlying assumes that there are no direct cycles; if there were
-// any, they were broken (by setting the respective types to invalid) during
-// the directCycles check phase.
-func (n *Named) resolveUnderlying() {
-	assert(n.stateHas(lazyLoaded | unpacked))
+//	type (
+//		A B
+//		B *C
+//		C A
+//	)
+//
+// The type of C is the (named) type of A which is incomplete,
+// and which has as its underlying type the named type B.
+func (n0 *Named) under() Type {
+	u := n0.Underlying()
 
-	var seen map[*Named]bool // for debugging only
-	if debug {
-		seen = make(map[*Named]bool)
+	// If the underlying type of a defined type is not a defined
+	// (incl. instance) type, then that is the desired underlying
+	// type.
+	var n1 *Named
+	switch u1 := u.(type) {
+	case nil:
+		// After expansion via Underlying(), we should never encounter a nil
+		// underlying.
+		panic("nil underlying")
+	default:
+		// common case
+		return u
+	case *Named:
+		// handled below
+		n1 = u1
 	}
 
-	var path []*Named
-	var u Type
-	for rhs := Type(n); u == nil; {
-		switch t := rhs.(type) {
-		case *Alias:
-			rhs = unalias(t)
+	if n0.check == nil {
+		panic("Named.check == nil but type is incomplete")
+	}
 
-		case *Named:
-			if debug {
-				assert(!seen[t])
-				seen[t] = true
-			}
+	// Invariant: after this point n0 as well as any named types in its
+	// underlying chain should be set up when this function exits.
+	check := n0.check
+	n := n0
 
-			// don't recalculate the underlying
-			if t.stateHas(hasUnder) {
-				u = t.underlying
-				break
-			}
+	seen := make(map[*Named]int) // types that need their underlying type resolved
+	var path []Object            // objects encountered, for cycle reporting
 
-			if debug {
-				seen[t] = true
-			}
-			path = append(path, t)
-
-			t.unpack()
-			rhs = t.rhs()
-			assert(rhs != nil)
-
+loop:
+	for {
+		seen[n] = len(seen)
+		path = append(path, n.obj)
+		n = n1
+		if i, ok := seen[n]; ok {
+			// cycle
+			check.cycleError(path[i:], firstInSrc(path[i:]))
+			u = Typ[Invalid]
+			break
+		}
+		u = n.Underlying()
+		switch u1 := u.(type) {
+		case nil:
+			u = Typ[Invalid]
+			break loop
 		default:
-			u = rhs // any type literal or predeclared type works
+			break loop
+		case *Named:
+			// Continue collecting *Named types in the chain.
+			n1 = u1
 		}
 	}
 
-	for _, t := range path {
-		func() {
-			t.mu.Lock()
-			defer t.mu.Unlock()
-			// Careful, t.underlying has lock-free readers. Since we might be racing
-			// another call to resolveUnderlying, we have to avoid overwriting
-			// t.underlying. Otherwise, the race detector will be tripped.
-			if !t.stateHas(hasUnder) {
-				t.underlying = u
-				t.setState(hasUnder)
-			}
-		}()
+	for n := range seen {
+		// We should never have to update the underlying type of an imported type;
+		// those underlying types should have been resolved during the import.
+		// Also, doing so would lead to a race condition (was go.dev/issue/31749).
+		// Do this check always, not just in debug mode (it's cheap).
+		if n.obj.pkg != check.pkg {
+			panic("imported type with unresolved underlying type")
+		}
+		n.underlying = u
 	}
+
+	return u
 }
 
 func (n *Named) lookupMethod(pkg *Package, name string, foldCase bool) (int, *Func) {
-	n.unpack()
+	n.resolve()
 	if samePkg(n.obj.pkg, pkg) || isExported(name) || foldCase {
 		// If n is an instance, we may not have yet instantiated all of its methods.
 		// Look up the method index in orig, and only instantiate method at the
@@ -713,106 +627,78 @@ func (check *Checker) context() *Context {
 	return check.ctxt
 }
 
-// expandRHS crafts a synthetic RHS for an instantiated type using the RHS of
-// its origin type (which must be a generic type).
-//
-// Suppose that we had:
-//
-//	type T[P any] struct {
-//	  f P
-//	}
-//
-//	type U T[int]
-//
-// When we go to U, we observe T[int]. Since T[int] is an instantiation, it has no
-// declaration. Here, we craft a synthetic RHS for T[int] as if it were declared,
-// somewhat similar to:
-//
-//	type T[int] struct {
-//	  f int
-//	}
-//
-// And note that the synthetic RHS here is the same as the underlying for U. Now,
-// consider:
-//
-//	type T[_ any] U
-//	type U int
-//	type V T[U]
-//
-// The synthetic RHS for T[U] becomes:
-//
-//	type T[U] U
-//
-// Whereas the underlying of V is int, not U.
-func (n *Named) expandRHS() (rhs Type) {
+// expandUnderlying substitutes type arguments in the underlying type n.orig,
+// returning the result. Returns Typ[Invalid] if there was an error.
+func (n *Named) expandUnderlying() Type {
 	check := n.check
 	if check != nil && check.conf._Trace {
-		check.trace(n.obj.pos, "-- Named.expandRHS %s", n)
+		check.trace(n.obj.pos, "-- Named.expandUnderlying %s", n)
 		check.indent++
 		defer func() {
 			check.indent--
-			check.trace(n.obj.pos, "=> %s (rhs = %s)", n, rhs)
+			check.trace(n.obj.pos, "=> %s (tparams = %s, under = %s)", n, n.tparams.list(), n.underlying)
 		}()
 	}
 
-	assert(!n.stateHas(unpacked))
-	assert(n.inst.orig.stateHas(lazyLoaded | unpacked))
-
+	assert(n.inst.orig.underlying != nil)
 	if n.inst.ctxt == nil {
 		n.inst.ctxt = NewContext()
 	}
 
-	ctxt := n.inst.ctxt
 	orig := n.inst.orig
-
 	targs := n.inst.targs
-	tpars := orig.tparams
 
-	if targs.Len() != tpars.Len() {
+	if asNamed(orig.underlying) != nil {
+		// We should only get a Named underlying type here during type checking
+		// (for example, in recursive type declarations).
+		assert(check != nil)
+	}
+
+	if orig.tparams.Len() != targs.Len() {
+		// Mismatching arg and tparam length may be checked elsewhere.
 		return Typ[Invalid]
 	}
 
-	h := ctxt.instanceHash(orig, targs.list())
-	u := ctxt.update(h, orig, targs.list(), n) // block fixed point infinite instantiation
-	assert(n == u)
+	// Ensure that an instance is recorded before substituting, so that we
+	// resolve n for any recursive references.
+	h := n.inst.ctxt.instanceHash(orig, targs.list())
+	n2 := n.inst.ctxt.update(h, orig, n.TypeArgs().list(), n)
+	assert(n == n2)
 
-	m := makeSubstMap(tpars.list(), targs.list())
+	smap := makeSubstMap(orig.tparams.list(), targs.list())
+	var ctxt *Context
 	if check != nil {
 		ctxt = check.context()
 	}
-
-	rhs = check.subst(n.obj.pos, orig.rhs(), m, n, ctxt)
-
-	// TODO(markfreeman): Can we handle this in substitution?
-	// If the RHS is an interface, we must set the receiver of interface methods
-	// to the named type.
-	if iface, _ := rhs.(*Interface); iface != nil {
+	underlying := n.check.subst(n.obj.pos, orig.underlying, smap, n, ctxt)
+	// If the underlying type of n is an interface, we need to set the receiver of
+	// its methods accurately -- we set the receiver of interface methods on
+	// the RHS of a type declaration to the defined type.
+	if iface, _ := underlying.(*Interface); iface != nil {
 		if methods, copied := replaceRecvType(iface.methods, orig, n); copied {
-			// If the RHS doesn't use type parameters, it may not have been
-			// substituted; we need to craft a new interface first.
-			if iface == orig.rhs() {
-				assert(iface.complete) // otherwise we are copying incomplete data
-
-				crafted := check.newInterface()
-				crafted.complete = true
-				crafted.implicit = false
-				crafted.embeddeds = iface.embeddeds
-
-				iface = crafted
+			// If the underlying type doesn't actually use type parameters, it's
+			// possible that it wasn't substituted. In this case we need to create
+			// a new *Interface before modifying receivers.
+			if iface == orig.underlying {
+				old := iface
+				iface = check.newInterface()
+				iface.embeddeds = old.embeddeds
+				assert(old.complete) // otherwise we are copying incomplete data
+				iface.complete = old.complete
+				iface.implicit = old.implicit // should be false but be conservative
+				underlying = iface
 			}
 			iface.methods = methods
 			iface.tset = nil // recompute type set with new methods
 
-			// go.dev/issue/61561: We have to complete the interface even without a checker.
-			if check == nil {
+			// If check != nil, check.newInterface will have saved the interface for later completion.
+			if check == nil { // golang/go#61561: all newly created interfaces must be fully evaluated
 				iface.typeSet()
 			}
-
-			return iface
 		}
 	}
 
-	return rhs
+	return underlying
 }
 
 // safeUnderlying returns the underlying type of typ without expanding

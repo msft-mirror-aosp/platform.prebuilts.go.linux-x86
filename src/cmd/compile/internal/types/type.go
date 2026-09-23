@@ -10,6 +10,7 @@ import (
 	"cmd/internal/src"
 	"fmt"
 	"go/constant"
+	"internal/buildcfg"
 	"internal/types/errors"
 	"sync"
 )
@@ -174,7 +175,7 @@ type Type struct {
 	// TARRAY: *Array
 	// TSLICE: Slice
 	// TSSA: string
-	extra any
+	extra interface{}
 
 	// width is the width of this Type in bytes.
 	width int64 // valid if Align > 0
@@ -200,9 +201,8 @@ type Type struct {
 
 	intRegs, floatRegs uint8 // registers needed for ABIInternal
 
-	flags             bitset8
-	alg               AlgKind // valid if Align > 0
-	isSIMDTag, isSIMD bool    // tag is the marker type, isSIMD means has marker type
+	flags bitset8
+	alg   AlgKind // valid if Align > 0
 
 	// size of prefix of object that contains all pointers. valid if Align > 0.
 	// Note that for pointers, this is always PtrSize even if the element type
@@ -281,7 +281,17 @@ type Map struct {
 	Key  *Type // Key type
 	Elem *Type // Val (elem) type
 
-	Group *Type // internal struct type representing a slot group
+	// Note: It would be cleaner to completely split Map into OldMap and
+	// SwissMap, but 99% of the types map code doesn't care about the
+	// implementation at all, so it is tons of churn to split the type.
+	// Only code that looks at the bucket field can care about the
+	// implementation.
+
+	// GOEXPERIMENT=noswissmap fields
+	OldBucket *Type // internal struct type representing a hash bucket
+
+	// GOEXPERIMENT=swissmap fields
+	SwissGroup *Type // internal struct type representing a slot group
 }
 
 // MapType returns t's extra map-specific fields.
@@ -329,7 +339,7 @@ func (t *Type) funcType() *Func {
 	return t.extra.(*Func)
 }
 
-// Struct contains Type fields specific to struct types.
+// StructType contains Type fields specific to struct types.
 type Struct struct {
 	fields fields
 
@@ -592,12 +602,6 @@ func NewResults(types []*Type) *Type {
 func newSSA(name string) *Type {
 	t := newType(TSSA)
 	t.extra = name
-	return t
-}
-
-func newSIMD(name string) *Type {
-	t := newSSA(name)
-	t.isSIMD = true
 	return t
 }
 
@@ -989,16 +993,17 @@ func (t *Type) ArgWidth() int64 {
 	return t.extra.(*Func).Argwid
 }
 
-// Size returns the width of t in bytes.
 func (t *Type) Size() int64 {
 	if t.kind == TSSA {
-		return t.width
+		if t == TypeInt128 {
+			return 16
+		}
+		return 0
 	}
 	CalcSize(t)
 	return t.width
 }
 
-// Alignment returns the alignment of t in bytes.
 func (t *Type) Alignment() int64 {
 	CalcSize(t)
 	return int64(t.align)
@@ -1184,20 +1189,37 @@ func (t *Type) cmp(x *Type) Cmp {
 		// by the general code after the switch.
 
 	case TSTRUCT:
-		// Is this a map group type?
-		if t.StructType().Map == nil {
-			if x.StructType().Map != nil {
-				return CMPlt // nil < non-nil
+		if buildcfg.Experiment.SwissMap {
+			// Is this a map group type?
+			if t.StructType().Map == nil {
+				if x.StructType().Map != nil {
+					return CMPlt // nil < non-nil
+				}
+				// to the fallthrough
+			} else if x.StructType().Map == nil {
+				return CMPgt // nil > non-nil
 			}
-			// to the general case
-		} else if x.StructType().Map == nil {
-			return CMPgt // nil > non-nil
+			// Both have non-nil Map, fallthrough to the general
+			// case. Note that the map type does not directly refer
+			// to the group type (it uses unsafe.Pointer). If it
+			// did, this would need special handling to avoid
+			// infinite recursion.
+		} else {
+			// Is this a map bucket type?
+			if t.StructType().Map == nil {
+				if x.StructType().Map != nil {
+					return CMPlt // nil < non-nil
+				}
+				// to the fallthrough
+			} else if x.StructType().Map == nil {
+				return CMPgt // nil > non-nil
+			}
+			// Both have non-nil Map, fallthrough to the general
+			// case. Note that the map type does not directly refer
+			// to the bucket type (it uses unsafe.Pointer). If it
+			// did, this would need special handling to avoid
+			// infinite recursion.
 		}
-		// Both have non-nil Map, fallthrough to the general
-		// case. Note that the map type does not directly refer
-		// to the group type (it uses unsafe.Pointer). If it
-		// did, this would need special handling to avoid
-		// infinite recursion.
 
 		tfs := t.Fields()
 		xfs := x.Fields()
@@ -1604,26 +1626,12 @@ var (
 	TypeFlags     = newSSA("flags")
 	TypeVoid      = newSSA("void")
 	TypeInt128    = newSSA("int128")
-	TypeVec128    = newSIMD("vec128")
-	TypeVec256    = newSIMD("vec256")
-	TypeVec512    = newSIMD("vec512")
-	TypeMask      = newSIMD("mask") // not a vector, not 100% sure what this should be.
 	TypeResultMem = newResults([]*Type{TypeMem})
 )
 
 func init() {
 	TypeInt128.width = 16
 	TypeInt128.align = 8
-
-	TypeVec128.width = 16
-	TypeVec128.align = 8
-	TypeVec256.width = 32
-	TypeVec256.align = 8
-	TypeVec512.width = 64
-	TypeVec512.align = 8
-
-	TypeMask.width = 8 // This will depend on the architecture; spilling will be "interesting".
-	TypeMask.align = 8
 }
 
 // NewNamed returns a new named type for the given type name. obj should be an
@@ -1683,9 +1691,6 @@ func (t *Type) SetUnderlying(underlying *Type) {
 	if underlying.HasShape() {
 		t.SetHasShape(true)
 	}
-	if underlying.isSIMD {
-		simdify(t, underlying.isSIMDTag)
-	}
 
 	// spec: "The declared type does not inherit any methods bound
 	// to the existing type, but the method set of an interface
@@ -1715,6 +1720,13 @@ func fieldsHasShape(fields []*Field) bool {
 		}
 	}
 	return false
+}
+
+// newBasic returns a new basic type of the given kind.
+func newBasic(kind Kind, obj Object) *Type {
+	t := newType(kind)
+	t.obj = obj
+	return t
 }
 
 // NewInterface returns a new interface for the given methods and
@@ -1845,7 +1857,26 @@ func IsReflexive(t *Type) bool {
 // Can this type be stored directly in an interface word?
 // Yes, if the representation is a single pointer.
 func IsDirectIface(t *Type) bool {
-	return t.Size() == int64(PtrSize) && PtrDataSize(t) == int64(PtrSize)
+	switch t.Kind() {
+	case TPTR:
+		// Pointers to notinheap types must be stored indirectly. See issue 42076.
+		return !t.Elem().NotInHeap()
+	case TCHAN,
+		TMAP,
+		TFUNC,
+		TUNSAFEPTR:
+		return true
+
+	case TARRAY:
+		// Array of 1 direct iface type can be direct.
+		return t.NumElem() == 1 && IsDirectIface(t.Elem())
+
+	case TSTRUCT:
+		// Struct with 1 field of direct iface type can be direct.
+		return t.NumFields() == 1 && IsDirectIface(t.Field(0).Type)
+	}
+
+	return false
 }
 
 // IsInterfaceMethod reports whether (field) m is
@@ -1986,7 +2017,3 @@ var SimType [NTYPE]Kind
 
 // Fake package for shape types (see typecheck.Shapify()).
 var ShapePkg = NewPkg("go.shape", "go.shape")
-
-func (t *Type) IsSIMD() bool {
-	return t.isSIMD
-}

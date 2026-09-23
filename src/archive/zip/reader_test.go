@@ -1214,6 +1214,7 @@ func TestFS(t *testing.T) {
 			[]string{"a/b/c"},
 		},
 	} {
+		test := test
 		t.Run(test.file, func(t *testing.T) {
 			t.Parallel()
 			z, err := OpenReader(test.file)
@@ -1247,6 +1248,7 @@ func TestFSWalk(t *testing.T) {
 			wantErr: true,
 		},
 	} {
+		test := test
 		t.Run(test.file, func(t *testing.T) {
 			t.Parallel()
 			z, err := OpenReader(test.file)

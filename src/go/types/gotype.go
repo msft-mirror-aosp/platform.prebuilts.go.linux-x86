@@ -120,7 +120,6 @@ var (
 )
 
 func initParserMode() {
-	parserMode = parser.SkipObjectResolution
 	if *allErrors {
 		parserMode |= parser.AllErrors
 	}

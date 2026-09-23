@@ -5,29 +5,24 @@
 package windows
 
 import (
-	"internal/oserror"
 	"runtime"
 	"structs"
 	"syscall"
 	"unsafe"
 )
 
-// Openat flags supported by syscall.Open.
-const (
-	O_DIRECTORY = 0x04000 // target must be a directory
-)
-
 // Openat flags not supported by syscall.Open.
 //
-// These are invented values, use values in the 33-63 bit range
-// to avoid overlap with flags and attributes supported by [syscall.Open].
+// These are invented values.
 //
 // When adding a new flag here, add an unexported version to
 // the set of invented O_ values in syscall/types_windows.go
 // to avoid overlap.
 const (
-	O_NOFOLLOW_ANY = 0x200000000 // disallow symlinks anywhere in the path
-	O_WRITE_ATTRS  = 0x800000000 // FILE_WRITE_ATTRIBUTES, used by Chmod
+	O_DIRECTORY    = 0x100000   // target must be a directory
+	O_NOFOLLOW_ANY = 0x20000000 // disallow symlinks anywhere in the path
+	O_OPEN_REPARSE = 0x40000000 // FILE_OPEN_REPARSE_POINT, used by Lstat
+	O_WRITE_ATTRS  = 0x80000000 // FILE_WRITE_ATTRIBUTES, used by Chmod
 )
 
 func Openat(dirfd syscall.Handle, name string, flag uint64, perm uint32) (_ syscall.Handle, e1 error) {
@@ -36,53 +31,23 @@ func Openat(dirfd syscall.Handle, name string, flag uint64, perm uint32) (_ sysc
 	}
 
 	var access, options uint32
-	// Map Win32 file flags to NT create options.
-	fileFlags := uint32(flag) & FileFlagsMask
-	if fileFlags&^ValidFileFlagsMask != 0 {
-		return syscall.InvalidHandle, oserror.ErrInvalid
-	}
-	if fileFlags&O_FILE_FLAG_OVERLAPPED == 0 {
-		options |= FILE_SYNCHRONOUS_IO_NONALERT
-	}
-	if fileFlags&O_FILE_FLAG_DELETE_ON_CLOSE != 0 {
-		access |= DELETE
-	}
-	setOptionFlag := func(ntFlag, win32Flag uint32) {
-		if fileFlags&win32Flag != 0 {
-			options |= ntFlag
-		}
-	}
-	setOptionFlag(FILE_NO_INTERMEDIATE_BUFFERING, O_FILE_FLAG_NO_BUFFERING)
-	setOptionFlag(FILE_WRITE_THROUGH, O_FILE_FLAG_WRITE_THROUGH)
-	setOptionFlag(FILE_SEQUENTIAL_ONLY, O_FILE_FLAG_SEQUENTIAL_SCAN)
-	setOptionFlag(FILE_RANDOM_ACCESS, O_FILE_FLAG_RANDOM_ACCESS)
-	setOptionFlag(FILE_OPEN_FOR_BACKUP_INTENT, O_FILE_FLAG_BACKUP_SEMANTICS)
-	setOptionFlag(FILE_SESSION_AWARE, O_FILE_FLAG_SESSION_AWARE)
-	setOptionFlag(FILE_DELETE_ON_CLOSE, O_FILE_FLAG_DELETE_ON_CLOSE)
-	setOptionFlag(FILE_OPEN_NO_RECALL, O_FILE_FLAG_OPEN_NO_RECALL)
-	setOptionFlag(FILE_OPEN_REPARSE_POINT, O_FILE_FLAG_OPEN_REPARSE_POINT)
-
 	switch flag & (syscall.O_RDONLY | syscall.O_WRONLY | syscall.O_RDWR) {
 	case syscall.O_RDONLY:
 		// FILE_GENERIC_READ includes FILE_LIST_DIRECTORY.
-		access |= FILE_GENERIC_READ
+		access = FILE_GENERIC_READ
 	case syscall.O_WRONLY:
-		access |= FILE_GENERIC_WRITE
+		access = FILE_GENERIC_WRITE
 		options |= FILE_NON_DIRECTORY_FILE
 	case syscall.O_RDWR:
-		access |= FILE_GENERIC_READ | FILE_GENERIC_WRITE
+		access = FILE_GENERIC_READ | FILE_GENERIC_WRITE
 		options |= FILE_NON_DIRECTORY_FILE
 	default:
 		// Stat opens files without requesting read or write permissions,
 		// but we still need to request SYNCHRONIZE.
-		access |= SYNCHRONIZE
+		access = SYNCHRONIZE
 	}
 	if flag&syscall.O_CREAT != 0 {
 		access |= FILE_GENERIC_WRITE
-	}
-	if fileFlags&O_FILE_FLAG_NO_BUFFERING != 0 {
-		// Disable buffering implies no implicit append access.
-		access &^= FILE_APPEND_DATA
 	}
 	if flag&syscall.O_APPEND != 0 {
 		access |= FILE_APPEND_DATA
@@ -112,11 +77,12 @@ func Openat(dirfd syscall.Handle, name string, flag uint64, perm uint32) (_ sysc
 	if flag&syscall.O_CLOEXEC == 0 {
 		objAttrs.Attributes |= OBJ_INHERIT
 	}
-	if fileFlags&O_FILE_FLAG_POSIX_SEMANTICS == 0 {
-		objAttrs.Attributes |= OBJ_CASE_INSENSITIVE
-	}
 	if err := objAttrs.init(dirfd, name); err != nil {
 		return syscall.InvalidHandle, err
+	}
+
+	if flag&O_OPEN_REPARSE != 0 {
+		options |= FILE_OPEN_REPARSE_POINT
 	}
 
 	// We don't use FILE_OVERWRITE/FILE_OVERWRITE_IF, because when opening
@@ -150,7 +116,7 @@ func Openat(dirfd syscall.Handle, name string, flag uint64, perm uint32) (_ sysc
 		fileAttrs,
 		FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
 		disposition,
-		FILE_OPEN_FOR_BACKUP_INTENT|options,
+		FILE_SYNCHRONOUS_IO_NONALERT|FILE_OPEN_FOR_BACKUP_INTENT|options,
 		nil,
 		0,
 	)
@@ -160,14 +126,6 @@ func Openat(dirfd syscall.Handle, name string, flag uint64, perm uint32) (_ sysc
 
 	if flag&syscall.O_TRUNC != 0 {
 		err = syscall.Ftruncate(h, 0)
-		if err == ERROR_INVALID_PARAMETER {
-			// ERROR_INVALID_PARAMETER means truncation is not supported on this file handle.
-			// Unix's O_TRUNC specification says to ignore O_TRUNC on named pipes and terminal devices.
-			// We do the same here.
-			if t, err1 := syscall.GetFileType(h); err1 == nil && (t == syscall.FILE_TYPE_PIPE || t == syscall.FILE_TYPE_CHAR) {
-				err = nil
-			}
-		}
 		if err != nil {
 			syscall.CloseHandle(h)
 			return syscall.InvalidHandle, err
@@ -295,6 +253,7 @@ func Deleteat(dirfd syscall.Handle, name string, options uint32) error {
 		&IO_STATUS_BLOCK{},
 		unsafe.Pointer(&FILE_DISPOSITION_INFORMATION_EX{
 			Flags: FILE_DISPOSITION_DELETE |
+				FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK |
 				FILE_DISPOSITION_POSIX_SEMANTICS |
 				// This differs from DeleteFileW, but matches os.Remove's
 				// behavior on Unix platforms of permitting deletion of
@@ -354,7 +313,7 @@ func deleteatFallback(h syscall.Handle) error {
 		h,
 		FileDispositionInfo,
 		unsafe.Pointer(&FILE_DISPOSITION_INFO{
-			DeleteFile: 1,
+			DeleteFile: true,
 		}),
 		uint32(unsafe.Sizeof(FILE_DISPOSITION_INFO{})),
 	)
@@ -415,7 +374,7 @@ func Renameat(olddirfd syscall.Handle, oldpath string, newdirfd syscall.Handle, 
 	//
 	// Try again.
 	renameInfo := FILE_RENAME_INFORMATION{
-		ReplaceIfExists: 1,
+		ReplaceIfExists: true,
 		RootDirectory:   newdirfd,
 	}
 	copy(renameInfo.FileName[:], p16)
@@ -584,7 +543,6 @@ func symlinkat(oldname string, newdirfd syscall.Handle, newname string, flags Sy
 	namebuf := rdbbuf[bufferSize:]
 	copy(namebuf, unsafe.String((*byte)(unsafe.Pointer(&oldnameu16[0])), 2*len(oldnameu16)))
 
-	var bytesReturned uint32
 	err = syscall.DeviceIoControl(
 		h,
 		FSCTL_SET_REPARSE_POINT,
@@ -592,7 +550,7 @@ func symlinkat(oldname string, newdirfd syscall.Handle, newname string, flags Sy
 		uint32(len(rdbbuf)),
 		nil,
 		0,
-		&bytesReturned,
+		nil,
 		nil)
 	if err != nil {
 		// Creating the symlink has failed, so try to remove the file.
@@ -601,7 +559,7 @@ func symlinkat(oldname string, newdirfd syscall.Handle, newname string, flags Sy
 			h,
 			&IO_STATUS_BLOCK{},
 			unsafe.Pointer(&FILE_DISPOSITION_INFORMATION{
-				DeleteFile: 1,
+				DeleteFile: true,
 			}),
 			uint32(unsafe.Sizeof(FILE_DISPOSITION_INFORMATION{})),
 			FileDispositionInformation,

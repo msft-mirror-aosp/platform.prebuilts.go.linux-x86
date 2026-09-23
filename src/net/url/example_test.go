@@ -58,12 +58,11 @@ func ExampleValues() {
 	v.Add("friend", "Jess")
 	v.Add("friend", "Sarah")
 	v.Add("friend", "Zoe")
-	fmt.Println(v.Encode())
+	// v.Encode() == "name=Ava&friend=Jess&friend=Sarah&friend=Zoe"
 	fmt.Println(v.Get("name"))
 	fmt.Println(v.Get("friend"))
 	fmt.Println(v["friend"])
 	// Output:
-	// friend=Jess&friend=Sarah&friend=Zoe&name=Ava
 	// Ava
 	// Jess
 	// [Jess Sarah Zoe]

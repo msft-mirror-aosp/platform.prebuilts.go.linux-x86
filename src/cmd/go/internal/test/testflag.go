@@ -44,7 +44,6 @@ func init() {
 	// some of them so that cmd/go knows what to do with the test output, or knows
 	// to build the test in a way that supports the use of the flag.
 
-	cf.BoolVar(&testArtifacts, "artifacts", false, "")
 	cf.StringVar(&testBench, "bench", "", "")
 	cf.Bool("benchmem", false, "")
 	cf.String("benchtime", "", "")
@@ -150,7 +149,7 @@ func (f *vetFlag) Set(value string) error {
 
 	*f = vetFlag{explicit: true}
 	var single string
-	for arg := range strings.SplitSeq(value, ",") {
+	for _, arg := range strings.Split(value, ",") {
 		switch arg {
 		case "":
 			return fmt.Errorf("-vet argument contains empty list element")
@@ -171,6 +170,9 @@ func (f *vetFlag) Set(value string) error {
 			}
 			f.flags = append(f.flags, "-"+arg)
 		}
+	}
+	if len(f.flags) > 1 && single != "" {
+		return fmt.Errorf("-vet does not accept %q in a list with other analyzers", single)
 	}
 	if len(f.flags) > 1 && single != "" {
 		return fmt.Errorf("-vet does not accept %q in a list with other analyzers", single)
@@ -258,7 +260,7 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 			break
 		}
 
-		if nf, ok := errors.AsType[cmdflag.NonFlagError](err); ok {
+		if nf := (cmdflag.NonFlagError{}); errors.As(err, &nf) {
 			if !inPkgList && packageNames != nil {
 				// We already saw the package list previously, and this argument is not
 				// a flag, so it — and everything after it — must be either a value for
@@ -293,7 +295,7 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 			inPkgList = false
 		}
 
-		if nd, ok := errors.AsType[cmdflag.FlagNotDefinedError](err); ok {
+		if nd := (cmdflag.FlagNotDefinedError{}); errors.As(err, &nd) {
 			// This is a flag we do not know. We must assume that any args we see
 			// after this might be flag arguments, not package names, so make
 			// packageNames non-nil to indicate that the package list is complete.
@@ -390,8 +392,7 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 	// directory, but 'go test' defaults it to the working directory of the 'go'
 	// command. Set it explicitly if it is needed due to some other flag that
 	// requests output.
-	needOutputDir := testProfile() != "" || testArtifacts
-	if needOutputDir && !outputDirSet {
+	if testProfile() != "" && !outputDirSet {
 		injectedFlags = append(injectedFlags, "-test.outputdir="+testOutputDir.getAbs())
 	}
 

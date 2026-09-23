@@ -94,11 +94,8 @@ func genSplitLoadRules(arch arch) { genRulesSuffix(arch, "splitload") }
 func genLateLowerRules(arch arch) { genRulesSuffix(arch, "latelower") }
 
 func genRulesSuffix(arch arch, suff string) {
-	var readers []NamedReader
 	// Open input file.
-	var text io.Reader
-	name := arch.name + suff + ".rules"
-	text, err := os.Open(name)
+	text, err := os.Open(arch.name + suff + ".rules")
 	if err != nil {
 		if suff == "" {
 			// All architectures must have a plain rules file.
@@ -107,28 +104,18 @@ func genRulesSuffix(arch arch, suff string) {
 		// Some architectures have bonus rules files that others don't share. That's fine.
 		return
 	}
-	readers = append(readers, NamedReader{name, text})
-
-	// Check for file of SIMD rules to add
-	if suff == "" {
-		simdname := "simd" + arch.name + ".rules"
-		simdtext, err := os.Open(simdname)
-		if err == nil {
-			readers = append(readers, NamedReader{simdname, simdtext})
-		}
-	}
 
 	// oprules contains a list of rules for each block and opcode
 	blockrules := map[string][]Rule{}
 	oprules := map[string][]Rule{}
 
 	// read rule file
-	scanner := MultiScannerFromReaders(readers)
+	scanner := bufio.NewScanner(text)
 	rule := ""
 	var lineno int
 	var ruleLineno int // line number of "=>"
 	for scanner.Scan() {
-		lineno = scanner.Line()
+		lineno++
 		line := scanner.Text()
 		if i := strings.Index(line, "//"); i >= 0 {
 			// Remove comments. Note that this isn't string safe, so
@@ -155,7 +142,7 @@ func genRulesSuffix(arch arch, suff string) {
 			break // continuing the line can't help, and it will only make errors worse
 		}
 
-		loc := fmt.Sprintf("%s:%d", scanner.Name(), ruleLineno)
+		loc := fmt.Sprintf("%s%s.rules:%d", arch.name, suff, ruleLineno)
 		for _, rule2 := range expandOr(rule) {
 			r := Rule{Rule: rule2, Loc: loc}
 			if rawop := strings.Split(rule2, " ")[0][1:]; isBlock(rawop, arch) {
@@ -175,7 +162,7 @@ func genRulesSuffix(arch arch, suff string) {
 		log.Fatalf("scanner failed: %v\n", err)
 	}
 	if balance(rule) != 0 {
-		log.Fatalf("%s:%d: unbalanced rule: %v\n", scanner.Name(), lineno, rule)
+		log.Fatalf("%s.rules:%d: unbalanced rule: %v\n", arch.name, lineno, rule)
 	}
 
 	// Order all the ops.
@@ -289,7 +276,7 @@ func genRulesSuffix(arch arch, suff string) {
 	buf := new(bytes.Buffer)
 	fprint(buf, genFile)
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "", buf, parser.ParseComments|parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, "", buf, parser.ParseComments)
 	if err != nil {
 		filename := fmt.Sprintf("%s_broken.go", arch.name)
 		if err := os.WriteFile(filename, buf.Bytes(), 0644); err != nil {
@@ -553,13 +540,6 @@ func (u *unusedInspector) node(node ast.Node) {
 			}
 		}
 	case *ast.BasicLit:
-	case *ast.CompositeLit:
-		for _, e := range node.Elts {
-			u.node(e)
-		}
-	case *ast.KeyValueExpr:
-		u.node(node.Key)
-		u.node(node.Value)
 	case *ast.ValueSpec:
 		u.exprs(node.Values)
 	default:
@@ -841,7 +821,7 @@ func exprf(format string, a ...interface{}) ast.Expr {
 func stmtf(format string, a ...interface{}) Statement {
 	src := fmt.Sprintf(format, a...)
 	fsrc := "package p\nfunc _() {\n" + src + "\n}\n"
-	file, err := parser.ParseFile(token.NewFileSet(), "", fsrc, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(token.NewFileSet(), "", fsrc, 0)
 	if err != nil {
 		log.Fatalf("stmt parse error on %q: %v", src, err)
 	}
@@ -875,7 +855,7 @@ func declReserved(name, value string) *Declare {
 	if !reservedNames[name] {
 		panic(fmt.Sprintf("declReserved call does not use a reserved name: %q", name))
 	}
-	return &Declare{name, exprf("%s", value)}
+	return &Declare{name, exprf(value)}
 }
 
 // breakf constructs a simple "if cond { break }" statement, using exprf for its
@@ -902,7 +882,7 @@ func genBlockRewrite(rule Rule, arch arch, data blockData) *RuleRewrite {
 			if vname == "" {
 				vname = fmt.Sprintf("v_%v", i)
 			}
-			rr.add(declf(rr.Loc, vname, "%s", cname))
+			rr.add(declf(rr.Loc, vname, cname))
 			p, op := genMatch0(rr, arch, expr, vname, nil, false) // TODO: pass non-nil cnt?
 			if op != "" {
 				check := fmt.Sprintf("%s.Op == %s", cname, op)
@@ -917,7 +897,7 @@ func genBlockRewrite(rule Rule, arch arch, data blockData) *RuleRewrite {
 			}
 			pos[i] = p
 		} else {
-			rr.add(declf(rr.Loc, arg, "%s", cname))
+			rr.add(declf(rr.Loc, arg, cname))
 			pos[i] = arg + ".Pos"
 		}
 	}
@@ -1284,10 +1264,8 @@ func genResult0(rr *RuleRewrite, arch arch, result string, top, move bool, pos s
 	case 0:
 	case 1:
 		rr.add(stmtf("%s.AddArg(%s)", v, all.String()))
-	case 2, 3, 4, 5, 6:
-		rr.add(stmtf("%s.AddArg%d(%s)", v, len(args), all.String()))
 	default:
-		rr.add(stmtf("%s.AddArgs(%s)", v, all.String()))
+		rr.add(stmtf("%s.AddArg%d(%s)", v, len(args), all.String()))
 	}
 
 	if cse != nil {
@@ -1328,12 +1306,6 @@ outer:
 				d++
 			case d > 0 && s[i] == close:
 				d--
-			case s[i] == ':':
-				// ignore spaces after colons
-				nonsp = true
-				for i+1 < len(s) && (s[i+1] == ' ' || s[i+1] == '\t') {
-					i++
-				}
 			default:
 				nonsp = true
 			}
@@ -1368,7 +1340,7 @@ func extract(val string) (op, typ, auxint, aux string, args []string) {
 	val = val[1 : len(val)-1] // remove ()
 
 	// Split val up into regions.
-	// Split by spaces/tabs, except those contained in (), {}, [], or <> or after colon.
+	// Split by spaces/tabs, except those contained in (), {}, [], or <>.
 	s := split(val)
 
 	// Extract restrictions and args.
@@ -1459,8 +1431,7 @@ func parseValue(val string, arch arch, loc string) (op opData, oparch, typ, auxi
 func opHasAuxInt(op opData) bool {
 	switch op.aux {
 	case "Bool", "Int8", "Int16", "Int32", "Int64", "Int128", "UInt8", "Float32", "Float64",
-		"SymOff", "CallOff", "SymValAndOff", "TypSize", "ARM64BitField", "FlagConstant", "CCop",
-		"PanicBoundsC", "PanicBoundsCC", "ARM64ConditionalParams":
+		"SymOff", "CallOff", "SymValAndOff", "TypSize", "ARM64BitField", "FlagConstant", "CCop":
 		return true
 	}
 	return false
@@ -1469,7 +1440,7 @@ func opHasAuxInt(op opData) bool {
 func opHasAux(op opData) bool {
 	switch op.aux {
 	case "String", "Sym", "SymOff", "Call", "CallOff", "SymValAndOff", "Typ", "TypSize",
-		"S390XCCMask", "S390XRotateParams", "PanicBoundsC", "PanicBoundsCC":
+		"S390XCCMask", "S390XRotateParams":
 		return true
 	}
 	return false
@@ -1492,7 +1463,7 @@ func splitNameExpr(arg string) (name, expr string) {
 		// colon is inside the parens, such as in "(Foo x:(Bar))".
 		return "", arg
 	}
-	return arg[:colon], strings.TrimSpace(arg[colon+1:])
+	return arg[:colon], arg[colon+1:]
 }
 
 func getBlockInfo(op string, arch arch) (name string, data blockData) {
@@ -1824,10 +1795,6 @@ func (op opData) auxType() string {
 		return "s390x.CCMask"
 	case "S390XRotateParams":
 		return "s390x.RotateParams"
-	case "PanicBoundsC":
-		return "PanicBoundsC"
-	case "PanicBoundsCC":
-		return "PanicBoundsCC"
 	default:
 		return "invalid"
 	}
@@ -1868,10 +1835,6 @@ func (op opData) auxIntType() string {
 		return "flagConstant"
 	case "ARM64BitField":
 		return "arm64BitField"
-	case "ARM64ConditionalParams":
-		return "arm64ConditionalParams"
-	case "PanicBoundsC", "PanicBoundsCC":
-		return "int64"
 	default:
 		return "invalid"
 	}

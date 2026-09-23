@@ -43,6 +43,7 @@ func TestLibFuzzer(t *testing.T) {
 		{goSrc: "libfuzzer2.go", cSrc: "libfuzzer2.c", expectedError: "panic: found it"},
 	}
 	for _, tc := range cases {
+		tc := tc
 		name := strings.TrimSuffix(tc.goSrc, ".go")
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -56,7 +57,7 @@ func TestLibFuzzer(t *testing.T) {
 			mustRun(t, config.goCmd("build", "-buildmode=c-archive", "-o", archivePath, srcPath(tc.goSrc)))
 
 			// build C code (if any) and link with Go code
-			cmd, err := cc(t.Context(), config.cFlags...)
+			cmd, err := cc(config.cFlags...)
 			if err != nil {
 				t.Fatalf("error running cc: %v", err)
 			}

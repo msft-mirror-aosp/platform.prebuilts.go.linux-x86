@@ -374,10 +374,6 @@ var formatTests = []struct {
 }
 
 func TestFormat(t *testing.T) {
-	testFormat(t)
-}
-
-func testFormat(t testing.TB) {
 	for i, test := range formatTests {
 		var x *Int
 		if test.input != "<nil>" {
@@ -391,14 +387,6 @@ func testFormat(t testing.TB) {
 		if output != test.output {
 			t.Errorf("#%d got %q; want %q, {%q, %q, %q}", i, output, test.output, test.input, test.format, test.output)
 		}
-	}
-}
-
-func BenchmarkFormat(b *testing.B) {
-	// This benchmark is very rough but it's good enough to show
-	// https://go.dev/issue/71465 results.
-	for range b.N {
-		testFormat(b)
 	}
 }
 

@@ -21,7 +21,6 @@ import (
 	"cmd/go/internal/base"
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/envcmd"
-	"cmd/go/internal/modload"
 	"cmd/go/internal/web"
 	"cmd/go/internal/work"
 )
@@ -42,17 +41,16 @@ func init() {
 }
 
 func runBug(ctx context.Context, cmd *base.Command, args []string) {
-	moduleLoader := modload.NewLoader()
 	if len(args) > 0 {
 		base.Fatalf("go: bug takes no arguments")
 	}
-	work.BuildInit(moduleLoader)
+	work.BuildInit()
 
 	var buf strings.Builder
 	buf.WriteString(bugHeader)
 	printGoVersion(&buf)
 	buf.WriteString("### Does this issue reproduce with the latest release?\n\n\n")
-	printEnvDetails(moduleLoader, &buf)
+	printEnvDetails(&buf)
 	buf.WriteString(bugFooter)
 
 	body := buf.String()
@@ -76,11 +74,11 @@ A link on go.dev/play is best.
 
 
 
-### What did you see happen?
-
-
-
 ### What did you expect to see?
+
+
+
+### What did you see instead?
 
 `
 
@@ -93,21 +91,21 @@ func printGoVersion(w io.Writer) {
 	fmt.Fprintf(w, "\n")
 }
 
-func printEnvDetails(ld *modload.Loader, w io.Writer) {
+func printEnvDetails(w io.Writer) {
 	fmt.Fprintf(w, "### What operating system and processor architecture are you using (`go env`)?\n\n")
 	fmt.Fprintf(w, "<details><summary><code>go env</code> Output</summary><br><pre>\n")
 	fmt.Fprintf(w, "$ go env\n")
-	printGoEnv(ld, w)
+	printGoEnv(w)
 	printGoDetails(w)
 	printOSDetails(w)
 	printCDetails(w)
 	fmt.Fprintf(w, "</pre></details>\n\n")
 }
 
-func printGoEnv(ld *modload.Loader, w io.Writer) {
+func printGoEnv(w io.Writer) {
 	env := envcmd.MkEnv()
-	env = append(env, envcmd.ExtraEnvVars(ld)...)
-	env = append(env, envcmd.ExtraEnvVarsCostly(ld)...)
+	env = append(env, envcmd.ExtraEnvVars()...)
+	env = append(env, envcmd.ExtraEnvVarsCostly()...)
 	envcmd.PrintEnv(w, env, false)
 }
 
@@ -184,14 +182,14 @@ func firstLine(buf []byte) []byte {
 // printGlibcVersion prints information about the glibc version.
 // It ignores failures.
 func printGlibcVersion(w io.Writer) {
-	tempdir, err := os.MkdirTemp("", "")
-	if err != nil {
+	tempdir := os.TempDir()
+	if tempdir == "" {
 		return
 	}
 	src := []byte(`int main() {}`)
 	srcfile := filepath.Join(tempdir, "go-bug.c")
 	outfile := filepath.Join(tempdir, "go-bug")
-	err = os.WriteFile(srcfile, src, 0644)
+	err := os.WriteFile(srcfile, src, 0644)
 	if err != nil {
 		return
 	}

@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-// addDummyObjSym adds the named symbol to the loader as if it had been
+// dummyAddSym adds the named symbol to the loader as if it had been
 // read from a Go object file. Note that it allocates a global
 // index without creating an associated object reader, so one can't
 // do anything interesting with this symbol (such as look at its

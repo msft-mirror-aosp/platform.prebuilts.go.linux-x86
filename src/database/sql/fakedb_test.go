@@ -62,31 +62,8 @@ type fakeConnector struct {
 
 func (c *fakeConnector) Connect(context.Context) (driver.Conn, error) {
 	conn, err := fdriver.Open(c.name)
-	if err != nil {
-		return nil, err
-	}
 	conn.(*fakeConn).waiter = c.waiter
-	return conn, nil
-}
-
-func getFakeConn(c driver.Conn) *fakeConn {
-	return c.(interface {
-		getFakeConn() *fakeConn
-	}).getFakeConn()
-}
-
-func (c *fakeConn) getFakeConn() *fakeConn {
-	return c
-}
-
-func getRowsCursor(rs *Rows) *rowsCursor {
-	return rs.rowsi.(interface {
-		getRowsCursor() *rowsCursor
-	}).getRowsCursor()
-}
-
-func (rc *rowsCursor) getRowsCursor() *rowsCursor {
-	return rc
+	return conn, err
 }
 
 func (c *fakeConnector) Driver() driver.Driver {
@@ -992,7 +969,7 @@ func (s *fakeStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (
 				idx := t.columnIndex(wcol.Column)
 				if idx == -1 {
 					t.mu.Unlock()
-					return nil, fmt.Errorf("fakedb: invalid where clause column %v", wcol)
+					return nil, fmt.Errorf("fakedb: invalid where clause column %q", wcol)
 				}
 				tcol := trow.cols[idx]
 				if bs, ok := tcol.([]byte); ok {
@@ -1247,12 +1224,6 @@ func converterForType(typ string) driver.ValueConverter {
 	case "datetime":
 		return driver.NotNull{Converter: driver.DefaultParameterConverter}
 	case "nulldatetime":
-		return driver.Null{Converter: driver.DefaultParameterConverter}
-	case "uuid":
-		return driver.NotNull{Converter: driver.DefaultParameterConverter}
-	case "nulluuid":
-		return driver.Null{Converter: driver.DefaultParameterConverter}
-	case "nulltable":
 		return driver.Null{Converter: driver.DefaultParameterConverter}
 	case "any":
 		return anyTypeConverter{}

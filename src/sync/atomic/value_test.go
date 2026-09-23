@@ -185,6 +185,7 @@ func TestValueSwapConcurrent(t *testing.T) {
 		n = 1000
 	}
 	for i := uint64(0); i < m*n; i += n {
+		i := i
 		g.Add(1)
 		go func() {
 			var c uint64
@@ -255,6 +256,7 @@ func TestValueCompareAndSwapConcurrent(t *testing.T) {
 		n = 100
 	}
 	for i := 0; i < m; i++ {
+		i := i
 		w.Add(1)
 		go func() {
 			for j := i; j < m*n; runtime.Gosched() {

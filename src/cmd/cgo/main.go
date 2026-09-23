@@ -30,7 +30,6 @@ import (
 	"cmd/internal/edit"
 	"cmd/internal/hash"
 	"cmd/internal/objabi"
-	"cmd/internal/par"
 	"cmd/internal/telemetry/counter"
 )
 
@@ -50,6 +49,8 @@ type Package struct {
 	GoFiles     []string        // list of Go files
 	GccFiles    []string        // list of gcc output files
 	Preamble    string          // collected preamble for _cgo_export.h
+	typedefs    map[string]bool // type names that appear in the types of the objects we're interested in
+	typedefList []typedefInfo
 	noCallbacks map[string]bool // C function names with #cgo nocallback directive
 	noEscapes   map[string]bool // C function names with #cgo noescape directive
 }
@@ -72,11 +73,9 @@ type File struct {
 	ExpFunc     []*ExpFunc          // exported functions for this file
 	Name        map[string]*Name    // map from Go name to Name
 	NamePos     map[*Name]token.Pos // map from Name to position of the first reference
-	NoCallbacks map[string]bool     // C function names with #cgo nocallback directive
-	NoEscapes   map[string]bool     // C function names with #cgo noescape directive
+	NoCallbacks map[string]bool     // C function names that with #cgo nocallback directive
+	NoEscapes   map[string]bool     // C function names that with #cgo noescape directive
 	Edit        *edit.Buffer
-
-	debugs []*debug // debug data from iterations of gccDebug. Initialized by File.loadDebug.
 }
 
 func (f *File) offset(p token.Pos) int {
@@ -148,7 +147,7 @@ type ExpFunc struct {
 // A TypeRepr contains the string representation of a type.
 type TypeRepr struct {
 	Repr       string
-	FormatArgs []any
+	FormatArgs []interface{}
 }
 
 // A Type collects information about a type in both the C and Go worlds.
@@ -320,10 +319,6 @@ func main() {
 		conf.Mode &^= printer.SourcePos
 	}
 
-	if *objDir == "" {
-		*objDir = "_obj"
-	}
-
 	args := flag.Args()
 	if len(args) < 1 {
 		usage()
@@ -398,7 +393,7 @@ func main() {
 	h := hash.New32()
 	io.WriteString(h, *importPath)
 	var once sync.Once
-	q := par.NewQueue(runtime.GOMAXPROCS(0))
+	var wg sync.WaitGroup
 	fs := make([]*File, len(goFiles))
 	for i, input := range goFiles {
 		if *srcDir != "" {
@@ -420,7 +415,9 @@ func main() {
 			fatalf("%s", err)
 		}
 
-		q.Add(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			// Apply trimpath to the file path. The path won't be read from after this point.
 			input, _ = objabi.ApplyRewrites(input, *trimpath)
 			if strings.ContainsAny(input, "\r\n") {
@@ -441,14 +438,20 @@ func main() {
 			})
 
 			fs[i] = f
-
-			f.loadDebug(p)
-		})
+		}()
 	}
 
-	<-q.Idle()
+	wg.Wait()
 
 	cPrefix = fmt.Sprintf("_%x", h.Sum(nil)[0:6])
+
+	if *objDir == "" {
+		*objDir = "_obj"
+	}
+	// make sure that `objDir` directory exists, so that we can write
+	// all the output files there.
+	os.MkdirAll(*objDir, 0o700)
+	*objDir += string(filepath.Separator)
 
 	for i, input := range goFiles {
 		f := fs[i]

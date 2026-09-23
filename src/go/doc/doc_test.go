@@ -154,7 +154,7 @@ func Test(t *testing.T) {
 
 func TestFuncs(t *testing.T) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "funcs.go", strings.NewReader(funcsTestFile), parser.ParseComments|parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, "funcs.go", strings.NewReader(funcsTestFile), parser.ParseComments)
 	if err != nil {
 		t.Fatal(err)
 	}

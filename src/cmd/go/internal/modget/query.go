@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"cmd/go/internal/base"
 	"cmd/go/internal/gover"
@@ -139,7 +138,7 @@ func errSet(err error) pathSet { return pathSet{err: err} }
 
 // newQuery returns a new query parsed from the raw argument,
 // which must be either path or path@version.
-func newQuery(ld *modload.Loader, raw string) (*query, error) {
+func newQuery(raw string) (*query, error) {
 	pattern, rawVers, found, err := modload.ParsePathVersion(raw)
 	if err != nil {
 		return nil, err
@@ -170,14 +169,14 @@ func newQuery(ld *modload.Loader, raw string) (*query, error) {
 		q.matchWildcard = pkgpattern.MatchPattern(q.pattern)
 		q.canMatchWildcardInModule = pkgpattern.TreeCanMatchPattern(q.pattern)
 	}
-	if err := q.validate(ld); err != nil {
+	if err := q.validate(); err != nil {
 		return q, err
 	}
 	return q, nil
 }
 
 // validate reports a non-nil error if q is not sensible and well-formed.
-func (q *query) validate(ld *modload.Loader) error {
+func (q *query) validate() error {
 	if q.patternIsLocal {
 		if q.rawVersion != "" {
 			return fmt.Errorf("can't request explicit version %q of path %q in main module", q.rawVersion, q.pattern)
@@ -187,15 +186,15 @@ func (q *query) validate(ld *modload.Loader) error {
 
 	if q.pattern == "all" {
 		// If there is no main module, "all" is not meaningful.
-		if !ld.HasModRoot() {
-			return fmt.Errorf(`cannot match "all": %v`, modload.NewNoMainModulesError(ld))
+		if !modload.HasModRoot() {
+			return fmt.Errorf(`cannot match "all": %v`, modload.ErrNoModRoot)
 		}
 		if !versionOkForMainModule(q.version) {
 			// TODO(bcmills): "all@none" seems like a totally reasonable way to
 			// request that we remove all module requirements, leaving only the main
 			// module and standard library. Perhaps we should implement that someday.
 			return &modload.QueryUpgradesAllError{
-				MainModules: ld.MainModules.Versions(),
+				MainModules: modload.MainModules.Versions(),
 				Query:       q.version,
 			}
 		}
@@ -286,13 +285,8 @@ func reportError(q *query, err error) {
 	// If err already mentions all of the relevant parts of q, just log err to
 	// reduce stutter. Otherwise, log both q and err.
 	//
-	// TODO(bcmills): Use errors.AsType to unpack these errors instead of parsing
+	// TODO(bcmills): Use errors.As to unpack these errors instead of parsing
 	// strings with regular expressions.
-
-	if !utf8.ValidString(q.pattern) || !utf8.ValidString(q.version) {
-		base.Errorf("go: %s", errStr)
-		return
-	}
 
 	patternRE := regexp.MustCompile("(?m)(?:[ \t(\"`]|^)" + regexp.QuoteMeta(q.pattern) + "(?:[ @:;)\"`]|$)")
 	if patternRE.MatchString(errStr) {

@@ -155,7 +155,7 @@ func (t *traceMultiplexer) startLocked() error {
 	t.subscribersMu.Unlock()
 
 	go func() {
-		header := runtime.ReadTrace()
+		header := runtime_readTrace()
 		if traceStartWriter != nil {
 			traceStartWriter.Write(header)
 		}
@@ -164,15 +164,9 @@ func (t *traceMultiplexer) startLocked() error {
 		}
 
 		for {
-			data := runtime.ReadTrace()
+			data := runtime_readTrace()
 			if data == nil {
 				break
-			}
-			if traceStartWriter != nil {
-				traceStartWriter.Write(data)
-			}
-			if flightRecorder != nil {
-				flightRecorder.Write(data)
 			}
 			if len(data) == 1 && tracev2.EventType(data[0]) == tracev2.EvEndOfGeneration {
 				if flightRecorder != nil {
@@ -193,9 +187,19 @@ func (t *traceMultiplexer) startLocked() error {
 				if frIsNew {
 					flightRecorder.Write(header)
 				}
+			} else {
+				if traceStartWriter != nil {
+					traceStartWriter.Write(data)
+				}
+				if flightRecorder != nil {
+					flightRecorder.Write(data)
+				}
 			}
 		}
 	}()
 	t.enabled.Store(true)
 	return nil
 }
+
+//go:linkname runtime_readTrace
+func runtime_readTrace() (buf []byte)

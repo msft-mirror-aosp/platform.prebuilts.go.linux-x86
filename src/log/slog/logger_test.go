@@ -303,7 +303,8 @@ func TestCallDepthConnection(t *testing.T) {
 			cmd.Env = append(cmd.Environ(), envVar+"=1")
 
 			out, err := cmd.CombinedOutput()
-			if _, ok := errors.AsType[*exec.ExitError](err); !ok {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
 				t.Fatalf("expected exec.ExitError: %v", err)
 			}
 

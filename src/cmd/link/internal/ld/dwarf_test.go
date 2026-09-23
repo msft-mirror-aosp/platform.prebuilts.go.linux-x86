@@ -60,7 +60,6 @@ func TestRuntimeTypesPresent(t *testing.T) {
 		"internal/abi.ArrayType":     true,
 		"internal/abi.ChanType":      true,
 		"internal/abi.FuncType":      true,
-		"internal/abi.MapType":       true,
 		"internal/abi.PtrType":       true,
 		"internal/abi.SliceType":     true,
 		"internal/abi.StructType":    true,
@@ -71,6 +70,16 @@ func TestRuntimeTypesPresent(t *testing.T) {
 	found := findTypes(t, dwarf, want)
 	if len(found) != len(want) {
 		t.Errorf("found %v, want %v", found, want)
+	}
+
+	// Must have one of OldMapType or SwissMapType.
+	want = map[string]bool{
+		"internal/abi.OldMapType":   true,
+		"internal/abi.SwissMapType": true,
+	}
+	found = findTypes(t, dwarf, want)
+	if len(found) != 1 {
+		t.Errorf("map type want one of %v found %v", want, found)
 	}
 }
 
@@ -279,7 +288,7 @@ func TestSizes(t *testing.T) {
 
 	// External linking may bring in C symbols with unknown size. Skip.
 	//
-	// N.B. go build below explicitly doesn't pass through
+	// N.B. go build below explictly doesn't pass through
 	// -asan/-msan/-race, so we don't care about those.
 	testenv.MustInternalLink(t, testenv.NoSpecialBuildTypes)
 
@@ -408,6 +417,7 @@ func main() {}
 		},
 	}
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -472,6 +482,7 @@ func main() {
 		},
 	}
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -553,6 +564,7 @@ func main() {
 		},
 	}
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -852,7 +864,7 @@ func TestAbstractOriginSanityIssue26237(t *testing.T) {
 
 func TestRuntimeTypeAttrInternal(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
-	// N.B. go build below explicitly doesn't pass through
+	// N.B. go build below explictly doesn't pass through
 	// -asan/-msan/-race, so we don't care about those.
 	testenv.MustInternalLink(t, testenv.NoSpecialBuildTypes)
 
@@ -868,12 +880,11 @@ func TestRuntimeTypeAttrExternal(t *testing.T) {
 
 	mustHaveDWARF(t)
 
-	if runtime.GOOS == "aix" {
-		// This fails with something like: DWARF type offset was 0xf18+0x200008b8, but test program said 0x1100017d0
-		t.Skip("-linkmode=external not supported on aix")
+	// Explicitly test external linking, for dsymutil compatibility on Darwin.
+	if runtime.GOARCH == "ppc64" {
+		t.Skip("-linkmode=external not supported on ppc64")
 	}
 
-	// Explicitly test external linking, for dsymutil compatibility on Darwin.
 	testRuntimeTypeAttr(t, "-ldflags=-linkmode=external")
 }
 
@@ -891,10 +902,6 @@ func main() {
 	var x interface{} = &X{}
 	p := *(*uintptr)(unsafe.Pointer(&x))
 	print(p)
-	f(nil)
-}
-//go:noinline
-func f(x *X) { // Make sure that there is dwarf recorded for *X.
 }
 `
 	dir := t.TempDir()
@@ -1491,7 +1498,7 @@ func TestIssue42484(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
 	// Avoid spurious failures from external linkers.
 	//
-	// N.B. go build below explicitly doesn't pass through
+	// N.B. go build below explictly doesn't pass through
 	// -asan/-msan/-race, so we don't care about those.
 	testenv.MustInternalLink(t, testenv.NoSpecialBuildTypes)
 
@@ -1982,6 +1989,7 @@ func TestZeroSizedVariable(t *testing.T) {
 	// See go.dev/issues/54615.
 
 	for _, opt := range []string{NoOpt, DefaultOpt} {
+		opt := opt
 		t.Run(opt, func(t *testing.T) {
 			_, ex := gobuildAndExamine(t, zeroSizedVarProg, opt)
 

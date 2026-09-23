@@ -7,7 +7,7 @@
 package codegen
 
 func f(x, y int, p *int) {
-	// amd64:`MOVQ AX, BX`
+	// amd64:`MOVQ\sAX, BX`
 	h(8, x)
 	*p = y
 }

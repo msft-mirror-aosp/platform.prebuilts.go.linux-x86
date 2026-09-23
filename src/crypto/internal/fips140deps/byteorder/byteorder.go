@@ -4,7 +4,9 @@
 
 package byteorder
 
-import "internal/byteorder"
+import (
+	"internal/byteorder"
+)
 
 func LEUint16(b []byte) uint16 {
 	return byteorder.LEUint16(b)
@@ -32,10 +34,6 @@ func BEPutUint32(b []byte, v uint32) {
 
 func BEPutUint64(b []byte, v uint64) {
 	byteorder.BEPutUint64(b, v)
-}
-
-func LEPutUint16(b []byte, v uint16) {
-	byteorder.LEPutUint16(b, v)
 }
 
 func LEPutUint64(b []byte, v uint64) {

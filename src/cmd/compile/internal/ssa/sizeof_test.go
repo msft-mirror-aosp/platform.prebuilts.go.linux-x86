@@ -16,14 +16,14 @@ func TestSizeof(t *testing.T) {
 	const _64bit = unsafe.Sizeof(uintptr(0)) == 8
 
 	var tests = []struct {
-		val    any     // type as a value
-		_32bit uintptr // size on 32bit platforms
-		_64bit uintptr // size on 64bit platforms
+		val    interface{} // type as a value
+		_32bit uintptr     // size on 32bit platforms
+		_64bit uintptr     // size on 64bit platforms
 	}{
 		{Value{}, 72, 112},
-		{Block{}, 168, 312},
+		{Block{}, 164, 304},
 		{LocalSlot{}, 28, 40},
-		{valState{}, 36, 48},
+		{valState{}, 28, 40},
 	}
 
 	for _, tt := range tests {

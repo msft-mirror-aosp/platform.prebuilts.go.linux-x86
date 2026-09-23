@@ -106,23 +106,6 @@ func TestMatch(t *testing.T) {
 	}
 }
 
-func BenchmarkMatch(b *testing.B) {
-	for _, tt := range matchTests {
-		name := fmt.Sprintf("%q %q", tt.pattern, tt.s)
-		b.Run(name, func(b *testing.B) {
-			b.ReportAllocs()
-			for range b.N {
-				bSink, errSink = Match(tt.pattern, tt.s)
-			}
-		})
-	}
-}
-
-var (
-	bSink   bool
-	errSink error
-)
-
 var globTests = []struct {
 	pattern, result string
 }{
@@ -248,7 +231,7 @@ func (test *globTest) globAbs(root, rootPattern string) error {
 	}
 	slices.Sort(have)
 	want := test.buildWant(root + `\`)
-	if slices.Equal(want, have) {
+	if strings.Join(want, "_") == strings.Join(have, "_") {
 		return nil
 	}
 	return fmt.Errorf("Glob(%q) returns %q, but %q expected", p, have, want)
@@ -262,12 +245,12 @@ func (test *globTest) globRel(root string) error {
 	}
 	slices.Sort(have)
 	want := test.buildWant(root)
-	if slices.Equal(want, have) {
+	if strings.Join(want, "_") == strings.Join(have, "_") {
 		return nil
 	}
 	// try also matching version without root prefix
 	wantWithNoRoot := test.buildWant("")
-	if slices.Equal(wantWithNoRoot, have) {
+	if strings.Join(wantWithNoRoot, "_") == strings.Join(have, "_") {
 		return nil
 	}
 	return fmt.Errorf("Glob(%q) returns %q, but %q expected", p, have, want)

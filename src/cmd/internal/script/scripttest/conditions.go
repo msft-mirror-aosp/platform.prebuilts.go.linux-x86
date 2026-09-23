@@ -88,7 +88,7 @@ func pieLinkExt(s *script.State) (bool, error) {
 
 func hasGodebug(s *script.State, value string) (bool, error) {
 	godebug, _ := s.LookupEnv("GODEBUG")
-	for p := range strings.SplitSeq(godebug, ",") {
+	for _, p := range strings.Split(godebug, ",") {
 		if strings.TrimSpace(p) == value {
 			return true, nil
 		}

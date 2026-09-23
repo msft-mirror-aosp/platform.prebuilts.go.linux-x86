@@ -13,7 +13,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/http/internal/http2"
 	"net/http/internal/testcert"
 	"strings"
 	"testing"
@@ -137,7 +136,7 @@ func TestTransportShouldRetryRequest(t *testing.T) {
 		2: {
 			pc:   &persistConn{reused: true},
 			req:  dummyRequest("POST"),
-			err:  http2.ErrNoCachedConn,
+			err:  http2ErrNoCachedConn,
 			want: true,
 		},
 		3: {
@@ -244,7 +243,7 @@ func TestTransportBodyAltRewind(t *testing.T) {
 						}, nil
 					}
 					roundTripped = true
-					return nil, http2.ErrNoCachedConn
+					return nil, http2noCachedConnError{}
 				})
 			},
 		},

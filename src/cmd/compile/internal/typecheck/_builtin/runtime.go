@@ -25,7 +25,7 @@ func throwinit()
 func panicwrap()
 
 func gopanic(interface{})
-func gorecover() interface{}
+func gorecover(*int32) interface{}
 func goschedguarded()
 
 // Note: these declarations are just for wasm port.
@@ -49,15 +49,12 @@ func goPanicSlice3CU(x uint, y int)
 func goPanicSliceConvert(x int, y int)
 
 func printbool(bool)
-func printfloat64(float64)
-func printfloat32(float32)
+func printfloat(float64)
 func printint(int64)
 func printhex(uint64)
 func printuint(uint64)
-func printcomplex128(complex128)
-func printcomplex64(complex64)
+func printcomplex(complex128)
 func printstring(string)
-func printquoted(string)
 func printpointer(any)
 func printuintptr(uintptr)
 func printiface(any)
@@ -155,12 +152,14 @@ func mapassign_fast32ptr(mapType *byte, hmap map[any]any, key unsafe.Pointer) (v
 func mapassign_fast64(mapType *byte, hmap map[any]any, key uint64) (val *any)
 func mapassign_fast64ptr(mapType *byte, hmap map[any]any, key unsafe.Pointer) (val *any)
 func mapassign_faststr(mapType *byte, hmap map[any]any, key string) (val *any)
-func mapIterStart(mapType *byte, hmap map[any]any, hiter *any)
+func mapiterinit(mapType *byte, hmap map[any]any, hiter *any)  // old maps
+func mapIterStart(mapType *byte, hmap map[any]any, hiter *any) // swiss maps
 func mapdelete(mapType *byte, hmap map[any]any, key *any)
 func mapdelete_fast32(mapType *byte, hmap map[any]any, key uint32)
 func mapdelete_fast64(mapType *byte, hmap map[any]any, key uint64)
 func mapdelete_faststr(mapType *byte, hmap map[any]any, key string)
-func mapIterNext(hiter *any)
+func mapiternext(hiter *any) // old maps
+func mapIterNext(hiter *any) // swiss maps
 func mapclear(mapType *byte, hmap map[any]any)
 
 // *byte is really *runtime.Type
@@ -196,9 +195,6 @@ func makeslice(typ *byte, len int, cap int) unsafe.Pointer
 func makeslice64(typ *byte, len int64, cap int64) unsafe.Pointer
 func makeslicecopy(typ *byte, tolen int, fromlen int, from unsafe.Pointer) unsafe.Pointer
 func growslice(oldPtr *any, newLen, oldCap, num int, et *byte) (ary []any)
-func growsliceBuf(oldPtr *any, newLen, oldCap, num int, et *byte, buf *any, bufLen int) (ary []any)
-func growsliceBufNoAlias(oldPtr *any, newLen, oldCap, num int, et *byte, buf *any, bufLen int) (ary []any)
-func growsliceNoAlias(oldPtr *any, newLen, oldCap, num int, et *byte) (ary []any)
 func unsafeslicecheckptr(typ *byte, ptr unsafe.Pointer, len int64)
 func panicunsafeslicelen()
 func panicunsafeslicenilptr()
@@ -206,22 +202,17 @@ func unsafestringcheckptr(ptr unsafe.Pointer, len int64)
 func panicunsafestringlen()
 func panicunsafestringnilptr()
 
-func moveSlice(typ *byte, old *byte, len, cap int) (*byte, int, int)
-func moveSliceNoScan(elemSize uintptr, old *byte, len, cap int) (*byte, int, int)
-func moveSliceNoCap(typ *byte, old *byte, len int) (*byte, int, int)
-func moveSliceNoCapNoScan(elemSize uintptr, old *byte, len int) (*byte, int, int)
-
 func memmove(to *any, frm *any, length uintptr)
 func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr)
 func memclrHasPointers(ptr unsafe.Pointer, n uintptr)
 
-func memequal(x, y unsafe.Pointer, size uintptr) bool
-func memequal0(x, y unsafe.Pointer) bool
-func memequal8(x, y unsafe.Pointer) bool
-func memequal16(x, y unsafe.Pointer) bool
-func memequal32(x, y unsafe.Pointer) bool
-func memequal64(x, y unsafe.Pointer) bool
-func memequal128(x, y unsafe.Pointer) bool
+func memequal(x, y *any, size uintptr) bool
+func memequal0(x, y *any) bool
+func memequal8(x, y *any) bool
+func memequal16(x, y *any) bool
+func memequal32(x, y *any) bool
+func memequal64(x, y *any) bool
+func memequal128(x, y *any) bool
 func f32equal(p, q unsafe.Pointer) bool
 func f64equal(p, q unsafe.Pointer) bool
 func c64equal(p, q unsafe.Pointer) bool
@@ -230,20 +221,20 @@ func strequal(p, q unsafe.Pointer) bool
 func interequal(p, q unsafe.Pointer) bool
 func nilinterequal(p, q unsafe.Pointer) bool
 
-func memhash(x unsafe.Pointer, h uintptr, size uintptr) uintptr
+func memhash(x *any, h uintptr, size uintptr) uintptr
 func memhash0(p unsafe.Pointer, h uintptr) uintptr
 func memhash8(p unsafe.Pointer, h uintptr) uintptr
 func memhash16(p unsafe.Pointer, h uintptr) uintptr
 func memhash32(p unsafe.Pointer, h uintptr) uintptr
 func memhash64(p unsafe.Pointer, h uintptr) uintptr
 func memhash128(p unsafe.Pointer, h uintptr) uintptr
-func f32hash(p unsafe.Pointer, h uintptr) uintptr
-func f64hash(p unsafe.Pointer, h uintptr) uintptr
-func c64hash(p unsafe.Pointer, h uintptr) uintptr
-func c128hash(p unsafe.Pointer, h uintptr) uintptr
-func strhash(a unsafe.Pointer, h uintptr) uintptr
-func interhash(p unsafe.Pointer, h uintptr) uintptr
-func nilinterhash(p unsafe.Pointer, h uintptr) uintptr
+func f32hash(p *any, h uintptr) uintptr
+func f64hash(p *any, h uintptr) uintptr
+func c64hash(p *any, h uintptr) uintptr
+func c128hash(p *any, h uintptr) uintptr
+func strhash(a *any, h uintptr) uintptr
+func interhash(p *any, h uintptr) uintptr
+func nilinterhash(p *any, h uintptr) uintptr
 
 // only used on 32-bit
 func int64div(int64, int64) int64
@@ -295,19 +286,14 @@ func libfuzzerHookEqualFold(string, string, uint)
 func addCovMeta(p unsafe.Pointer, len uint32, hash [16]byte, pkpath string, pkgId int, cmode uint8, cgran uint8) uint32
 
 // architecture variants
-var x86HasAVX bool
-var x86HasFMA bool
 var x86HasPOPCNT bool
 var x86HasSSE41 bool
+var x86HasFMA bool
 var armHasVFPv4 bool
 var arm64HasATOMICS bool
 var loong64HasLAMCAS bool
 var loong64HasLAM_BH bool
-var loong64HasDBAR_HINTS bool
 var loong64HasLSX bool
 var riscv64HasZbb bool
 
 func asanregisterglobals(unsafe.Pointer, uintptr)
-
-// used by testing.B.Loop
-func KeepAlive(interface{})

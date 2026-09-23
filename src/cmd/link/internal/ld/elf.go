@@ -10,7 +10,6 @@ import (
 	"cmd/internal/sys"
 	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
-	"cmp"
 	"debug/elf"
 	"encoding/binary"
 	"encoding/hex"
@@ -62,44 +61,80 @@ import (
  *
  */
 
-// ELF definitions that are independent of architecture or word size.
+/*
+ * ELF definitions that are independent of architecture or word size.
+ */
 
-// We use the 64-bit data structures on both 32- and 64-bit machines
-// in order to write the code just once. The 64-bit data structure is
-// written in the 32-bit format on the 32-bit machines.
-
-// ElfEhdr is the ELF file header.
-type ElfEhdr elf.Header64
-
-// ElfShdr is an ELF section table entry.
-type ElfShdr struct {
-	elf.Section64
-
-	// nameString is the section name as a string.
-	// This is not to be confused with Name,
-	// inherited from elf.Section64, which is an offset.
-	nameString string
-
-	// The section index, set by elfSortShdrs.
-	// Don't read this directly, use elfShdrShnum.
-	shnum elf.SectionIndex
-
-	// Because we don't compute the final section number
-	// until late in the link, when the link and info fields
-	// hold section indexes, we store pointers, and fetch
-	// the final section index when we write them out.
-	link *ElfShdr
-	info *ElfShdr
-
-	// We compute the section offsets of reloc sections
-	// after we create the ELF section header.
-	// This field lets us fetch the section offset and size.
-	relocSect *sym.Section
+/*
+ * Note header.  The ".note" section contains an array of notes.  Each
+ * begins with this header, aligned to a word boundary.  Immediately
+ * following the note header is n_namesz bytes of name, padded to the
+ * next word boundary.  Then comes n_descsz bytes of descriptor, again
+ * padded to a word boundary.  The values of n_namesz and n_descsz do
+ * not include the padding.
+ */
+type elfNote struct {
+	nNamesz uint32
+	nDescsz uint32
+	nType   uint32
 }
 
-// ElfPhdr is the ELF program, or segment, header.
+/* For accessing the fields of r_info. */
+
+/* For constructing r_info from field values. */
+
+/*
+ * Relocation types.
+ */
+const (
+	ARM_MAGIC_TRAMP_NUMBER = 0x5c000003
+)
+
+/*
+ * Symbol table entries.
+ */
+
+/* For accessing the fields of st_info. */
+
+/* For constructing st_info from field values. */
+
+/* For accessing the fields of st_other. */
+
+/*
+ * ELF header.
+ */
+type ElfEhdr elf.Header64
+
+/*
+ * Section header.
+ */
+type ElfShdr struct {
+	elf.Section64
+	shnum elf.SectionIndex
+}
+
+/*
+ * Program header.
+ */
 type ElfPhdr elf.ProgHeader
 
+/* For accessing the fields of r_info. */
+
+/* For constructing r_info from field values. */
+
+/*
+ * Symbol table entries.
+ */
+
+/* For accessing the fields of st_info. */
+
+/* For constructing st_info from field values. */
+
+/* For accessing the fields of st_other. */
+
+/*
+ * Go linker interface
+ */
 const (
 	ELF64HDRSIZE  = 64
 	ELF64PHDRSIZE = 56
@@ -114,13 +149,32 @@ const (
 	ELF32RELSIZE  = 8
 )
 
-var elfstrdat []byte
+/*
+ * The interface uses the 64-bit structures always,
+ * to avoid code duplication.  The writers know how to
+ * marshal a 32-bit representation from the 64-bit structure.
+ */
 
-// ELFRESERVE is the total amount of space to reserve at the
-// start of the file for Header, PHeaders, SHeaders, and interp.
-// May waste some space.
-// On FreeBSD, cannot be larger than a page.
-const ELFRESERVE = 4096
+var elfstrdat, elfshstrdat []byte
+
+/*
+ * Total amount of space to reserve at the start of the file
+ * for Header, PHeaders, SHeaders, and interp.
+ * May waste some.
+ * On FreeBSD, cannot be larger than a page.
+ */
+const (
+	ELFRESERVE = 4096
+)
+
+/*
+ * We use the 64-bit data structures on both 32- and 64-bit machines
+ * in order to write the code just once.  The 64-bit data structure is
+ * written in the 32-bit format on the 32-bit machines.
+ */
+const (
+	NSECT = 400
+)
 
 var (
 	Nelfsym = 1
@@ -130,10 +184,9 @@ var (
 	// target platform uses.
 	elfRelType string
 
-	ehdr       ElfEhdr
-	phdr       = make([]*ElfPhdr, 0, 8)
-	shdr       = make([]*ElfShdr, 0, 64)
-	shdrSorted bool
+	ehdr ElfEhdr
+	phdr [NSECT]*ElfPhdr
+	shdr [NSECT]*ElfShdr
 
 	interp string
 )
@@ -163,10 +216,21 @@ type ELFArch struct {
 	DynamicReadOnly bool
 }
 
+type Elfstring struct {
+	s   string
+	off int
+}
+
+var elfstr [100]Elfstring
+
+var nelfstr int
+
 var buildinfo []byte
 
-// Elfinit initializes the global ehdr variable that holds the ELF header.
-// It will be updated as write section and program headers.
+/*
+Initialize the global variable that describes the ELF header. It will be updated as
+we write section and prog headers.
+*/
 func Elfinit(ctxt *Link) {
 	ctxt.IsELF = true
 
@@ -178,29 +242,30 @@ func Elfinit(ctxt *Link) {
 
 	switch ctxt.Arch.Family {
 	// 64-bit architectures
-	case sys.AMD64, sys.ARM64, sys.Loong64, sys.MIPS64, sys.PPC64, sys.RISCV64, sys.S390X:
+	case sys.PPC64, sys.S390X:
+		if ctxt.Arch.ByteOrder == binary.BigEndian && ctxt.HeadType != objabi.Hopenbsd {
+			ehdr.Flags = 1 /* Version 1 ABI */
+		} else {
+			ehdr.Flags = 2 /* Version 2 ABI */
+		}
+		fallthrough
+	case sys.AMD64, sys.ARM64, sys.Loong64, sys.MIPS64, sys.RISCV64:
 		if ctxt.Arch.Family == sys.MIPS64 {
-			ehdr.Flags = 0x20000004 // MIPS 3 CPIC
+			ehdr.Flags = 0x20000004 /* MIPS 3 CPIC */
 		}
 		if ctxt.Arch.Family == sys.Loong64 {
-			ehdr.Flags = 0x43 // DOUBLE_FLOAT, OBJABI_V1
+			ehdr.Flags = 0x43 /* DOUBLE_FLOAT, OBJABI_V1 */
 		}
 		if ctxt.Arch.Family == sys.RISCV64 {
-			ehdr.Flags = 0x4 // RISCV Float ABI Double
-		}
-		if ctxt.Arch.Family == sys.S390X {
-			ehdr.Flags = 1 // Version 1 ABI
-		}
-		if ctxt.Arch.Family == sys.PPC64 {
-			ehdr.Flags = 2 // Version 2 ABI
+			ehdr.Flags = 0x4 /* RISCV Float ABI Double */
 		}
 		elf64 = true
 
-		ehdr.Phoff = ELF64HDRSIZE      // Must be ELF64HDRSIZE: first PHdr must follow ELF header
-		ehdr.Shoff = ELF64HDRSIZE      // Will move as we add PHeaders
-		ehdr.Ehsize = ELF64HDRSIZE     // Must be ELF64HDRSIZE
-		ehdr.Phentsize = ELF64PHDRSIZE // Must be ELF64PHDRSIZE
-		ehdr.Shentsize = ELF64SHDRSIZE // Must be ELF64SHDRSIZE
+		ehdr.Phoff = ELF64HDRSIZE      /* Must be ELF64HDRSIZE: first PHdr must follow ELF header */
+		ehdr.Shoff = ELF64HDRSIZE      /* Will move as we add PHeaders */
+		ehdr.Ehsize = ELF64HDRSIZE     /* Must be ELF64HDRSIZE */
+		ehdr.Phentsize = ELF64PHDRSIZE /* Must be ELF64PHDRSIZE */
+		ehdr.Shentsize = ELF64SHDRSIZE /* Must be ELF64SHDRSIZE */
 
 	// 32-bit architectures
 	case sys.ARM, sys.MIPS:
@@ -218,21 +283,22 @@ func Elfinit(ctxt *Link) {
 				ehdr.Flags = 0x5000002 // has entry point, Version5 EABI
 			}
 		} else if ctxt.Arch.Family == sys.MIPS {
-			ehdr.Flags = 0x50001004 // MIPS 32 CPIC O32
+			ehdr.Flags = 0x50001004 /* MIPS 32 CPIC O32*/
 		}
 		fallthrough
 	default:
 		ehdr.Phoff = ELF32HDRSIZE
-		// Must be ELF32HDRSIZE: first PHdr must follow ELF header
-		ehdr.Shoff = ELF32HDRSIZE      // Will move as we add PHeaders
-		ehdr.Ehsize = ELF32HDRSIZE     // Must be ELF32HDRSIZE
-		ehdr.Phentsize = ELF32PHDRSIZE // Must be ELF32PHDRSIZE
-		ehdr.Shentsize = ELF32SHDRSIZE // Must be ELF32SHDRSIZE
+		/* Must be ELF32HDRSIZE: first PHdr must follow ELF header */
+		ehdr.Shoff = ELF32HDRSIZE      /* Will move as we add PHeaders */
+		ehdr.Ehsize = ELF32HDRSIZE     /* Must be ELF32HDRSIZE */
+		ehdr.Phentsize = ELF32PHDRSIZE /* Must be ELF32PHDRSIZE */
+		ehdr.Shentsize = ELF32SHDRSIZE /* Must be ELF32SHDRSIZE */
 	}
 }
 
-// fixElfPhdr makes sure PT_LOAD is aligned properly and that there is no gap.
-// Correct ELF loaders will do this implicitly,
+// Make sure PT_LOAD is aligned properly and
+// that there is no gap,
+// correct ELF loaders will do this implicitly,
 // but buggy ELF loaders like the one in some
 // versions of QEMU and UPX won't.
 func fixElfPhdr(e *ElfPhdr) {
@@ -275,181 +341,55 @@ func elf32phdr(out *OutBuf, e *ElfPhdr) {
 	out.Write32(uint32(e.Align))
 }
 
-// elfShdrShnum returns the section index of an ElfShdr.
-func elfShdrShnum(e *ElfShdr) elf.SectionIndex {
-	if e.shnum == -1 {
-		Errorf("internal error: retrieved section index before it is set")
-		errorexit()
-	}
-	return e.shnum
-}
-
-// elfShdrOff returns the section offset for an ElfShdr.
-func elfShdrOff(e *ElfShdr) uint64 {
-	if e.relocSect != nil {
-		if e.Off != 0 {
-			Errorf("internal error: ElfShdr relocSect == %p Off == %d", e.relocSect, e.Off)
-			errorexit()
-		}
-		return e.relocSect.Reloff
-	}
-	return e.Off
-}
-
-// elfShdrSize returns the section size for an ElfShdr.
-func elfShdrSize(e *ElfShdr) uint64 {
-	if e.relocSect != nil {
-		if e.Size != 0 {
-			Errorf("internal error: ElfShdr relocSect == %p Size == %d", e.relocSect, e.Size)
-			errorexit()
-		}
-		return e.relocSect.Rellen
-	}
-	return e.Size
-}
-
-// elfShdrLink returns the link value for an ElfShdr.
-func elfShdrLink(e *ElfShdr) uint32 {
-	if e.link != nil {
-		if e.Link != 0 {
-			Errorf("internal error: ElfShdr link == %p Link == %d", e.link, e.Link)
-			errorexit()
-		}
-		return uint32(elfShdrShnum(e.link))
-	}
-	return e.Link
-}
-
-// elfShdrInfo returns the info value for an ElfShdr.
-func elfShdrInfo(e *ElfShdr) uint32 {
-	if e.info != nil {
-		if e.Info != 0 {
-			Errorf("internal error: ElfShdr info == %p Info == %d", e.info, e.Info)
-			errorexit()
-		}
-		return uint32(elfShdrShnum(e.info))
-	}
-	return e.Info
-}
-
 func elf64shdr(out *OutBuf, e *ElfShdr) {
 	out.Write32(e.Name)
-	out.Write32(e.Type)
-	out.Write64(e.Flags)
+	out.Write32(uint32(e.Type))
+	out.Write64(uint64(e.Flags))
 	out.Write64(e.Addr)
-	out.Write64(elfShdrOff(e))
-	out.Write64(elfShdrSize(e))
-	out.Write32(elfShdrLink(e))
-	out.Write32(elfShdrInfo(e))
+	out.Write64(e.Off)
+	out.Write64(e.Size)
+	out.Write32(e.Link)
+	out.Write32(e.Info)
 	out.Write64(e.Addralign)
 	out.Write64(e.Entsize)
 }
 
 func elf32shdr(out *OutBuf, e *ElfShdr) {
 	out.Write32(e.Name)
-	out.Write32(e.Type)
+	out.Write32(uint32(e.Type))
 	out.Write32(uint32(e.Flags))
 	out.Write32(uint32(e.Addr))
-	out.Write32(uint32(elfShdrOff(e)))
-	out.Write32(uint32(elfShdrSize(e)))
-	out.Write32(elfShdrLink(e))
-	out.Write32(elfShdrInfo(e))
+	out.Write32(uint32(e.Off))
+	out.Write32(uint32(e.Size))
+	out.Write32(e.Link)
+	out.Write32(e.Info)
 	out.Write32(uint32(e.Addralign))
 	out.Write32(uint32(e.Entsize))
 }
 
 func elfwriteshdrs(out *OutBuf) uint32 {
 	if elf64 {
-		for _, sh := range shdr {
-			elf64shdr(out, sh)
+		for i := 0; i < int(ehdr.Shnum); i++ {
+			elf64shdr(out, shdr[i])
 		}
-		return uint32(len(shdr)) * ELF64SHDRSIZE
+		return uint32(ehdr.Shnum) * ELF64SHDRSIZE
 	}
 
-	for _, sh := range shdr {
-		elf32shdr(out, sh)
+	for i := 0; i < int(ehdr.Shnum); i++ {
+		elf32shdr(out, shdr[i])
 	}
-	return uint32(len(shdr)) * ELF32SHDRSIZE
+	return uint32(ehdr.Shnum) * ELF32SHDRSIZE
 }
 
-// elfSortShdrs sorts the section headers so that allocated sections
-// are first, in address order. This isn't required for correctness,
-// but it makes the ELF file easier for humans to read.
-// We only do this for an executable, not an object file.
-func elfSortShdrs(ctxt *Link) {
-	if ctxt.LinkMode != LinkExternal {
-		// Use [1:] to leave the empty section header zero in place.
-		slices.SortStableFunc(shdr[1:], func(a, b *ElfShdr) int {
-			isAllocated := func(h *ElfShdr) bool {
-				return elf.SectionFlag(h.Flags)&elf.SHF_ALLOC != 0
-			}
-			if isAllocated(a) {
-				if isAllocated(b) {
-					if r := cmp.Compare(a.Addr, b.Addr); r != 0 {
-						return r
-					}
-					// With same address, sort smallest
-					// section first.
-					return cmp.Compare(a.Size, b.Size)
-				}
-				// Allocated before unallocated.
-				return -1
-			}
-			if isAllocated(b) {
-				// Allocated before unallocated.
-				return 1
-			}
-			return 0
-		})
-	}
-	for i, h := range shdr {
-		h.shnum = elf.SectionIndex(i)
-	}
-	shdrSorted = true
-}
-
-// elfWriteShstrtab writes out the ELF section string table.
-// It also sets the Name field of the section headers.
-// It returns the length of the string table.
-func elfWriteShstrtab(ctxt *Link) uint32 {
-	// Map from section name to shstrtab offset.
-	m := make(map[string]uint32, len(shdr))
-
-	m[""] = 0
-	ctxt.Out.WriteByte(0)
-	off := uint32(1)
-
-	writeString := func(s string) {
-		m[s] = off
-		ctxt.Out.WriteString(s)
-		ctxt.Out.WriteByte(0)
-		off += uint32(len(s)) + 1
+func elfsetstring(ctxt *Link, s loader.Sym, str string, off int) {
+	if nelfstr >= len(elfstr) {
+		ctxt.Errorf(s, "too many elf strings")
+		errorexit()
 	}
 
-	// As a minor optimization, do the relocation sections first,
-	// as they may let us reuse the suffix.
-	// That is, the offset for ".text" can point into ".rel.text".
-	// We don't do a full suffix search as the relocation sections
-	// are likely to be the only match.
-	for _, sh := range shdr {
-		if suffix, ok := strings.CutPrefix(sh.nameString, elfRelType); ok {
-			if _, found := m[suffix]; !found {
-				m[suffix] = off + uint32(len(elfRelType))
-			}
-			writeString(sh.nameString)
-		}
-	}
-
-	for _, sh := range shdr {
-		if shOff, ok := m[sh.nameString]; ok {
-			sh.Name = shOff
-		} else {
-			sh.Name = off
-			writeString(sh.nameString)
-		}
-	}
-
-	return off
+	elfstr[nelfstr].s = str
+	elfstr[nelfstr].off = off
+	nelfstr++
 }
 
 func elfwritephdrs(out *OutBuf) uint32 {
@@ -468,8 +408,12 @@ func elfwritephdrs(out *OutBuf) uint32 {
 
 func newElfPhdr() *ElfPhdr {
 	e := new(ElfPhdr)
-	phdr = append(phdr, e)
-	ehdr.Phnum++
+	if ehdr.Phnum >= NSECT {
+		Errorf("too many phdrs")
+	} else {
+		phdr[ehdr.Phnum] = e
+		ehdr.Phnum++
+	}
 	if elf64 {
 		ehdr.Shoff += ELF64PHDRSIZE
 	} else {
@@ -478,17 +422,17 @@ func newElfPhdr() *ElfPhdr {
 	return e
 }
 
-func newElfShdr(name string) *ElfShdr {
-	if shdrSorted {
-		Errorf("internal error: creating a section header after they were sorted")
-		errorexit()
+func newElfShdr(name int64) *ElfShdr {
+	e := new(ElfShdr)
+	e.Name = uint32(name)
+	e.shnum = elf.SectionIndex(ehdr.Shnum)
+	if ehdr.Shnum >= NSECT {
+		Errorf("too many shdrs")
+	} else {
+		shdr[ehdr.Shnum] = e
+		ehdr.Shnum++
 	}
 
-	e := &ElfShdr{
-		nameString: name,
-		shnum:      -1, // make invalid for now, set by elfSortShdrs
-	}
-	shdr = append(shdr, e)
 	return e
 }
 
@@ -498,9 +442,9 @@ func getElfEhdr() *ElfEhdr {
 
 func elf64writehdr(out *OutBuf) uint32 {
 	out.Write(ehdr.Ident[:])
-	out.Write16(ehdr.Type)
-	out.Write16(ehdr.Machine)
-	out.Write32(ehdr.Version)
+	out.Write16(uint16(ehdr.Type))
+	out.Write16(uint16(ehdr.Machine))
+	out.Write32(uint32(ehdr.Version))
 	out.Write64(ehdr.Entry)
 	out.Write64(ehdr.Phoff)
 	out.Write64(ehdr.Shoff)
@@ -516,9 +460,9 @@ func elf64writehdr(out *OutBuf) uint32 {
 
 func elf32writehdr(out *OutBuf) uint32 {
 	out.Write(ehdr.Ident[:])
-	out.Write16(ehdr.Type)
-	out.Write16(ehdr.Machine)
-	out.Write32(ehdr.Version)
+	out.Write16(uint16(ehdr.Type))
+	out.Write16(uint16(ehdr.Machine))
+	out.Write32(uint32(ehdr.Version))
 	out.Write32(uint32(ehdr.Entry))
 	out.Write32(uint32(ehdr.Phoff))
 	out.Write32(uint32(ehdr.Shoff))
@@ -539,10 +483,7 @@ func elfwritehdr(out *OutBuf) uint32 {
 	return elf32writehdr(out)
 }
 
-// elfhash is the dynamic symbol hash function .
-// This is taken directly from the definition document for ELF,
-// except that instead of finishing with "h &^= g" we just write
-// "h &= 0xfffffff", which results in the same value.
+/* Taken directly from the definition document for ELF64. */
 func elfhash(name string) uint32 {
 	var h uint32
 	for i := 0; i < len(name); i++ {
@@ -637,8 +578,6 @@ func elfMipsAbiFlags(sh *ElfShdr, startva uint64, resoff uint64) int {
 	return n
 }
 
-// elfWriteMipsAbiFlags writes the .MIPS.abiflags section.
-//
 // Layout is given by this C definition:
 //
 //	typedef struct
@@ -729,7 +668,7 @@ const (
 	ELF_NOTE_NETBSD_NAMESZ  = 7
 	ELF_NOTE_NETBSD_DESCSZ  = 4
 	ELF_NOTE_NETBSD_TAG     = 1
-	ELF_NOTE_NETBSD_VERSION = 700000000 // NetBSD 7.0
+	ELF_NOTE_NETBSD_VERSION = 700000000 /* NetBSD 7.0 */
 )
 
 var ELF_NOTE_NETBSD_NAME = []byte("NetBSD\x00")
@@ -878,7 +817,7 @@ func addbuildinfo(ctxt *Link) {
 		}
 
 		if ctxt.IsDarwin() {
-			buildinfo = uuidFromHash(hash.Sum32([]byte(buildID)))
+			buildinfo = uuidFromGoBuildId(buildID)
 			return
 		}
 
@@ -1194,20 +1133,37 @@ func elfphrelro(seg *sym.Segment) {
 	ph.Align = uint64(*FlagRound)
 }
 
-// elfshname finds or creates a section given its name.
 func elfshname(name string) *ElfShdr {
-	for _, sh := range shdr {
-		if sh.nameString == name {
-			return sh
+	for i := 0; i < nelfstr; i++ {
+		if name != elfstr[i].s {
+			continue
 		}
+		off := elfstr[i].off
+		for i = 0; i < int(ehdr.Shnum); i++ {
+			sh := shdr[i]
+			if sh.Name == uint32(off) {
+				return sh
+			}
+		}
+		return newElfShdr(int64(off))
 	}
-	return newElfShdr(name)
+	Exitf("cannot find elf name %s", name)
+	return nil
 }
 
-// elfshnamedup creates a new section with a given name.
-// If there is an existing section with this name, it creates a duplicate.
+// Create an ElfShdr for the section with name.
+// Create a duplicate if one already exists with that name.
 func elfshnamedup(name string) *ElfShdr {
-	return newElfShdr(name)
+	for i := 0; i < nelfstr; i++ {
+		if name == elfstr[i].s {
+			off := elfstr[i].off
+			return newElfShdr(int64(off))
+		}
+	}
+
+	Errorf("cannot find elf name %s", name)
+	errorexit()
+	return nil
 }
 
 func elfshalloc(sect *sym.Section) *ElfShdr {
@@ -1294,12 +1250,11 @@ func elfshbits(linkmode LinkMode, sect *sym.Section) *ElfShdr {
 
 func elfshreloc(arch *sys.Arch, sect *sym.Section) *ElfShdr {
 	// If main section is SHT_NOBITS, nothing to relocate.
-	// Also nothing to relocate in .shstrtab or notes or .gopclntab.
+	// Also nothing to relocate in .shstrtab or notes.
 	if sect.Vaddr >= sect.Seg.Vaddr+sect.Seg.Filelen {
 		return nil
 	}
-	switch sect.Name {
-	case ".shstrtab", ".tbss", ".gopclntab":
+	if sect.Name == ".shstrtab" || sect.Name == ".tbss" {
 		return nil
 	}
 	if sect.Elfsect.(*ElfShdr).Type == uint32(elf.SHT_NOTE) {
@@ -1316,7 +1271,7 @@ func elfshreloc(arch *sys.Arch, sect *sym.Section) *ElfShdr {
 	// its own .rela.text.
 
 	if sect.Name == ".text" {
-		if sh.info != nil && sh.info != sect.Elfsect.(*ElfShdr) {
+		if sh.Info != 0 && sh.Info != uint32(sect.Elfsect.(*ElfShdr).shnum) {
 			sh = elfshnamedup(elfRelType + sect.Name)
 		}
 	}
@@ -1326,9 +1281,10 @@ func elfshreloc(arch *sys.Arch, sect *sym.Section) *ElfShdr {
 	if typ == elf.SHT_RELA {
 		sh.Entsize += uint64(arch.RegSize)
 	}
-	sh.link = elfshname(".symtab")
-	sh.info = sect.Elfsect.(*ElfShdr)
-	sh.relocSect = sect
+	sh.Link = uint32(elfshname(".symtab").shnum)
+	sh.Info = uint32(sect.Elfsect.(*ElfShdr).shnum)
+	sh.Off = sect.Reloff
+	sh.Size = sect.Rellen
 	sh.Addralign = uint64(arch.RegSize)
 	return sh
 }
@@ -1423,7 +1379,7 @@ func elfEmitReloc(ctxt *Link) {
 	for i := 0; i < len(Segdwarf.Sections); i++ {
 		sect := Segdwarf.Sections[i]
 		si := dwarfp[i]
-		if si.secSym() != sect.Sym ||
+		if si.secSym() != loader.Sym(sect.Sym) ||
 			ctxt.loader.SymSect(si.secSym()) != sect {
 			panic("inconsistency between dwarfp and Segdwarf")
 		}
@@ -1459,12 +1415,144 @@ func addgonote(ctxt *Link, sectionName string, tag uint32, desc []byte) {
 func (ctxt *Link) doelf() {
 	ldr := ctxt.loader
 
-	if ctxt.IsExternal() {
-		*FlagD = true
+	/* predefine strings we need for section headers */
+
+	addshstr := func(s string) int {
+		off := len(elfshstrdat)
+		elfshstrdat = append(elfshstrdat, s...)
+		elfshstrdat = append(elfshstrdat, 0)
+		return off
 	}
 
-	if !*FlagD { // -d suppresses dynamic loader format
-		// dynamic symbol table - first entry all zeros
+	shstrtabAddstring := func(s string) {
+		off := addshstr(s)
+		elfsetstring(ctxt, 0, s, int(off))
+	}
+
+	shstrtabAddstring("")
+	shstrtabAddstring(".text")
+	shstrtabAddstring(".noptrdata")
+	shstrtabAddstring(".data")
+	shstrtabAddstring(".bss")
+	shstrtabAddstring(".noptrbss")
+	shstrtabAddstring(".go.fuzzcntrs")
+	shstrtabAddstring(".go.buildinfo")
+	shstrtabAddstring(".go.fipsinfo")
+	if ctxt.IsMIPS() {
+		shstrtabAddstring(".MIPS.abiflags")
+		shstrtabAddstring(".gnu.attributes")
+	}
+
+	// generate .tbss section for dynamic internal linker or external
+	// linking, so that various binutils could correctly calculate
+	// PT_TLS size. See https://golang.org/issue/5200.
+	if !*FlagD || ctxt.IsExternal() {
+		shstrtabAddstring(".tbss")
+	}
+	if ctxt.IsNetbsd() {
+		shstrtabAddstring(".note.netbsd.ident")
+		if *flagRace {
+			shstrtabAddstring(".note.netbsd.pax")
+		}
+	}
+	if ctxt.IsOpenbsd() {
+		shstrtabAddstring(".note.openbsd.ident")
+	}
+	if ctxt.IsFreebsd() {
+		shstrtabAddstring(".note.tag")
+	}
+	if len(buildinfo) > 0 {
+		shstrtabAddstring(".note.gnu.build-id")
+	}
+	if *flagBuildid != "" {
+		shstrtabAddstring(".note.go.buildid")
+	}
+	shstrtabAddstring(".elfdata")
+	shstrtabAddstring(".rodata")
+	// See the comment about data.rel.ro.FOO section names in data.go.
+	relro_prefix := ""
+	if ctxt.UseRelro() {
+		shstrtabAddstring(".data.rel.ro")
+		relro_prefix = ".data.rel.ro"
+	}
+	shstrtabAddstring(relro_prefix + ".typelink")
+	shstrtabAddstring(relro_prefix + ".itablink")
+	shstrtabAddstring(relro_prefix + ".gosymtab")
+	shstrtabAddstring(relro_prefix + ".gopclntab")
+
+	if ctxt.IsExternal() {
+		*FlagD = true
+
+		shstrtabAddstring(elfRelType + ".text")
+		shstrtabAddstring(elfRelType + ".rodata")
+		shstrtabAddstring(elfRelType + relro_prefix + ".typelink")
+		shstrtabAddstring(elfRelType + relro_prefix + ".itablink")
+		shstrtabAddstring(elfRelType + relro_prefix + ".gosymtab")
+		shstrtabAddstring(elfRelType + relro_prefix + ".gopclntab")
+		shstrtabAddstring(elfRelType + ".noptrdata")
+		shstrtabAddstring(elfRelType + ".data")
+		if ctxt.UseRelro() {
+			shstrtabAddstring(elfRelType + ".data.rel.ro")
+		}
+		shstrtabAddstring(elfRelType + ".go.buildinfo")
+		shstrtabAddstring(elfRelType + ".go.fipsinfo")
+		if ctxt.IsMIPS() {
+			shstrtabAddstring(elfRelType + ".MIPS.abiflags")
+			shstrtabAddstring(elfRelType + ".gnu.attributes")
+		}
+
+		// add a .note.GNU-stack section to mark the stack as non-executable
+		shstrtabAddstring(".note.GNU-stack")
+
+		if ctxt.IsShared() {
+			shstrtabAddstring(".note.go.abihash")
+			shstrtabAddstring(".note.go.pkg-list")
+			shstrtabAddstring(".note.go.deps")
+		}
+	}
+
+	hasinitarr := ctxt.linkShared
+
+	/* shared library initializer */
+	switch ctxt.BuildMode {
+	case BuildModeCArchive, BuildModeCShared, BuildModeShared, BuildModePlugin:
+		hasinitarr = true
+	}
+
+	if hasinitarr {
+		shstrtabAddstring(".init_array")
+		shstrtabAddstring(elfRelType + ".init_array")
+	}
+
+	if !*FlagS {
+		shstrtabAddstring(".symtab")
+		shstrtabAddstring(".strtab")
+	}
+	if !*FlagW {
+		dwarfaddshstrings(ctxt, shstrtabAddstring)
+	}
+
+	shstrtabAddstring(".shstrtab")
+
+	if !*FlagD { /* -d suppresses dynamic loader format */
+		shstrtabAddstring(".interp")
+		shstrtabAddstring(".hash")
+		shstrtabAddstring(".got")
+		if ctxt.IsPPC64() {
+			shstrtabAddstring(".glink")
+		}
+		shstrtabAddstring(".got.plt")
+		shstrtabAddstring(".dynamic")
+		shstrtabAddstring(".dynsym")
+		shstrtabAddstring(".dynstr")
+		shstrtabAddstring(elfRelType)
+		shstrtabAddstring(elfRelType + ".plt")
+
+		shstrtabAddstring(".plt")
+		shstrtabAddstring(".gnu.version")
+		shstrtabAddstring(".gnu.version_r")
+
+		/* dynamic symbol table - first entry all zeros */
 		dynsym := ldr.CreateSymForUpdate(".dynsym", 0)
 
 		dynsym.SetType(sym.SELFROSECT)
@@ -1474,7 +1562,7 @@ func (ctxt *Link) doelf() {
 			dynsym.SetSize(dynsym.Size() + ELF32SYMSIZE)
 		}
 
-		// dynamic string table
+		/* dynamic string table */
 		dynstr := ldr.CreateSymForUpdate(".dynstr", 0)
 
 		dynstr.SetType(sym.SELFROSECT)
@@ -1482,11 +1570,11 @@ func (ctxt *Link) doelf() {
 			dynstr.Addstring("")
 		}
 
-		// relocation table
+		/* relocation table */
 		s := ldr.CreateSymForUpdate(elfRelType, 0)
 		s.SetType(sym.SELFROSECT)
 
-		// global offset table
+		/* global offset table */
 		got := ldr.CreateSymForUpdate(".got", 0)
 		if ctxt.UseRelro() {
 			got.SetType(sym.SELFRELROSECT)
@@ -1494,13 +1582,13 @@ func (ctxt *Link) doelf() {
 			got.SetType(sym.SELFGOT) // writable
 		}
 
-		// ppc64 glink resolver
+		/* ppc64 glink resolver */
 		if ctxt.IsPPC64() {
 			s := ldr.CreateSymForUpdate(".glink", 0)
 			s.SetType(sym.SELFRXSECT)
 		}
 
-		// hash
+		/* hash */
 		hash := ldr.CreateSymForUpdate(".hash", 0)
 		hash.SetType(sym.SELFROSECT)
 
@@ -1529,7 +1617,7 @@ func (ctxt *Link) doelf() {
 		s = ldr.CreateSymForUpdate(".gnu.version_r", 0)
 		s.SetType(sym.SELFROSECT)
 
-		// define dynamic elf table
+		/* define dynamic elf table */
 		dynamic := ldr.CreateSymForUpdate(".dynamic", 0)
 		switch {
 		case thearch.ELF.DynamicReadOnly:
@@ -1540,9 +1628,15 @@ func (ctxt *Link) doelf() {
 			dynamic.SetType(sym.SELFSECT)
 		}
 
+		if ctxt.IsS390X() {
+			// S390X uses .got instead of .got.plt
+			gotplt = got
+		}
 		thearch.ELF.SetupPLT(ctxt, ctxt.loader, plt, gotplt, dynamic.Sym())
 
-		// .dynamic table
+		/*
+		 * .dynamic table
+		 */
 		elfWriteDynEntSym(ctxt, dynamic, elf.DT_HASH, hash.Sym())
 
 		elfWriteDynEntSym(ctxt, dynamic, elf.DT_SYMTAB, dynsym.Sym())
@@ -1647,7 +1741,7 @@ func (ctxt *Link) doelf() {
 	}
 }
 
-// shsym fills in fields of sh where s contains the contents of the section.
+// Do not write DT_NULL.  elfdynhash will finish it.
 func shsym(sh *ElfShdr, ldr *loader.Loader, s loader.Sym) {
 	if s == 0 {
 		panic("bad symbol in shsym2")
@@ -1670,7 +1764,7 @@ func phsh(ph *ElfPhdr, sh *ElfShdr) {
 }
 
 func Asmbelfsetup() {
-	// This null SHdr must appear before all others.
+	/* This null SHdr must appear before all others */
 	elfshname("")
 
 	for _, sect := range Segtext.Sections {
@@ -1702,6 +1796,19 @@ func asmbElf(ctxt *Link) {
 	var symo int64
 	symo = int64(Segdwarf.Fileoff + Segdwarf.Filelen)
 	symo = Rnd(symo, int64(ctxt.Arch.PtrSize))
+	ctxt.Out.SeekSet(symo)
+	if *FlagS {
+		ctxt.Out.Write(elfshstrdat)
+	} else {
+		ctxt.Out.SeekSet(symo)
+		asmElfSym(ctxt)
+		ctxt.Out.Write(elfstrdat)
+		ctxt.Out.Write(elfshstrdat)
+		if ctxt.IsExternal() {
+			elfEmitReloc(ctxt)
+		}
+	}
+	ctxt.Out.SeekSet(0)
 
 	ldr := ctxt.loader
 	eh := getElfEhdr()
@@ -1765,7 +1872,7 @@ func asmbElf(ctxt *Link) {
 		phsh(getpnote(), sh)
 	}
 	if ctxt.LinkMode == LinkExternal {
-		// skip program headers
+		/* skip program headers */
 		eh.Phoff = 0
 
 		eh.Phentsize = 0
@@ -1789,7 +1896,7 @@ func asmbElf(ctxt *Link) {
 		goto elfobj
 	}
 
-	// program header info
+	/* program header info */
 	pph = newElfPhdr()
 
 	pph.Type = elf.PT_PHDR
@@ -1799,8 +1906,10 @@ func asmbElf(ctxt *Link) {
 	pph.Paddr = uint64(*FlagTextAddr) - uint64(HEADR) + pph.Off
 	pph.Align = uint64(*FlagRound)
 
-	// PHDR must be in a loaded segment. Adjust the text
-	// segment boundaries downwards to include it.
+	/*
+	 * PHDR must be in a loaded segment. Adjust the text
+	 * segment boundaries downwards to include it.
+	 */
 	{
 		o := int64(Segtext.Vaddr - pph.Vaddr)
 		Segtext.Vaddr -= uint64(o)
@@ -1810,8 +1919,8 @@ func asmbElf(ctxt *Link) {
 		Segtext.Filelen += uint64(o)
 	}
 
-	if !*FlagD { // -d suppresses dynamic loader format
-		// interpreter
+	if !*FlagD { /* -d suppresses dynamic loader format */
+		/* interpreter */
 		sh := elfshname(".interp")
 
 		sh.Type = uint32(elf.SHT_PROGBITS)
@@ -1915,7 +2024,7 @@ func asmbElf(ctxt *Link) {
 	}
 	elfphload(&Segdata)
 
-	// Dynamic linking sections
+	/* Dynamic linking sections */
 	if !*FlagD {
 		sh := elfshname(".dynsym")
 		sh.Type = uint32(elf.SHT_DYNSYM)
@@ -1926,9 +2035,9 @@ func asmbElf(ctxt *Link) {
 			sh.Entsize = ELF32SYMSIZE
 		}
 		sh.Addralign = uint64(ctxt.Arch.RegSize)
-		sh.link = elfshname(".dynstr")
+		sh.Link = uint32(elfshname(".dynstr").shnum)
 
-		// sh.Info is the index of first non-local symbol (number of local symbols)
+		// sh.info is the index of first non-local symbol (number of local symbols)
 		s := ldr.Lookup(".dynsym", 0)
 		i := uint32(0)
 		for sub := s; sub != 0; sub = ldr.SubSym(sub) {
@@ -1951,7 +2060,7 @@ func asmbElf(ctxt *Link) {
 			sh.Type = uint32(elf.SHT_GNU_VERSYM)
 			sh.Flags = uint64(elf.SHF_ALLOC)
 			sh.Addralign = 2
-			sh.link = elfshname(".dynsym")
+			sh.Link = uint32(elfshname(".dynsym").shnum)
 			sh.Entsize = 2
 			shsym(sh, ldr, ldr.Lookup(".gnu.version", 0))
 
@@ -1960,7 +2069,7 @@ func asmbElf(ctxt *Link) {
 			sh.Flags = uint64(elf.SHF_ALLOC)
 			sh.Addralign = uint64(ctxt.Arch.RegSize)
 			sh.Info = uint32(elfverneed)
-			sh.link = elfshname(".dynstr")
+			sh.Link = uint32(elfshname(".dynstr").shnum)
 			shsym(sh, ldr, ldr.Lookup(".gnu.version_r", 0))
 		}
 
@@ -1970,8 +2079,8 @@ func asmbElf(ctxt *Link) {
 			sh.Flags = uint64(elf.SHF_ALLOC)
 			sh.Entsize = ELF64RELASIZE
 			sh.Addralign = uint64(ctxt.Arch.RegSize)
-			sh.link = elfshname(".dynsym")
-			sh.info = elfshname(".plt")
+			sh.Link = uint32(elfshname(".dynsym").shnum)
+			sh.Info = uint32(elfshname(".plt").shnum)
 			shsym(sh, ldr, ldr.Lookup(".rela.plt", 0))
 
 			sh = elfshname(".rela")
@@ -1979,7 +2088,7 @@ func asmbElf(ctxt *Link) {
 			sh.Flags = uint64(elf.SHF_ALLOC)
 			sh.Entsize = ELF64RELASIZE
 			sh.Addralign = 8
-			sh.link = elfshname(".dynsym")
+			sh.Link = uint32(elfshname(".dynsym").shnum)
 			shsym(sh, ldr, ldr.Lookup(".rela", 0))
 		} else {
 			sh := elfshname(".rel.plt")
@@ -1987,7 +2096,7 @@ func asmbElf(ctxt *Link) {
 			sh.Flags = uint64(elf.SHF_ALLOC)
 			sh.Entsize = ELF32RELSIZE
 			sh.Addralign = 4
-			sh.link = elfshname(".dynsym")
+			sh.Link = uint32(elfshname(".dynsym").shnum)
 			shsym(sh, ldr, ldr.Lookup(".rel.plt", 0))
 
 			sh = elfshname(".rel")
@@ -1995,7 +2104,7 @@ func asmbElf(ctxt *Link) {
 			sh.Flags = uint64(elf.SHF_ALLOC)
 			sh.Entsize = ELF32RELSIZE
 			sh.Addralign = 4
-			sh.link = elfshname(".dynsym")
+			sh.Link = uint32(elfshname(".dynsym").shnum)
 			shsym(sh, ldr, ldr.Lookup(".rel", 0))
 		}
 
@@ -2050,24 +2159,26 @@ func asmbElf(ctxt *Link) {
 		sh.Flags = uint64(elf.SHF_ALLOC)
 		sh.Entsize = 4
 		sh.Addralign = uint64(ctxt.Arch.RegSize)
-		sh.link = elfshname(".dynsym")
+		sh.Link = uint32(elfshname(".dynsym").shnum)
 		shsym(sh, ldr, ldr.Lookup(".hash", 0))
 
-		// sh and elf.PT_DYNAMIC for .dynamic section
+		/* sh and elf.PT_DYNAMIC for .dynamic section */
 		sh = elfshname(".dynamic")
 
 		sh.Type = uint32(elf.SHT_DYNAMIC)
 		sh.Flags = uint64(elf.SHF_ALLOC + elf.SHF_WRITE)
 		sh.Entsize = 2 * uint64(ctxt.Arch.RegSize)
 		sh.Addralign = uint64(ctxt.Arch.RegSize)
-		sh.link = elfshname(".dynstr")
+		sh.Link = uint32(elfshname(".dynstr").shnum)
 		shsym(sh, ldr, ldr.Lookup(".dynamic", 0))
 		ph := newElfPhdr()
 		ph.Type = elf.PT_DYNAMIC
 		ph.Flags = elf.PF_R + elf.PF_W
 		phsh(ph, sh)
 
-		// Thread-local storage segment (really just size).
+		/*
+		 * Thread-local storage segment (really just size).
+		 */
 		tlssize := uint64(0)
 		for _, sect := range Segdata.Sections {
 			if sect.Name == ".tbss" {
@@ -2099,8 +2210,11 @@ func asmbElf(ctxt *Link) {
 	}
 
 elfobj:
+	sh := elfshname(".shstrtab")
+	eh.Shstrndx = uint16(sh.shnum)
+
 	if ctxt.IsMIPS() {
-		sh := elfshname(".MIPS.abiflags")
+		sh = elfshname(".MIPS.abiflags")
 		sh.Type = uint32(elf.SHT_MIPS_ABIFLAGS)
 		sh.Flags = uint64(elf.SHF_ALLOC)
 		sh.Addralign = 8
@@ -2166,25 +2280,6 @@ elfobj:
 		sh.Flags = 0
 	}
 
-	elfSortShdrs(ctxt)
-
-	sh := elfshname(".shstrtab")
-	eh.Shstrndx = uint16(elfShdrShnum(sh))
-
-	var shstrtabLen uint32
-	ctxt.Out.SeekSet(symo)
-	if *FlagS {
-		shstrtabLen = elfWriteShstrtab(ctxt)
-	} else {
-		asmElfSym(ctxt)
-		ctxt.Out.Write(elfstrdat)
-		shstrtabLen = elfWriteShstrtab(ctxt)
-		if ctxt.IsExternal() {
-			elfEmitReloc(ctxt)
-		}
-	}
-	ctxt.Out.SeekSet(0)
-
 	var shstroff uint64
 	if !*FlagS {
 		sh := elfshname(".symtab")
@@ -2193,7 +2288,7 @@ elfobj:
 		sh.Size = uint64(symSize)
 		sh.Addralign = uint64(ctxt.Arch.RegSize)
 		sh.Entsize = 8 + 2*uint64(ctxt.Arch.RegSize)
-		sh.link = elfshname(".strtab")
+		sh.Link = uint32(elfshname(".strtab").shnum)
 		sh.Info = uint32(elfglobalsymndx)
 
 		sh = elfshname(".strtab")
@@ -2209,10 +2304,10 @@ elfobj:
 	sh = elfshname(".shstrtab")
 	sh.Type = uint32(elf.SHT_STRTAB)
 	sh.Off = shstroff
-	sh.Size = uint64(shstrtabLen)
+	sh.Size = uint64(len(elfshstrdat))
 	sh.Addralign = 1
 
-	// Main header
+	/* Main header */
 	copy(eh.Ident[:], elf.ELFMAG)
 
 	var osabi elf.OSABI
@@ -2258,11 +2353,6 @@ elfobj:
 		pph.Filesz = uint64(eh.Phnum) * uint64(eh.Phentsize)
 		pph.Memsz = pph.Filesz
 	}
-
-	if len(shdr) >= 0xffff {
-		Errorf("too many ELF sections")
-	}
-	eh.Shnum = uint16(len(shdr))
 
 	ctxt.Out.SeekSet(0)
 	a := int64(0)
@@ -2322,7 +2412,8 @@ func elfadddynsym(ldr *loader.Loader, target *Target, syms *ArchSyms, s loader.S
 	d.AddUint32(target.Arch, uint32(dstru.Addstring(name)))
 
 	if elf64 {
-		// type
+
+		/* type */
 		var t uint8
 
 		if cgoexp && st.IsText() {
@@ -2332,24 +2423,24 @@ func elfadddynsym(ldr *loader.Loader, target *Target, syms *ArchSyms, s loader.S
 		}
 		d.AddUint8(t)
 
-		// reserved
+		/* reserved */
 		d.AddUint8(0)
 
-		// section where symbol is defined
+		/* section where symbol is defined */
 		if st == sym.SDYNIMPORT {
 			d.AddUint16(target.Arch, uint16(elf.SHN_UNDEF))
 		} else {
 			d.AddUint16(target.Arch, 1)
 		}
 
-		// value
+		/* value */
 		if st == sym.SDYNIMPORT {
 			d.AddUint64(target.Arch, 0)
 		} else {
 			d.AddAddrPlus(target.Arch, s, 0)
 		}
 
-		// size of object
+		/* size of object */
 		d.AddUint64(target.Arch, uint64(len(ldr.Data(s))))
 
 		dil := ldr.SymDynimplib(s)
@@ -2361,17 +2452,17 @@ func elfadddynsym(ldr *loader.Loader, target *Target, syms *ArchSyms, s loader.S
 		}
 	} else {
 
-		// value
+		/* value */
 		if st == sym.SDYNIMPORT {
 			d.AddUint32(target.Arch, 0)
 		} else {
 			d.AddAddrPlus(target.Arch, s, 0)
 		}
 
-		// size of object
+		/* size of object */
 		d.AddUint32(target.Arch, uint32(len(ldr.Data(s))))
 
-		// type
+		/* type */
 		var t uint8
 
 		// TODO(mwhudson): presumably the behavior should actually be the same on both arm and 386.
@@ -2385,7 +2476,7 @@ func elfadddynsym(ldr *loader.Loader, target *Target, syms *ArchSyms, s loader.S
 		d.AddUint8(t)
 		d.AddUint8(0)
 
-		// shndx
+		/* shndx */
 		if st == sym.SDYNIMPORT {
 			d.AddUint16(target.Arch, uint16(elf.SHN_UNDEF))
 		} else {

@@ -5,30 +5,28 @@
 package signal
 
 import (
-	"bufio"
-	"fmt"
 	"internal/testenv"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
-func sendCtrlBreak(pid int) error {
+func sendCtrlBreak(t *testing.T, pid int) {
 	d, e := syscall.LoadDLL("kernel32.dll")
 	if e != nil {
-		return fmt.Errorf("LoadDLL: %v\n", e)
+		t.Fatalf("LoadDLL: %v\n", e)
 	}
 	p, e := d.FindProc("GenerateConsoleCtrlEvent")
 	if e != nil {
-		return fmt.Errorf("FindProc: %v\n", e)
+		t.Fatalf("FindProc: %v\n", e)
 	}
 	r, _, e := p.Call(syscall.CTRL_BREAK_EVENT, uintptr(pid))
 	if r == 0 {
-		return fmt.Errorf("GenerateConsoleCtrlEvent: %v\n", e)
+		t.Fatalf("GenerateConsoleCtrlEvent: %v\n", e)
 	}
-	return nil
 }
 
 func TestCtrlBreak(t *testing.T) {
@@ -37,7 +35,6 @@ func TestCtrlBreak(t *testing.T) {
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -48,7 +45,6 @@ import (
 func main() {
 	c := make(chan os.Signal, 10)
 	signal.Notify(c)
-	fmt.Println("ready")
 	select {
 	case s := <-c:
 		if s != os.Interrupt {
@@ -62,7 +58,7 @@ func main() {
 	tmp := t.TempDir()
 
 	// write ctrlbreak.go
-	name := filepath.Join(tmp, "ctrlbreak")
+	name := filepath.Join(tmp, "ctlbreak")
 	src := name + ".go"
 	f, err := os.Create(src)
 	if err != nil {
@@ -82,11 +78,8 @@ func main() {
 	// run it
 	cmd := testenv.Command(t, exe)
 	var buf strings.Builder
+	cmd.Stdout = &buf
 	cmd.Stderr = &buf
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatalf("StdoutPipe failed: %v", err)
-	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
 	}
@@ -94,22 +87,10 @@ func main() {
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-
-	outReader := bufio.NewReader(stdout)
-	errCh := make(chan error, 1)
 	go func() {
-		if line, err := outReader.ReadString('\n'); err != nil {
-			errCh <- fmt.Errorf("could not read stdout: %v", err)
-		} else if strings.TrimSpace(line) != "ready" {
-			errCh <- fmt.Errorf("unexpected message: %v", line)
-		} else {
-			errCh <- sendCtrlBreak(cmd.Process.Pid)
-		}
+		time.Sleep(1 * time.Second)
+		sendCtrlBreak(t, cmd.Process.Pid)
 	}()
-
-	if err := <-errCh; err != nil {
-		t.Fatal(err)
-	}
 	err = cmd.Wait()
 	if err != nil {
 		t.Fatalf("Program exited with error: %v\n%v", err, buf.String())

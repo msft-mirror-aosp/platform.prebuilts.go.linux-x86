@@ -27,7 +27,7 @@ import (
 //
 //go:linkname unusedIfaceIndir reflect.ifaceIndir
 func unusedIfaceIndir(t *abi.Type) bool {
-	return !t.IsDirectIface()
+	return t.Kind_&abi.KindDirectIface == 0
 }
 
 //go:linkname valueInterface

@@ -44,12 +44,11 @@ func init() {
 }
 
 func runInit(ctx context.Context, cmd *base.Command, args []string) {
-	moduleLoader := modload.NewLoader()
-	moduleLoader.InitWorkfile()
+	modload.InitWorkfile()
 
-	moduleLoader.ForceUseModules = true
+	modload.ForceUseModules = true
 
-	gowork := modload.WorkFilePath(moduleLoader)
+	gowork := modload.WorkFilePath()
 	if gowork == "" {
 		gowork = filepath.Join(base.Cwd(), "go.work")
 	}
@@ -62,6 +61,6 @@ func runInit(ctx context.Context, cmd *base.Command, args []string) {
 	wf := new(modfile.WorkFile)
 	wf.Syntax = new(modfile.FileSyntax)
 	wf.AddGoStmt(goV)
-	workUse(ctx, moduleLoader, gowork, wf, args)
+	workUse(ctx, gowork, wf, args)
 	modload.WriteWorkFile(gowork, wf)
 }

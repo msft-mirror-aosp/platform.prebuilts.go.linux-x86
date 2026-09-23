@@ -41,6 +41,7 @@ func LoadPackage(filenames []string) {
 	// Move the entire syntax processing logic into a separate goroutine to avoid blocking on the "sem".
 	go func() {
 		for i, filename := range filenames {
+			filename := filename
 			p := noders[i]
 			sem <- struct{}{}
 			go func() {
@@ -103,10 +104,9 @@ type noder struct {
 	err        chan syntax.Error
 }
 
-// linkname records a //go:linkname or //go:linknamestd directive.
+// linkname records a //go:linkname directive.
 type linkname struct {
 	pos    syntax.Pos
-	std    bool
 	local  string
 	remote string
 }
@@ -173,10 +173,6 @@ type pragmas struct {
 	Embeds     []pragmaEmbed
 	WasmImport *WasmImport
 	WasmExport *WasmExport
-}
-
-func (p *pragmas) Nointerface() bool {
-	return p.Flag&ir.Nointerface != 0
 }
 
 // WasmImport stores metadata associated with the //go:wasmimport pragma
@@ -278,10 +274,10 @@ func (p *noder) pragma(pos syntax.Pos, blankLine bool, text string, old syntax.P
 			}
 		}
 
-	case strings.HasPrefix(text, "go:linkname "), strings.HasPrefix(text, "go:linknamestd "):
+	case strings.HasPrefix(text, "go:linkname "):
 		f := strings.Fields(text)
 		if !(2 <= len(f) && len(f) <= 3) {
-			p.error(syntax.Error{Pos: pos, Msg: fmt.Sprintf("usage: //%s localname [linkname]", f[0])})
+			p.error(syntax.Error{Pos: pos, Msg: "usage: //go:linkname localname [linkname]"})
 			break
 		}
 		// The second argument is optional. If omitted, we use
@@ -299,7 +295,7 @@ func (p *noder) pragma(pos syntax.Pos, blankLine bool, text string, old syntax.P
 		} else {
 			panic("missing pkgpath")
 		}
-		p.linknames = append(p.linknames, linkname{pos, f[0] == "go:linknamestd", f[1], target})
+		p.linknames = append(p.linknames, linkname{pos, f[1], target})
 
 	case text == "go:embed", strings.HasPrefix(text, "go:embed "):
 		args, err := parseGoEmbed(text[len("go:embed"):])

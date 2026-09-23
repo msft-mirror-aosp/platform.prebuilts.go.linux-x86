@@ -33,7 +33,7 @@ var (
 func massageSVG(svg string) string {
 	// Work around for dot bug which misses quoting some ampersands,
 	// resulting on unparsable SVG.
-	svg = strings.ReplaceAll(svg, "&;", "&amp;;")
+	svg = strings.Replace(svg, "&;", "&amp;;", -1)
 
 	// Dot's SVG output is
 	//

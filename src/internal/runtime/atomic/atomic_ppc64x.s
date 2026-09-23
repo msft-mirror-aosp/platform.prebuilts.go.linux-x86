@@ -220,7 +220,6 @@ TEXT ·Xadd(SB), NOSPLIT, $0-20
 	ADD	R5, R3
 	STWCCC	R3, (R4)
 	BNE	-3(PC)
-	LWSYNC
 	MOVW	R3, ret+16(FP)
 	RET
 
@@ -236,7 +235,6 @@ TEXT ·Xadd64(SB), NOSPLIT, $0-24
 	ADD	R5, R3
 	STDCCC	R3, (R4)
 	BNE	-3(PC)
-	LWSYNC
 	MOVD	R3, ret+16(FP)
 	RET
 
@@ -345,7 +343,6 @@ again:
 	OR	R4, R6
 	STBCCC	R6, (R3)
 	BNE	again
-	LWSYNC
 	RET
 
 // void ·And8(byte volatile*, byte);
@@ -358,7 +355,6 @@ again:
 	AND	R4, R6
 	STBCCC	R6, (R3)
 	BNE	again
-	LWSYNC
 	RET
 
 // func Or(addr *uint32, v uint32)
@@ -371,7 +367,6 @@ again:
 	OR	R4, R6
 	STWCCC	R6, (R3)
 	BNE	again
-	LWSYNC
 	RET
 
 // func And(addr *uint32, v uint32)
@@ -384,7 +379,6 @@ again:
 	AND	R4, R6
 	STWCCC	R6, (R3)
 	BNE	again
-	LWSYNC
 	RET
 
 // func Or32(addr *uint32, v uint32) old uint32
@@ -397,7 +391,6 @@ again:
 	OR	R4, R6, R7
 	STWCCC	R7, (R3)
 	BNE	again
-	LWSYNC
 	MOVW	R6, ret+16(FP)
 	RET
 
@@ -411,7 +404,6 @@ again:
 	AND	R4, R6, R7
 	STWCCC	R7, (R3)
 	BNE	again
-	LWSYNC
 	MOVW	R6, ret+16(FP)
 	RET
 
@@ -425,7 +417,6 @@ again:
 	OR	R4, R6, R7
 	STDCCC	R7, (R3)
 	BNE	again
-	LWSYNC
 	MOVD	R6, ret+16(FP)
 	RET
 
@@ -439,7 +430,6 @@ again:
 	AND	R4, R6, R7
 	STDCCC	R7, (R3)
 	BNE	again
-	LWSYNC
 	MOVD	R6, ret+16(FP)
 	RET
 

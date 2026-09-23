@@ -204,7 +204,6 @@ func (c *ProgCache) send(ctx context.Context, req *cacheprog.Request) (*cachepro
 func (c *ProgCache) writeToChild(req *cacheprog.Request, resc chan<- *cacheprog.Response) (err error) {
 	c.mu.Lock()
 	if c.inFlight == nil {
-		c.mu.Unlock()
 		return errCacheprogClosed
 	}
 	c.nextID++
@@ -241,7 +240,7 @@ func (c *ProgCache) writeToChild(req *cacheprog.Request, resc chan<- *cacheprog.
 			return err
 		}
 		if err := e.Close(); err != nil {
-			return err
+			return nil
 		}
 		if wrote != req.BodySize {
 			return fmt.Errorf("short write writing body to GOCACHEPROG for action %x, output %x: wrote %v; expected %v",

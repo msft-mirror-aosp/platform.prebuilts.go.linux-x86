@@ -17,7 +17,6 @@ package driver
 
 import (
 	"io"
-	"maps"
 	"net/http"
 	"regexp"
 	"time"
@@ -294,6 +293,8 @@ type internalSymbolizer struct {
 
 func (s *internalSymbolizer) Symbolize(mode string, srcs plugin.MappingSources, prof *profile.Profile) error {
 	isrcs := MappingSources{}
-	maps.Copy(isrcs, srcs)
+	for m, s := range srcs {
+		isrcs[m] = s
+	}
 	return s.Symbolizer.Symbolize(mode, isrcs, prof)
 }

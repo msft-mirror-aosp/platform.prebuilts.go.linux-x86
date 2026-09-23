@@ -26,6 +26,7 @@ func TestReproducibleBuilds(t *testing.T) {
 	}
 	t.Parallel()
 	for _, test := range tests {
+		test := test
 		t.Run(test, func(t *testing.T) {
 			t.Parallel()
 			var want []byte

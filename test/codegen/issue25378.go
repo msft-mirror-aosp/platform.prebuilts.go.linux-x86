@@ -14,9 +14,9 @@ var wsp = [256]bool{
 }
 
 func zeroExtArgByte(ch [2]byte) bool {
-	return wsp[ch[0]] // amd64:-"MOVBLZX ..,.."
+	return wsp[ch[0]] // amd64:-"MOVBLZX\t..,.."
 }
 
 func zeroExtArgUint16(ch [2]uint16) bool {
-	return wsp[ch[0]] // amd64:-"MOVWLZX ..,.."
+	return wsp[ch[0]] // amd64:-"MOVWLZX\t..,.."
 }

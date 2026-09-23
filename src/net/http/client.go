@@ -25,8 +25,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"golang.org/x/net/http/httpguts"
 )
 
 // A Client is an HTTP client. Its zero value ([DefaultClient]) is a
@@ -174,13 +172,8 @@ func refererForURL(lastReq, newReq *url.URL, explicitRef string) string {
 
 // didTimeout is non-nil only if err != nil.
 func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
-	cookieURL := req.URL
-	if req.Host != "" {
-		cookieURL = cloneURL(cookieURL)
-		cookieURL.Host = req.Host
-	}
 	if c.Jar != nil {
-		for _, cookie := range c.Jar.Cookies(cookieURL) {
+		for _, cookie := range c.Jar.Cookies(req.URL) {
 			req.AddCookie(cookie)
 		}
 	}
@@ -190,7 +183,7 @@ func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTime
 	}
 	if c.Jar != nil {
 		if rc := resp.Cookies(); len(rc) > 0 {
-			c.Jar.SetCookies(cookieURL, rc)
+			c.Jar.SetCookies(req.URL, rc)
 		}
 	}
 	return resp, nil, nil
@@ -331,7 +324,7 @@ func knownRoundTripperImpl(rt RoundTripper, req *Request) bool {
 			return knownRoundTripperImpl(altRT, req)
 		}
 		return true
-	case http2RoundTripper:
+	case *http2Transport, http2noDialH2RoundTripper:
 		return true
 	}
 	// There's a very minor chance of a false positive with this.
@@ -567,9 +560,6 @@ func urlErrorOp(method string) string {
 // read to EOF and closed, the [Client]'s underlying [RoundTripper]
 // (typically [Transport]) may not be able to re-use a persistent TCP
 // connection to the server for a subsequent "keep-alive" request.
-// Note, however, that [Transport] will automatically try to read a
-// [Response] Body to EOF asynchronously up to a conservative limit
-// when a Body is closed.
 //
 // The request Body, if non-nil, will be closed by the underlying
 // Transport, even on errors. The Body may be closed asynchronously after
@@ -590,13 +580,6 @@ func urlErrorOp(method string) string {
 // provided that the [Request.GetBody] function is defined.
 // The [NewRequest] function automatically sets GetBody for common
 // standard library body types.
-//
-// Note that the [Client] redirect behavior does not follow the WHATWG
-// Fetch standard. This is because it was written before established
-// standards existed. As such, by modern standards, [Client] has a
-// rather permissive behavior. For example, sensitive headers are
-// retained on redirect to a subdomain or to a different scheme on the
-// same host.
 //
 // Any returned error will be of type [*url.Error]. The url.Error
 // value's Timeout method will report true if the request timed out.
@@ -702,7 +685,8 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 					stripSensitiveHeaders = true
 				}
 			}
-			copyHeaders(req, stripSensitiveHeaders, !includeBody)
+			copyHeaders(req, stripSensitiveHeaders)
+
 			// Add the Referer header from the most recent
 			// request URL to the new one, if it's not https->http:
 			if ref := refererForURL(reqs[len(reqs)-1].URL, req.URL, req.Header.Get("Referer")); ref != "" {
@@ -769,7 +753,7 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 // makeHeadersCopier makes a function that copies headers from the
 // initial Request, ireq. For every redirect, this function must be called
 // so that it can copy headers into the upcoming Request.
-func (c *Client) makeHeadersCopier(ireq *Request) func(req *Request, stripSensitiveHeaders, stripBodyHeaders bool) {
+func (c *Client) makeHeadersCopier(ireq *Request) func(req *Request, stripSensitiveHeaders bool) {
 	// The headers to copy are from the very initial request.
 	// We use a closured callback to keep a reference to these original headers.
 	var (
@@ -783,7 +767,7 @@ func (c *Client) makeHeadersCopier(ireq *Request) func(req *Request, stripSensit
 		}
 	}
 
-	return func(req *Request, stripSensitiveHeaders, stripBodyHeaders bool) {
+	return func(req *Request, stripSensitiveHeaders bool) {
 		// If Jar is present and there was some initial cookies provided
 		// via the request header, then we may need to alter the initial
 		// cookies as we follow redirects since each redirect may end up
@@ -821,21 +805,12 @@ func (c *Client) makeHeadersCopier(ireq *Request) func(req *Request, stripSensit
 		// (at least the safe ones).
 		for k, vv := range ireqhdr {
 			sensitive := false
-			body := false
 			switch CanonicalHeaderKey(k) {
 			case "Authorization", "Www-Authenticate", "Cookie", "Cookie2",
 				"Proxy-Authorization", "Proxy-Authenticate":
 				sensitive = true
-
-			case "Content-Encoding", "Content-Language", "Content-Location",
-				"Content-Type":
-				// Headers relating to the body which is removed for
-				// POST to GET redirects
-				// https://fetch.spec.whatwg.org/#http-redirect-fetch
-				body = true
-
 			}
-			if !(sensitive && stripSensitiveHeaders) && !(body && stripBodyHeaders) {
+			if !(sensitive && stripSensitiveHeaders) {
 				req.Header[k] = vv
 			}
 		}
@@ -1028,14 +1003,9 @@ func shouldCopyHeaderOnRedirect(initial, dest *url.URL) bool {
 	// directly, we don't know their scope, so we assume
 	// it's for *.domain.com.
 
-	ihost, err1 := httpguts.PunycodeHostPort(initial.Hostname())
-	dhost, err2 := httpguts.PunycodeHostPort(dest.Hostname())
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	ihost, ok1 := ascii.ToLower(ihost)
-	dhost, ok2 := ascii.ToLower(dhost)
-	return ok1 && ok2 && isDomainOrSubdomain(dhost, ihost)
+	ihost := idnaASCIIFromURL(initial)
+	dhost := idnaASCIIFromURL(dest)
+	return isDomainOrSubdomain(dhost, ihost)
 }
 
 // isDomainOrSubdomain reports whether sub is a subdomain (or exact

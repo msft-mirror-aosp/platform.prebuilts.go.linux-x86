@@ -406,9 +406,9 @@ func parsePlusBuildExpr(text string) (Expr, error) {
 	size := 0
 
 	var x Expr
-	for clause := range strings.FieldsSeq(text) {
+	for _, clause := range strings.Fields(text) {
 		var y Expr
-		for lit := range strings.SplitSeq(clause, ",") {
+		for _, lit := range strings.Split(clause, ",") {
 			var z Expr
 			var neg bool
 			if strings.HasPrefix(lit, "!!") || lit == "!" {
@@ -515,18 +515,18 @@ func PlusBuildLines(x Expr) ([]string, error) {
 	// Prepare the +build lines.
 	var lines []string
 	for _, or := range split {
-		var line strings.Builder
-		line.WriteString("// +build")
+		line := "// +build"
 		for _, and := range or {
-			line.WriteString(" ")
+			clause := ""
 			for i, lit := range and {
 				if i > 0 {
-					line.WriteString(",")
+					clause += ","
 				}
-				line.WriteString(lit.String())
+				clause += lit.String()
 			}
+			line += " " + clause
 		}
-		lines = append(lines, line.String())
+		lines = append(lines, line)
 	}
 
 	return lines, nil

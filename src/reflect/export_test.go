@@ -72,21 +72,15 @@ func FuncLayout(t Type, rcvr Type) (frametype Type, argSize, retOffset uintptr, 
 }
 
 func TypeLinks() []string {
-	first, rest := compiledTypelinks()
-
 	var r []string
-
-	addTypes := func(types []*abi.Type) {
-		for _, typ := range types {
-			r = append(r, stringFor(typ))
+	sections, offset := typelinks()
+	for i, offs := range offset {
+		rodata := sections[i]
+		for _, off := range offs {
+			typ := (*rtype)(resolveTypeOff(rodata, off))
+			r = append(r, typ.String())
 		}
 	}
-
-	addTypes(first)
-	for _, rt := range rest {
-		addTypes(rt)
-	}
-
 	return r
 }
 
@@ -158,7 +152,3 @@ var MethodValueCallCodePtr = methodValueCallCodePtr
 var InternalIsZero = isZero
 
 var IsRegularMemory = isRegularMemory
-
-func MapGroupOf(x, y Type) Type {
-	return groupOf(x, y)
-}

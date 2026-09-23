@@ -189,7 +189,8 @@ func (c *conn) writePairs(recType recType, reqId uint16, pairs map[string]string
 			return err
 		}
 	}
-	return w.Close()
+	w.Close()
+	return nil
 }
 
 func readSize(s []byte) (uint32, int) {

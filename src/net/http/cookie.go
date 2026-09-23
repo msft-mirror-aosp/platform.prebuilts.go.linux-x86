@@ -89,14 +89,15 @@ func cookieNumWithinMax(cookieNum int) bool {
 // which were set in it. Since the same cookie name can appear multiple times
 // the returned Values can contain more than one value for a given key.
 func ParseCookie(line string) ([]*Cookie, error) {
-	nparts := strings.Count(line, ";") + 1
-	if !cookieNumWithinMax(nparts) {
+	if !cookieNumWithinMax(strings.Count(line, ";") + 1) {
 		return nil, errCookieNumLimitExceeded
-	} else if nparts == 1 && textproto.TrimString(line) == "" {
+	}
+	parts := strings.Split(textproto.TrimString(line), ";")
+	if len(parts) == 1 && parts[0] == "" {
 		return nil, errBlankCookie
 	}
-	cookies := make([]*Cookie, 0, nparts)
-	for s := range strings.SplitSeq(line, ";") {
+	cookies := make([]*Cookie, 0, len(parts))
+	for _, s := range parts {
 		s = textproto.TrimString(s)
 		name, value, found := strings.Cut(s, "=")
 		if !found {
@@ -442,8 +443,7 @@ func isCookieDomainName(s string) bool {
 	}
 
 	if s[0] == '.' {
-		// A cookie domain attribute may start with a leading dot.
-		// Per RFC 6265 section 5.2.3, a leading dot is ignored.
+		// A cookie a domain attribute may start with a leading dot.
 		s = s[1:]
 	}
 	last := byte('.')
@@ -508,6 +508,9 @@ func sanitizeCookieName(n string) string {
 // See https://golang.org/issue/7243 for the discussion.
 func sanitizeCookieValue(v string, quoted bool) string {
 	v = sanitizeOrWarn("Cookie.Value", validCookieValueByte, v)
+	if len(v) == 0 {
+		return v
+	}
 	if strings.ContainsAny(v, " ,") || quoted {
 		return `"` + v + `"`
 	}

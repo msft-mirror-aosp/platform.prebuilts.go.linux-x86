@@ -10,7 +10,6 @@ import (
 	"go/token"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 )
 
@@ -76,7 +75,7 @@ func lineno(pos token.Pos) string {
 }
 
 // Die with an error message.
-func fatalf(msg string, args ...any) {
+func fatalf(msg string, args ...interface{}) {
 	// If we've already printed other errors, they might have
 	// caused the fatal condition. Assume they're enough.
 	if nerrors == 0 {
@@ -87,7 +86,7 @@ func fatalf(msg string, args ...any) {
 
 var nerrors int
 
-func error_(pos token.Pos, msg string, args ...any) {
+func error_(pos token.Pos, msg string, args ...interface{}) {
 	nerrors++
 	if pos.IsValid() {
 		fmt.Fprintf(os.Stderr, "%s: ", fset.Position(pos).String())
@@ -98,17 +97,10 @@ func error_(pos token.Pos, msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, "\n")
 }
 
-// create creates a file in the output directory.
 func creat(name string) *os.File {
-	f, err := os.Create(filepath.Join(outputDir(), name))
+	f, err := os.Create(name)
 	if err != nil {
 		fatalf("%s", err)
 	}
 	return f
-}
-
-// outputDir returns the output directory, making sure that it exists.
-func outputDir() string {
-	os.MkdirAll(*objDir, 0o700)
-	return *objDir
 }

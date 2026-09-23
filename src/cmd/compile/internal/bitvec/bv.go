@@ -8,6 +8,7 @@ import (
 	"math/bits"
 
 	"cmd/compile/internal/base"
+	"cmd/internal/src"
 )
 
 const (
@@ -33,9 +34,12 @@ type Bulk struct {
 	nword int32
 }
 
-func NewBulk(nbit int32, count int32) Bulk {
+func NewBulk(nbit int32, count int32, pos src.XPos) Bulk {
 	nword := (nbit + wordBits - 1) / wordBits
 	size := int64(nword) * int64(count)
+	if int64(int32(size*4)) != size*4 {
+		base.FatalfAt(pos, "NewBulk too big: nbit=%d count=%d nword=%d size=%d", nbit, count, nword, size)
+	}
 	return Bulk{
 		words: make([]uint32, size),
 		nbit:  nbit,
@@ -89,7 +93,7 @@ func (bv BitVec) Unset(i int32) {
 	bv.B[i/wordBits] &^= mask
 }
 
-// Next returns the smallest index >= i for which bvget(bv, i) == 1.
+// bvnext returns the smallest index >= i for which bvget(bv, i) == 1.
 // If there is no such index, bvnext returns -1.
 func (bv BitVec) Next(i int32) int32 {
 	if i >= bv.N {

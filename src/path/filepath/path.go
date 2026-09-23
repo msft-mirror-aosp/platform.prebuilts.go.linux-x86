@@ -173,20 +173,19 @@ func unixAbs(path string) (string, error) {
 	return Join(wd, path), nil
 }
 
-// Rel returns a relative path that is lexically equivalent to targPath when
-// joined to basePath with an intervening separator. That is,
-// [Join](basePath, Rel(basePath, targPath)) is equivalent to targPath itself.
-//
-// The returned path will always be relative to basePath, even if basePath and
-// targPath share no elements. Rel calls [Clean] on the result.
-//
-// An error is returned if targPath can't be made relative to basePath
-// or if knowing the current working directory would be necessary to compute it.
-func Rel(basePath, targPath string) (string, error) {
-	baseVol := VolumeName(basePath)
-	targVol := VolumeName(targPath)
-	base := Clean(basePath)
-	targ := Clean(targPath)
+// Rel returns a relative path that is lexically equivalent to targpath when
+// joined to basepath with an intervening separator. That is,
+// [Join](basepath, Rel(basepath, targpath)) is equivalent to targpath itself.
+// On success, the returned path will always be relative to basepath,
+// even if basepath and targpath share no elements.
+// An error is returned if targpath can't be made relative to basepath or if
+// knowing the current working directory would be necessary to compute it.
+// Rel calls [Clean] on the result.
+func Rel(basepath, targpath string) (string, error) {
+	baseVol := VolumeName(basepath)
+	targVol := VolumeName(targpath)
+	base := Clean(basepath)
+	targ := Clean(targpath)
 	if sameWord(targ, base) {
 		return ".", nil
 	}
@@ -195,7 +194,7 @@ func Rel(basePath, targPath string) (string, error) {
 	if base == "." {
 		base = ""
 	} else if base == "" && filepathlite.VolumeNameLen(baseVol) > 2 /* isUNC */ {
-		// Treat any targetpath matching `\\host\share` basePath as absolute path.
+		// Treat any targetpath matching `\\host\share` basepath as absolute path.
 		base = string(Separator)
 	}
 
@@ -203,7 +202,7 @@ func Rel(basePath, targPath string) (string, error) {
 	baseSlashed := len(base) > 0 && base[0] == Separator
 	targSlashed := len(targ) > 0 && targ[0] == Separator
 	if baseSlashed != targSlashed || !sameWord(baseVol, targVol) {
-		return "", errors.New("Rel: can't make " + targPath + " relative to " + basePath)
+		return "", errors.New("Rel: can't make " + targpath + " relative to " + basepath)
 	}
 	// Position base[b0:bi] and targ[t0:ti] at the first differing elements.
 	bl := len(base)
@@ -229,7 +228,7 @@ func Rel(basePath, targPath string) (string, error) {
 		t0 = ti
 	}
 	if base[b0:bi] == ".." {
-		return "", errors.New("Rel: can't make " + targPath + " relative to " + basePath)
+		return "", errors.New("Rel: can't make " + targpath + " relative to " + basepath)
 	}
 	if b0 != bl {
 		// Base elements left. Must go up before going down.
@@ -249,7 +248,7 @@ func Rel(basePath, targPath string) (string, error) {
 			buf[n] = Separator
 			copy(buf[n+1:], targ[t0:])
 		}
-		return Clean(string(buf)), nil
+		return string(buf), nil
 	}
 	return targ[t0:], nil
 }
@@ -463,10 +462,6 @@ func Base(path string) string {
 // If the path is empty, Dir returns ".".
 // If the path consists entirely of separators, Dir returns a single separator.
 // The returned path does not end in a separator unless it is the root directory.
-//
-// On Windows, given a volume-only name such as "C:", Dir returns "C:.",
-// the current directory on drive C. To obtain the drive's root "C:\",
-// use [VolumeName] combined with a separator.
 func Dir(path string) string {
 	return filepathlite.Dir(path)
 }

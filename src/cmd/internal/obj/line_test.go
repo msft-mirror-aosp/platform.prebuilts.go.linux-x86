@@ -12,6 +12,7 @@ import (
 
 func TestGetFileSymbolAndLine(t *testing.T) {
 	ctxt := new(Link)
+	ctxt.hash = make(map[string]*LSym)
 	ctxt.statichash = make(map[string]*LSym)
 
 	afile := src.NewFileBase("a.go", "a.go")

@@ -29,7 +29,7 @@ type ofb struct {
 // OFB is also unoptimized and not validated as part of the FIPS 140-3 module.
 // If an unauthenticated [Stream] mode is required, use [NewCTR] instead.
 func NewOFB(b Block, iv []byte) Stream {
-	if fips140only.Enforced() {
+	if fips140only.Enabled {
 		panic("crypto/cipher: use of OFB is not allowed in FIPS 140-only mode")
 	}
 

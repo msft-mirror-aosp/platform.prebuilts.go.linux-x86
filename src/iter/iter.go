@@ -28,8 +28,6 @@ or index-value pairs.
 Yield returns true if the iterator should continue with the next
 element in the sequence, false if it should stop.
 
-Yield panics if called after it returns false.
-
 For instance, [maps.Keys] returns an iterator that produces the sequence
 of keys of the map m, implemented as follows:
 
@@ -188,7 +186,7 @@ For example, a tree implementation might provide:
 	// It is only valid during the yield call it is passed to.
 	type Pos[V any] struct { ... }
 
-	// Value returns the value at the cursor.
+	// Pos returns the value at the cursor.
 	func (p *Pos[V]) Value() V
 
 	// Delete deletes the value at this point in the iteration.
@@ -230,10 +228,10 @@ type Seq2[K, V any] func(yield func(K, V) bool)
 
 type coro struct{}
 
-//go:linknamestd newcoro runtime.newcoro
+//go:linkname newcoro runtime.newcoro
 func newcoro(func(*coro)) *coro
 
-//go:linknamestd coroswitch runtime.coroswitch
+//go:linkname coroswitch runtime.coroswitch
 func coroswitch(*coro)
 
 // Pull converts the “push-style” iterator sequence seq

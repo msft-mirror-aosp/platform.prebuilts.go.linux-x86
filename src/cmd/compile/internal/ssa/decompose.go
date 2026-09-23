@@ -13,14 +13,14 @@ import (
 // decompose converts phi ops on compound builtin types into phi
 // ops on simple types, then invokes rewrite rules to decompose
 // other ops on those types.
-func decomposeBuiltin(f *Func) {
+func decomposeBuiltIn(f *Func) {
 	// Decompose phis
 	for _, b := range f.Blocks {
 		for _, v := range b.Values {
 			if v.Op != OpPhi {
 				continue
 			}
-			decomposeBuiltinPhi(v)
+			decomposeBuiltInPhi(v)
 		}
 	}
 
@@ -100,7 +100,7 @@ func decomposeBuiltin(f *Func) {
 			}
 		case t.IsFloat():
 			// floats are never decomposed, even ones bigger than RegSize
-		case t.Size() > f.Config.RegSize && !t.IsSIMD():
+		case t.Size() > f.Config.RegSize:
 			f.Fatalf("undecomposed named type %s %v", name, t)
 		}
 	}
@@ -121,7 +121,7 @@ func maybeAppend2(f *Func, ss []*LocalSlot, s1, s2 *LocalSlot) []*LocalSlot {
 	return maybeAppend(f, maybeAppend(f, ss, s1), s2)
 }
 
-func decomposeBuiltinPhi(v *Value) {
+func decomposeBuiltInPhi(v *Value) {
 	switch {
 	case v.Type.IsInteger() && v.Type.Size() > v.Block.Func.Config.RegSize:
 		decomposeInt64Phi(v)
@@ -135,7 +135,7 @@ func decomposeBuiltinPhi(v *Value) {
 		decomposeInterfacePhi(v)
 	case v.Type.IsFloat():
 		// floats are never decomposed, even ones bigger than RegSize
-	case v.Type.Size() > v.Block.Func.Config.RegSize && !v.Type.IsSIMD():
+	case v.Type.Size() > v.Block.Func.Config.RegSize:
 		v.Fatalf("%v undecomposed type %v", v, v.Type)
 	}
 }
@@ -248,7 +248,7 @@ func decomposeUser(f *Func) {
 	for _, name := range f.Names {
 		t := name.Type
 		switch {
-		case isStructNotSIMD(t):
+		case t.IsStruct():
 			newNames = decomposeUserStructInto(f, name, newNames)
 		case t.IsArray():
 			newNames = decomposeUserArrayInto(f, name, newNames)
@@ -266,7 +266,7 @@ func decomposeUser(f *Func) {
 // returned.
 func decomposeUserArrayInto(f *Func, name *LocalSlot, slots []*LocalSlot) []*LocalSlot {
 	t := name.Type
-	if t.Size() == 0 {
+	if t.NumElem() == 0 {
 		// TODO(khr): Not sure what to do here.  Probably nothing.
 		// Names for empty arrays aren't important.
 		return slots
@@ -293,7 +293,7 @@ func decomposeUserArrayInto(f *Func, name *LocalSlot, slots []*LocalSlot) []*Loc
 
 	if t.Elem().IsArray() {
 		return decomposeUserArrayInto(f, elemName, slots)
-	} else if isStructNotSIMD(t.Elem()) {
+	} else if t.Elem().IsStruct() {
 		return decomposeUserStructInto(f, elemName, slots)
 	}
 
@@ -313,7 +313,7 @@ func decomposeUserStructInto(f *Func, name *LocalSlot, slots []*LocalSlot) []*Lo
 		fnames = append(fnames, fs)
 		// arrays and structs will be decomposed further, so
 		// there's no need to record a name
-		if !fs.Type.IsArray() && !isStructNotSIMD(fs.Type) {
+		if !fs.Type.IsArray() && !fs.Type.IsStruct() {
 			slots = maybeAppend(f, slots, fs)
 		}
 	}
@@ -339,7 +339,7 @@ func decomposeUserStructInto(f *Func, name *LocalSlot, slots []*LocalSlot) []*Lo
 	// now that this f.NamedValues contains values for the struct
 	// fields, recurse into nested structs
 	for i := 0; i < n; i++ {
-		if isStructNotSIMD(name.Type.FieldType(i)) {
+		if name.Type.FieldType(i).IsStruct() {
 			slots = decomposeUserStructInto(f, fnames[i], slots)
 			delete(f.NamedValues, *fnames[i])
 		} else if name.Type.FieldType(i).IsArray() {
@@ -351,7 +351,7 @@ func decomposeUserStructInto(f *Func, name *LocalSlot, slots []*LocalSlot) []*Lo
 }
 func decomposeUserPhi(v *Value) {
 	switch {
-	case isStructNotSIMD(v.Type):
+	case v.Type.IsStruct():
 		decomposeStructPhi(v)
 	case v.Type.IsArray():
 		decomposeArrayPhi(v)
@@ -362,14 +362,10 @@ func decomposeUserPhi(v *Value) {
 // and then recursively decomposes the phis for each field.
 func decomposeStructPhi(v *Value) {
 	t := v.Type
-	if t.Size() == 0 {
-		v.reset(OpEmpty)
-		return
-	}
 	n := t.NumFields()
-	fields := make([]*Value, 0, MaxStruct)
+	var fields [MaxStruct]*Value
 	for i := 0; i < n; i++ {
-		fields = append(fields, v.Block.NewValue0(v.Pos, OpPhi, t.FieldType(i)))
+		fields[i] = v.Block.NewValue0(v.Pos, OpPhi, t.FieldType(i))
 	}
 	for _, a := range v.Args {
 		for i := 0; i < n; i++ {
@@ -377,10 +373,10 @@ func decomposeStructPhi(v *Value) {
 		}
 	}
 	v.reset(OpStructMake)
-	v.AddArgs(fields...)
+	v.AddArgs(fields[:n]...)
 
 	// Recursively decompose phis for each field.
-	for _, f := range fields {
+	for _, f := range fields[:n] {
 		decomposeUserPhi(f)
 	}
 }
@@ -389,8 +385,8 @@ func decomposeStructPhi(v *Value) {
 // and then recursively decomposes the element phi.
 func decomposeArrayPhi(v *Value) {
 	t := v.Type
-	if t.Size() == 0 {
-		v.reset(OpEmpty)
+	if t.NumElem() == 0 {
+		v.reset(OpArrayMake0)
 		return
 	}
 	if t.NumElem() != 1 {
@@ -461,8 +457,4 @@ func deleteNamedVals(f *Func, toDelete []namedVal) {
 		}
 	}
 	f.Names = f.Names[:end]
-}
-
-func isStructNotSIMD(t *types.Type) bool {
-	return t.IsStruct() && !t.IsSIMD()
 }

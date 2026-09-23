@@ -16,11 +16,10 @@ import (
 //
 // DO NOT add new packages here just to make the tests pass.
 var AllowedInternalPackages = map[string]bool{
-	// entropy.Depleted/Seed is the entropy source, and sysrand.Read
+	// entropy.Depleted is the external passive entropy source, and sysrand.Read
 	// is the actual (but uncredited!) random bytes source.
-	"crypto/internal/entropy":        true,
-	"crypto/internal/entropy/v1.0.0": true,
-	"crypto/internal/sysrand":        true,
+	"crypto/internal/entropy": true,
+	"crypto/internal/sysrand": true,
 
 	// impl.Register is how the packages expose their alternative
 	// implementations to tests outside the module.
@@ -28,9 +27,6 @@ var AllowedInternalPackages = map[string]bool{
 
 	// randutil.MaybeReadByte is used in non-FIPS mode by GenerateKey functions.
 	"crypto/internal/randutil": true,
-
-	// constanttime are the constant-time intrinsics.
-	"crypto/internal/constanttime": true,
 }
 
 func TestImports(t *testing.T) {
@@ -44,7 +40,7 @@ func TestImports(t *testing.T) {
 {{range .XTestImports -}}
 {{$path}} {{.}}
 {{end -}}`, "crypto/internal/fips140/...")
-	bout, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
+	bout, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list: %v\n%s", err, bout)
 	}

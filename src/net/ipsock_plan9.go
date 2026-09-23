@@ -7,9 +7,10 @@ package net
 import (
 	"context"
 	"internal/bytealg"
-	"internal/strconv"
+	"internal/itoa"
 	"io/fs"
 	"os"
+	"strconv"
 	"syscall"
 )
 
@@ -227,7 +228,7 @@ func dialPlan9Blocking(ctx context.Context, net string, laddr, raddr Addr) (fd *
 		f.Close()
 		return nil, err
 	}
-	return newFD(proto, name, nil, f, data, laddr, raddr), nil
+	return newFD(proto, name, nil, f, data, laddr, raddr)
 }
 
 func listenPlan9(ctx context.Context, net string, laddr Addr) (fd *netFD, err error) {
@@ -246,10 +247,10 @@ func listenPlan9(ctx context.Context, net string, laddr Addr) (fd *netFD, err er
 		f.Close()
 		return nil, err
 	}
-	return newFD(proto, name, nil, f, nil, laddr, nil), nil
+	return newFD(proto, name, nil, f, nil, laddr, nil)
 }
 
-func (fd *netFD) netFD() *netFD {
+func (fd *netFD) netFD() (*netFD, error) {
 	return newFD(fd.net, fd.n, fd.listen, fd.ctl, fd.data, fd.laddr, fd.raddr)
 }
 
@@ -288,7 +289,7 @@ func (fd *netFD) acceptPlan9() (nfd *netFD, err error) {
 		data.Close()
 		return nil, err
 	}
-	return newFD(fd.net, name, listen, ctl, data, fd.laddr, raddr), nil
+	return newFD(fd.net, name, listen, ctl, data, fd.laddr, raddr)
 }
 
 func isWildcard(a Addr) bool {
@@ -337,9 +338,9 @@ func plan9LocalAddr(addr Addr) string {
 		if port == 0 {
 			return ""
 		}
-		return strconv.Itoa(port)
+		return itoa.Itoa(port)
 	}
-	return ip.String() + "!" + strconv.Itoa(port)
+	return ip.String() + "!" + itoa.Itoa(port)
 }
 
 func hangupCtlWrite(ctx context.Context, proto string, ctl *os.File, msg string) error {

@@ -6,7 +6,6 @@ package fmt
 
 import (
 	"errors"
-	"internal/stringslite"
 	"slices"
 )
 
@@ -20,22 +19,7 @@ import (
 // order they appear in the arguments.
 // It is invalid to supply the %w verb with an operand that does not implement
 // the error interface. The %w verb is otherwise a synonym for %v.
-func Errorf(format string, a ...any) (err error) {
-	// This function has been split in a somewhat unnatural way
-	// so that both it and the errors.New call can be inlined.
-	if err = errorf(format, a...); err != nil {
-		return err
-	}
-	// No formatting was needed. We can avoid some allocations and other work.
-	// See https://go.dev/cl/708836 for details.
-	return errors.New(format)
-}
-
-// errorf formats and returns an error value, or nil if no formatting is required.
-func errorf(format string, a ...any) error {
-	if len(a) == 0 && stringslite.IndexByte(format, '%') == -1 {
-		return nil
-	}
+func Errorf(format string, a ...any) error {
 	p := newPrinter()
 	p.wrapErrs = true
 	p.doPrintf(format, a)

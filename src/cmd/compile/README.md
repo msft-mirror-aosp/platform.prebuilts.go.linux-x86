@@ -57,7 +57,7 @@ terms of these, so the next step after type checking is to convert the syntax
 and types2 representations to ir and types. This process is referred to as
 "noding."
 
-Noding uses a process called Unified IR, which builds a node representation
+Noding using a process called Unified IR, which builds a node representation
 using a serialized version of the typechecked code from step 2.
 Unified IR is also involved in import/export of packages and inlining.
 
@@ -157,8 +157,7 @@ The format of the export data file has gone through a number of
 iterations. Its current form is called "unified", and it is a
 serialized representation of an object graph, with an index allowing
 lazy decoding of parts of the whole (since most imports are used to
-provide only a handful of symbols). See [here](internal/noder/README.md)
-for details on making changes to unified IR.
+provide only a handful of symbols).
 
 The GOROOT repository contains a reader and a writer for the unified
 format; it encodes from/decodes to the compiler's IR.
@@ -282,17 +281,17 @@ dependencies, so is not suitable for distributed build systems.)
   ```
   $ go install golang.org/x/tools/cmd/toolstash@latest
   $ git clone https://go.googlesource.com/go
-  $ export PATH=$PWD/go/bin:$PATH
-  $ cd go/src
+  $ cd go
   $ git checkout -b mybranch
-  $ ./all.bash                      # build and confirm good starting point
-  $ toolstash save                  # save current tools
+  $ ./src/all.bash               # build and confirm good starting point
+  $ export PATH=$PWD/bin:$PATH
+  $ toolstash save               # save current tools
   ```
   After that, your edit/compile/test cycle can be similar to:
   ```
-  [... make edits to cmd/compile source ...]
+  <... make edits to cmd/compile source ...>
   $ toolstash restore && go install cmd/compile   # restore known good tools to build compiler
-  [... 'go build', 'go test', etc. ...]           # use freshly built compiler
+  <... 'go build', 'go test', etc. ...>           # use freshly built compiler
   ```
 
 * toolstash also allows comparing the installed vs. stashed copy of

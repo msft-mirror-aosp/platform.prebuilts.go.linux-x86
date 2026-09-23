@@ -112,10 +112,10 @@ func parseErrorToString(err error) string {
 		return ""
 	}
 	var p parseError
-	if errlist, ok := err.(scanner.ErrorList); ok {
-		p.ErrorList = &errlist
+	if e, ok := err.(scanner.ErrorList); ok {
+		p.ErrorList = &e
 	} else {
-		p.ErrorString = err.Error()
+		p.ErrorString = e.Error()
 	}
 	s, err := json.Marshal(p)
 	if err != nil {
@@ -275,7 +275,7 @@ func importRaw(modroot, reldir string) *rawPackage {
 // which is the comment on import "C".
 func extractCgoDirectives(doc string) []string {
 	var out []string
-	for line := range strings.SplitSeq(doc, "\n") {
+	for _, line := range strings.Split(doc, "\n") {
 		// Line is
 		//	#cgo [GOOS/GOARCH...] LDFLAGS: stuff
 		//

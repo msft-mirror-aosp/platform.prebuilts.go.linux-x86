@@ -27,7 +27,7 @@ type netFD struct {
 
 var netdir = "/net" // default network
 
-func newFD(net, name string, listen, ctl, data *os.File, laddr, raddr Addr) *netFD {
+func newFD(net, name string, listen, ctl, data *os.File, laddr, raddr Addr) (*netFD, error) {
 	ret := &netFD{
 		net:    net,
 		n:      name,
@@ -38,7 +38,7 @@ func newFD(net, name string, listen, ctl, data *os.File, laddr, raddr Addr) *net
 		raddr: raddr,
 	}
 	ret.pfd.Destroy = ret.destroy
-	return ret
+	return ret, nil
 }
 
 func (fd *netFD) init() error {
@@ -80,20 +80,13 @@ func (fd *netFD) destroy() {
 }
 
 func (fd *netFD) Read(b []byte) (n int, err error) {
-	if fd == nil {
+	if !fd.ok() || fd.data == nil {
 		return 0, syscall.EINVAL
 	}
-	if fd.data == nil {
-		return 0, ErrClosed
-	}
 	n, err = fd.pfd.Read(fd.data.Read, b)
-	if err == io.EOF {
-		if fd.data == nil {
-			err = ErrClosed
-		} else if fd.net == "udp" {
-			n = 0
-			err = nil
-		}
+	if fd.net == "udp" && err == io.EOF {
+		n = 0
+		err = nil
 	}
 	return
 }

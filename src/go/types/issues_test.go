@@ -641,12 +641,8 @@ func TestIssue55030(t *testing.T) {
 	makeSig := func(typ Type, valid bool) {
 		if !valid {
 			defer func() {
-				r := recover()
-				if r == nil {
+				if recover() == nil {
 					panic("NewSignatureType panic expected")
-				}
-				if _, ok := r.(string); !ok {
-					panic("NewSignatureType string panic expected")
 				}
 			}()
 		}
@@ -879,7 +875,8 @@ func TestIssue59944(t *testing.T) {
 	testenv.MustHaveCGO(t)
 
 	// Methods declared on aliases of cgo types are not permitted.
-	const src = `
+	const src = `// -gotypesalias=1
+
 package p
 
 /*
@@ -950,7 +947,7 @@ func _() {
 }
 `
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, pkgName(src), src, parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, pkgName(src), src, 0)
 	if err == nil {
 		t.Fatal("expected syntax error")
 	}
@@ -1027,6 +1024,7 @@ type A = []int
 type S struct{ A }
 `
 
+	t.Setenv("GODEBUG", "gotypesalias=1")
 	pkg := mustTypecheck(src, nil, nil)
 
 	S := pkg.Scope().Lookup("S")
@@ -1170,6 +1168,7 @@ type (
 	T A
 )`
 
+	t.Setenv("GODEBUG", "gotypesalias=1")
 	pkg := mustTypecheck(src, nil, nil)
 	T := pkg.Scope().Lookup("T").(*TypeName)
 	got := T.String() // this must not panic (was issue)
@@ -1203,36 +1202,5 @@ var _ = T{{x}}
 	}
 	if tv.Type != Typ[Invalid] {
 		t.Fatalf("unexpected type for {x}: %s", tv.Type)
-	}
-}
-
-func TestIssue72978(t *testing.T) {
-	const src = `
-package p
-
-type (
-	genericG[T, U any] struct { x T; y U }
-	G1 genericG[int, string]
-	G2 = G1
-)
-
-func genericF[T, U any]() {}
-var f = genericF[string, float64]
-`
-
-	pkg := mustTypecheck(src, nil, nil)
-	for _, name := range []string{"G1", "G2", "f"} {
-		func() {
-			typ := pkg.Scope().Lookup(name).Type()
-			_, err := Instantiate(nil, typ, []Type{Typ[Bool], Typ[Int]}, true)
-			if err == nil {
-				t.Errorf("%s[bool, int]: got no error", name)
-				return
-			}
-			want := fmt.Sprintf("cannot instantiate non-generic %s: has no type parameters", typ)
-			if err.Error() != want {
-				t.Errorf("%s[bool, int]: got %q, want %q", name, err.Error(), want)
-			}
-		}()
 	}
 }

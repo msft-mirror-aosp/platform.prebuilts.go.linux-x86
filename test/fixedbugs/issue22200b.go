@@ -9,23 +9,20 @@
 package p
 
 func f3(x *[1 << 31]byte) byte { // GC_ERROR "stack frame too large"
-	sum := byte(0)
 	for _, b := range *x {
-		sum += b
+		return b
 	}
-	return sum
+	return 0
 }
 func f4(x *[1 << 32]byte) byte { // GC_ERROR "stack frame too large"
-	sum := byte(0)
 	for _, b := range *x {
-		sum += b
+		return b
 	}
-	return sum
+	return 0
 }
 func f5(x *[1 << 33]byte) byte { // GC_ERROR "stack frame too large"
-	sum := byte(0)
 	for _, b := range *x {
-		sum += b
+		return b
 	}
-	return sum
+	return 0
 }

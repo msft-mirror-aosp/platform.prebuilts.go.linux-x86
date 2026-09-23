@@ -172,7 +172,6 @@ func GenerateKey768() (*DecapsulationKey768, error) {
 }
 
 func generateKey(dk *DecapsulationKey768) (*DecapsulationKey768, error) {
-	fipsSelfTest()
 	var d [32]byte
 	drbg.Read(d[:])
 	var z [32]byte
@@ -186,7 +185,6 @@ func generateKey(dk *DecapsulationKey768) (*DecapsulationKey768, error) {
 // GenerateKeyInternal768 is a derandomized version of GenerateKey768,
 // exclusively for use in tests.
 func GenerateKeyInternal768(d, z *[32]byte) *DecapsulationKey768 {
-	fipsSelfTest()
 	dk := &DecapsulationKey768{}
 	kemKeyGen(dk, d, z)
 	return dk
@@ -339,7 +337,6 @@ func (ek *EncapsulationKey768) Encapsulate() (sharedKey, ciphertext []byte) {
 }
 
 func (ek *EncapsulationKey768) encapsulate(cc *[CiphertextSize768]byte) (sharedKey, ciphertext []byte) {
-	fipsSelfTest()
 	var m [messageSize]byte
 	drbg.Read(m[:])
 	// Note that the modulus check (step 2 of the encapsulation key check from
@@ -351,7 +348,6 @@ func (ek *EncapsulationKey768) encapsulate(cc *[CiphertextSize768]byte) (sharedK
 // EncapsulateInternal is a derandomized version of Encapsulate, exclusively for
 // use in tests.
 func (ek *EncapsulationKey768) EncapsulateInternal(m *[32]byte) (sharedKey, ciphertext []byte) {
-	fipsSelfTest()
 	cc := &[CiphertextSize768]byte{}
 	return kemEncaps(cc, ek, m)
 }
@@ -428,12 +424,11 @@ func pkeEncrypt(cc *[CiphertextSize768]byte, ex *encryptionKey, m *[messageSize]
 
 	u := make([]ringElement, k) // NTT⁻¹(AT ◦ r) + e1
 	for i := range u {
-		var uHat nttElement
+		u[i] = e1[i]
 		for j := range r {
 			// Note that i and j are inverted, as we need the transposed of A.
-			uHat = polyAdd(uHat, nttMul(ex.a[j*k+i], r[j]))
+			u[i] = polyAdd(u[i], inverseNTT(nttMul(ex.a[j*k+i], r[j])))
 		}
-		u[i] = polyAdd(e1[i], inverseNTT(uHat))
 	}
 
 	μ := ringDecodeAndDecompress1(m)
@@ -458,7 +453,6 @@ func pkeEncrypt(cc *[CiphertextSize768]byte, ex *encryptionKey, m *[messageSize]
 //
 // The shared key must be kept secret.
 func (dk *DecapsulationKey768) Decapsulate(ciphertext []byte) (sharedKey []byte, err error) {
-	fipsSelfTest()
 	if len(ciphertext) != CiphertextSize768 {
 		return nil, errors.New("mlkem: invalid ciphertext length")
 	}

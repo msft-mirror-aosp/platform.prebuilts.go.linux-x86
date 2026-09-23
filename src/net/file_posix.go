@@ -23,11 +23,7 @@ func newFileFD(f *os.File) (*netFD, error) {
 		poll.CloseFunc(s)
 		return nil, os.NewSyscallError("getsockopt", err)
 	}
-	lsa, err := syscall.Getsockname(s)
-	if err != nil {
-		poll.CloseFunc(s)
-		return nil, os.NewSyscallError("getsockname", err)
-	}
+	lsa, _ := syscall.Getsockname(s)
 	rsa, _ := syscall.Getpeername(s)
 	switch lsa.(type) {
 	case *syscall.SockaddrInet4:
@@ -40,7 +36,11 @@ func newFileFD(f *os.File) (*netFD, error) {
 		poll.CloseFunc(s)
 		return nil, syscall.EPROTONOSUPPORT
 	}
-	fd := newFD(s, family, sotype, "")
+	fd, err := newFD(s, family, sotype, "")
+	if err != nil {
+		poll.CloseFunc(s)
+		return nil, err
+	}
 	laddr := fd.addrFunc()(lsa)
 	raddr := fd.addrFunc()(rsa)
 	fd.net = laddr.Network()

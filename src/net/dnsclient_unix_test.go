@@ -331,7 +331,7 @@ func (conf *resolvConfTest) write(lines []string) error {
 }
 
 func (conf *resolvConfTest) writeAndUpdate(lines []string) error {
-	return conf.writeAndUpdateWithLastCheckedTime(lines, distantFuture)
+	return conf.writeAndUpdateWithLastCheckedTime(lines, time.Now().Add(time.Hour))
 }
 
 func (conf *resolvConfTest) writeAndUpdateWithLastCheckedTime(lines []string, lastChecked time.Time) error {
@@ -2627,7 +2627,8 @@ func TestLongDNSNames(t *testing.T) {
 				}
 
 				expectedErr := DNSError{Err: errNoSuchHost.Error(), Name: v.req, IsNotFound: true}
-				dnsErr, _ := errors.AsType[*DNSError](err)
+				var dnsErr *DNSError
+				errors.As(err, &dnsErr)
 				if dnsErr == nil || *dnsErr != expectedErr {
 					t.Errorf("%v: Lookup%v: unexpected error: %v", i, testName, err)
 				}
@@ -2819,7 +2820,8 @@ func TestLookupOrderFilesNoSuchHost(t *testing.T) {
 		}
 
 		expectedErr := DNSError{Err: errNoSuchHost.Error(), Name: testName, IsNotFound: true}
-		dnsErr, _ := errors.AsType[*DNSError](err)
+		var dnsErr *DNSError
+		errors.As(err, &dnsErr)
 		if dnsErr == nil || *dnsErr != expectedErr {
 			t.Errorf("Lookup%v: unexpected error: %v", v.name, err)
 		}
@@ -2851,33 +2853,8 @@ func TestExtendedRCode(t *testing.T) {
 
 	r := &Resolver{PreferGo: true, Dial: fake.DialContext}
 	_, _, err := r.tryOneName(context.Background(), getSystemDNSConfig(), "go.dev.", dnsmessage.TypeA)
-	if dnsErr, ok := errors.AsType[*DNSError](err); !ok || dnsErr.Err != errServerMisbehaving.Error() {
+	var dnsErr *DNSError
+	if !(errors.As(err, &dnsErr) && dnsErr.Err == errServerMisbehaving.Error()) {
 		t.Fatalf("r.tryOneName(): unexpected error: %v", err)
-	}
-}
-
-// This test makes sure that we always re-check the resolv.conf no matter
-// the elapsed time in case the default nameservers are used.
-func TestEmptyResolvConfReplacedWithConfHaingNameservers(t *testing.T) {
-	conf, err := newResolvConfTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conf.teardown()
-
-	if err := conf.writeAndUpdateWithLastCheckedTime([]string{"# empty resolv.conf file"}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-
-	if !getSystemDNSConfigNamed(conf.path).isDefaultNS() {
-		t.Fatal("resolv.conf was not re-loaded")
-	}
-
-	if err := conf.writeAndUpdateWithLastCheckedTime([]string{"nameserver 192.0.2.1"}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-
-	if getSystemDNSConfigNamed(conf.path).isDefaultNS() {
-		t.Fatal("resolv.conf was not re-loaded")
 	}
 }

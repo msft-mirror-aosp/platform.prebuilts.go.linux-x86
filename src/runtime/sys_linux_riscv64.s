@@ -60,9 +60,9 @@ TEXT runtime·exit<ABIInternal>(SB),NOSPLIT,$0
 TEXT runtime·exitThread(SB),NOSPLIT|NOFRAME,$0-8
 	MOV	wait+0(FP), A0
 	// We're done using the stack.
-	FENCE	RW, W
+	FENCE
 	MOVW	ZERO, (A0)
-	FENCE	RW, RW
+	FENCE
 	MOV	$0, A0	// exit code
 	MOV	$SYS_exit, A7
 	ECALL

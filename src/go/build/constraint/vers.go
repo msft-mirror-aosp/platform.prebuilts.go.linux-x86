@@ -66,10 +66,7 @@ func minVersion(z Expr, sign int) int {
 		if z.Tag == "go1" {
 			return 0
 		}
-		_, v, ok := strings.Cut(z.Tag, "go1.")
-		if !ok {
-			return -1
-		}
+		_, v, _ := strings.Cut(z.Tag, "go1.")
 		n, err := strconv.Atoi(v)
 		if err != nil {
 			// not a go1.N tag

@@ -24,7 +24,6 @@ package profile
 import (
 	"errors"
 	"fmt"
-	"slices"
 )
 
 type buffer struct {
@@ -176,16 +175,6 @@ func le32(p []byte) uint32 {
 	return uint32(p[0]) | uint32(p[1])<<8 | uint32(p[2])<<16 | uint32(p[3])<<24
 }
 
-func peekNumVarints(data []byte) (numVarints int) {
-	for ; len(data) > 0; numVarints++ {
-		var err error
-		if _, data, err = decodeVarint(data); err != nil {
-			break
-		}
-	}
-	return numVarints
-}
-
 func decodeVarint(data []byte) (uint64, []byte, error) {
 	var i int
 	var u uint64
@@ -286,9 +275,6 @@ func decodeInt64(b *buffer, x *int64) error {
 func decodeInt64s(b *buffer, x *[]int64) error {
 	if b.typ == 2 {
 		// Packed encoding
-		dataLen := peekNumVarints(b.data)
-		*x = slices.Grow(*x, dataLen)
-
 		data := b.data
 		for len(data) > 0 {
 			var u uint64
@@ -319,11 +305,8 @@ func decodeUint64(b *buffer, x *uint64) error {
 
 func decodeUint64s(b *buffer, x *[]uint64) error {
 	if b.typ == 2 {
-		// Packed encoding
-		dataLen := peekNumVarints(b.data)
-		*x = slices.Grow(*x, dataLen)
-
 		data := b.data
+		// Packed encoding
 		for len(data) > 0 {
 			var u uint64
 			var err error

@@ -57,10 +57,10 @@ func countrunes(s string) int {
 // If the string appears to be incomplete or decoding problems
 // are encountered (runeerror, k + 1) is returned to ensure
 // progress when decoderune is used to iterate over a string.
-func decoderune(s string, k uint) (r rune, pos uint) {
+func decoderune(s string, k int) (r rune, pos int) {
 	pos = k
 
-	if k >= uint(len(s)) {
+	if k >= len(s) {
 		return runeError, k + 1
 	}
 

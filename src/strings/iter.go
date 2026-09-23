@@ -117,7 +117,11 @@ func FieldsFuncSeq(s string, f func(rune) bool) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		start := -1
 		for i := 0; i < len(s); {
-			r, size := utf8.DecodeRuneInString(s[i:])
+			size := 1
+			r := rune(s[i])
+			if r >= utf8.RuneSelf {
+				r, size = utf8.DecodeRuneInString(s[i:])
+			}
 			if f(r) {
 				if start >= 0 {
 					if !yield(s[start:i]) {

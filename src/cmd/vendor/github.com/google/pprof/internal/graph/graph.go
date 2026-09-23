@@ -196,21 +196,6 @@ func (i *NodeInfo) NameComponents() []string {
 	return name
 }
 
-// comparePrintableName compares NodeInfo lexicographically the same way as `i.PrintableName() < right.PrintableName()`, but much more performant.
-func (i *NodeInfo) comparePrintableName(right NodeInfo) (equal bool, less bool) {
-	if right == *i {
-		return true, false
-	}
-
-	if i.Address != 0 && right.Address != 0 && i.Address != right.Address {
-		// comparing ints directly is the same as comparing padded hex from fmt.Sprintf("%016x", Address)
-		return false, i.Address < right.Address
-	}
-
-	// fallback
-	return false, i.PrintableName() < right.PrintableName()
-}
-
 // NodeMap maps from a node info struct to a node. It is used to merge
 // report entries with the same info.
 type NodeMap map[NodeInfo]*Node
@@ -351,8 +336,12 @@ func newGraph(prof *profile.Profile, o *Options) (*Graph, map[uint64]Nodes) {
 		if dw == 0 && w == 0 {
 			continue
 		}
-		clear(seenNode)
-		clear(seenEdge)
+		for k := range seenNode {
+			delete(seenNode, k)
+		}
+		for k := range seenEdge {
+			delete(seenEdge, k)
+		}
 		var parent *Node
 		// A residual edge goes over one or more nodes that were not kept.
 		residual := false
@@ -598,16 +587,17 @@ func (nm NodeMap) findOrInsertLine(l *profile.Location, li profile.Line, o *Opti
 		objfile = m.File
 	}
 
-	ni := nodeInfo(l, li, objfile, o)
-
-	return nm.FindOrInsertNode(ni, o.KeptNodes)
+	if ni := nodeInfo(l, li, objfile, o); ni != nil {
+		return nm.FindOrInsertNode(*ni, o.KeptNodes)
+	}
+	return nil
 }
 
-func nodeInfo(l *profile.Location, line profile.Line, objfile string, o *Options) NodeInfo {
+func nodeInfo(l *profile.Location, line profile.Line, objfile string, o *Options) *NodeInfo {
 	if line.Function == nil {
-		return NodeInfo{Address: l.Address, Objfile: objfile}
+		return &NodeInfo{Address: l.Address, Objfile: objfile}
 	}
-	ni := NodeInfo{
+	ni := &NodeInfo{
 		Address:  l.Address,
 		Lineno:   int(line.Line),
 		Columnno: int(line.Column),
@@ -860,7 +850,10 @@ func (g *Graph) selectTopNodes(maxNodes int, visualMode bool) Nodes {
 			// If generating a visual graph, count tags as nodes. Update
 			// maxNodes to account for them.
 			for i, n := range g.Nodes {
-				tags := min(countTags(n), maxNodelets)
+				tags := countTags(n)
+				if tags > maxNodelets {
+					tags = maxNodelets
+				}
 				if count += tags + 1; count >= maxNodes {
 					maxNodes = i + 1
 					break
@@ -965,9 +958,8 @@ func (ns Nodes) Sort(o NodeOrder) error {
 				if iv, jv := abs64(l.Flat), abs64(r.Flat); iv != jv {
 					return iv > jv
 				}
-				equal, leftLess := l.Info.comparePrintableName(r.Info)
-				if !equal {
-					return leftLess
+				if iv, jv := l.Info.PrintableName(), r.Info.PrintableName(); iv != jv {
+					return iv < jv
 				}
 				if iv, jv := abs64(l.Cum), abs64(r.Cum); iv != jv {
 					return iv > jv
@@ -984,9 +976,8 @@ func (ns Nodes) Sort(o NodeOrder) error {
 				if iv, jv := abs64(l.Cum), abs64(r.Cum); iv != jv {
 					return iv > jv
 				}
-				equal, leftLess := l.Info.comparePrintableName(r.Info)
-				if !equal {
-					return leftLess
+				if iv, jv := l.Info.PrintableName(), r.Info.PrintableName(); iv != jv {
+					return iv < jv
 				}
 				return compareNodes(l, r)
 			},
@@ -1028,9 +1019,8 @@ func (ns Nodes) Sort(o NodeOrder) error {
 			if iv, jv := abs64(score[l]), abs64(score[r]); iv != jv {
 				return iv > jv
 			}
-			equal, leftLess := l.Info.comparePrintableName(r.Info)
-			if !equal {
-				return leftLess
+			if iv, jv := l.Info.PrintableName(), r.Info.PrintableName(); iv != jv {
+				return iv < jv
 			}
 			if iv, jv := abs64(l.Flat), abs64(r.Flat); iv != jv {
 				return iv > jv

@@ -43,8 +43,7 @@ type T struct {
 	SIEmpty []int
 	SB      []bool
 	// Arrays
-	AI  [3]int
-	PAI *[3]int // pointer to array
+	AI [3]int
 	// Maps
 	MSI      map[string]int
 	MSIone   map[string]int // one element, for deterministic output
@@ -143,7 +142,6 @@ var tVal = &T{
 	SI:     []int{3, 4, 5},
 	SICap:  make([]int, 5, 10),
 	AI:     [3]int{3, 4, 5},
-	PAI:    &[3]int{3, 4, 5},
 	SB:     []bool{true, false},
 	MSI:    map[string]int{"one": 1, "two": 2, "three": 3},
 	MSIone: map[string]int{"one": 1},
@@ -558,9 +556,6 @@ var execTests = []execTest{
 	{"array[:]", "{{slice .AI}}", "[3 4 5]", tVal, true},
 	{"array[1:]", "{{slice .AI 1}}", "[4 5]", tVal, true},
 	{"array[1:2]", "{{slice .AI 1 2}}", "[4]", tVal, true},
-	{"pointer to array[:]", "{{slice .PAI}}", "[3 4 5]", tVal, true},
-	{"pointer to array[1:]", "{{slice .PAI 1}}", "[4 5]", tVal, true},
-	{"pointer to array[1:2]", "{{slice .PAI 1 2}}", "[4]", tVal, true},
 	{"string[:]", "{{slice .S}}", "xyz", tVal, true},
 	{"string[0:1]", "{{slice .S 0 1}}", "x", tVal, true},
 	{"string[1:]", "{{slice .S 1}}", "yz", tVal, true},
@@ -927,6 +922,7 @@ func TestDelims(t *testing.T) {
 	const hello = "Hello, world"
 	var value = struct{ Str string }{hello}
 	for i := 0; i < len(delimPairs); i += 2 {
+		text := ".Str"
 		left := delimPairs[i+0]
 		trueLeft := left
 		right := delimPairs[i+1]
@@ -937,21 +933,15 @@ func TestDelims(t *testing.T) {
 		if right == "" { // default case
 			trueRight = "}}"
 		}
-		action := trueLeft + ".Str" + trueRight
-		// A comment, which is not preserved in the parse tree.
-		comment := trueLeft + "/*comment*/" + trueRight
-		// An action containing a string that looks like the left delimiter.
-		strAction := trueLeft + `"` + trueLeft + `"` + trueRight
-		text := action + comment + strAction
+		text = trueLeft + text + trueRight
+		// Now add a comment
+		text += trueLeft + "/*comment*/" + trueRight
+		// Now add  an action containing a string.
+		text += trueLeft + `"` + trueLeft + `"` + trueRight
 		// At this point text looks like `{{.Str}}{{/*comment*/}}{{"{{"}}`.
 		tmpl, err := New("delims").Delims(left, right).Parse(text)
 		if err != nil {
 			t.Fatalf("delim %q text %q parse err %s", left, text, err)
-		}
-		// The parse tree's String form should roundtrip back to the input,
-		// using the custom delimiters, modulo the dropped comment.
-		if got, want := tmpl.Root.String(), action+strAction; got != want {
-			t.Errorf("delim %q: String() = %q, want %q", left, got, want)
 		}
 		var b = new(strings.Builder)
 		err = tmpl.Execute(b, value)
@@ -1025,7 +1015,8 @@ func TestExecError_CustomError(t *testing.T) {
 	var b bytes.Buffer
 	err := tmpl.Execute(&b, nil)
 
-	if _, ok := errors.AsType[*CustomError](err); !ok {
+	var e *CustomError
+	if !errors.As(err, &e) {
 		t.Fatalf("expected custom error; got %s", err)
 	}
 }

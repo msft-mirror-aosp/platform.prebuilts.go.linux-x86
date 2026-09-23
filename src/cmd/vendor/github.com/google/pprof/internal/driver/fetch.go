@@ -77,11 +77,6 @@ func fetchProfiles(s *source, o *plugin.Options) (*profile.Profile, error) {
 		}
 	}
 
-	if s.AllFrames {
-		p.DropFrames = ""
-		p.KeepFrames = ""
-	}
-
 	// Symbolize the merged profile.
 	if err := o.Sym.Symbolize(s.Symbolize, m, p); err != nil {
 		return nil, err
@@ -179,7 +174,10 @@ func chunkedGrab(sources []profileSource, fetch plugin.Fetcher, obj plugin.ObjTo
 	var count int
 
 	for start := 0; start < len(sources); start += chunkSize {
-		end := min(start+chunkSize, len(sources))
+		end := start + chunkSize
+		if end > len(sources) {
+			end = len(sources)
+		}
 		chunkP, chunkMsrc, chunkSave, chunkCount, chunkErr := concurrentGrab(sources[start:end], fetch, obj, ui, tr)
 		switch {
 		case chunkErr != nil:
@@ -430,9 +428,7 @@ mapping:
 				// Llvm buildid protocol: the first two characters of the build id
 				// are used as directory, and the remaining part is in the filename.
 				// e.g. `/ab/cdef0123456.debug`
-				if len(m.BuildID) >= 2 {
-					fileNames = append(fileNames, filepath.Join(path, m.BuildID[:2], m.BuildID[2:]+".debug"))
-				}
+				fileNames = append(fileNames, filepath.Join(path, m.BuildID[:2], m.BuildID[2:]+".debug"))
 			}
 			if m.File != "" {
 				// Try both the basename and the full path, to support the same directory
