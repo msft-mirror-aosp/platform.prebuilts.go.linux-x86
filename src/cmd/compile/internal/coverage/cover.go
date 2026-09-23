@@ -131,7 +131,7 @@ func metaHashAndLen() ([16]byte, int) {
 	}
 	var hv [16]byte
 	for i := 0; i < 16; i++ {
-		nib := mhash[i*2 : i*2+2]
+		nib := string(mhash[i*2 : i*2+2])
 		x, err := strconv.ParseInt(nib, 16, 32)
 		if err != nil {
 			base.Fatalf("metahash bad byte %q", nib)

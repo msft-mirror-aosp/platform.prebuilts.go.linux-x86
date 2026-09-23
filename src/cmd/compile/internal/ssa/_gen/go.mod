@@ -1,5 +1,4 @@
-// N.B. cmd/... modules get special treatment, so avoid that prefix.
-module compile/internal/ssa/_gen
+module _gen
 
 go 1.24
 

@@ -210,8 +210,7 @@ type timespec struct {
 
 //go:nosplit
 func (ts *timespec) setNsec(ns int64) {
-	ts.tv_sec = int32(ns / 1e9)
-	ts.tv_nsec = int32(ns % 1e9)
+	ts.tv_sec = timediv(ns, 1e9, &ts.tv_nsec)
 }
 
 type timeval struct {

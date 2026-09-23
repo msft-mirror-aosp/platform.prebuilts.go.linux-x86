@@ -15,11 +15,9 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 
 	"cmd/go/internal/base"
 	"cmd/go/internal/cfg"
@@ -158,7 +156,7 @@ func lockVersion(ctx context.Context, mod module.Version) (unlock func(), err er
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
 		return nil, err
 	}
 	return lockedfile.MutexAt(path).Lock()
@@ -174,7 +172,7 @@ func SideLock(ctx context.Context) (unlock func(), err error) {
 	}
 
 	path := filepath.Join(cfg.GOMODCACHE, "cache", "lock")
-	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
@@ -196,14 +194,12 @@ type cachingRepo struct {
 	once     sync.Once
 	initRepo func(context.Context) (Repo, error)
 	r        Repo
-	fetcher  *Fetcher
 }
 
-func newCachingRepo(ctx context.Context, fetcher *Fetcher, path string, initRepo func(context.Context) (Repo, error)) *cachingRepo {
+func newCachingRepo(ctx context.Context, path string, initRepo func(context.Context) (Repo, error)) *cachingRepo {
 	return &cachingRepo{
 		path:     path,
 		initRepo: initRepo,
-		fetcher:  fetcher,
 	}
 }
 
@@ -230,6 +226,7 @@ func (r *cachingRepo) Versions(ctx context.Context, prefix string) (*Versions, e
 	v, err := r.versionsCache.Do(prefix, func() (*Versions, error) {
 		return r.repo(ctx).Versions(ctx, prefix)
 	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +263,7 @@ func (r *cachingRepo) Stat(ctx context.Context, rev string) (*RevInfo, error) {
 				})
 			}
 
-			if err := writeDiskStat(ctx, file, info); err != nil && !isErrReadOnlyFS(err) {
+			if err := writeDiskStat(ctx, file, info); err != nil {
 				fmt.Fprintf(os.Stderr, "go: writing stat cache: %v\n", err)
 			}
 		}
@@ -312,7 +309,7 @@ func (r *cachingRepo) GoMod(ctx context.Context, version string) ([]byte, error)
 		return r.repo(ctx).GoMod(ctx, version)
 	}
 	text, err := r.gomodCache.Do(version, func() ([]byte, error) {
-		file, text, err := r.fetcher.readDiskGoMod(ctx, r.path, version)
+		file, text, err := readDiskGoMod(ctx, r.path, version)
 		if err == nil {
 			// Note: readDiskGoMod already called checkGoMod.
 			return text, nil
@@ -320,10 +317,10 @@ func (r *cachingRepo) GoMod(ctx context.Context, version string) ([]byte, error)
 
 		text, err = r.repo(ctx).GoMod(ctx, version)
 		if err == nil {
-			if err := checkGoMod(r.fetcher, r.path, version, text); err != nil {
+			if err := checkGoMod(r.path, version, text); err != nil {
 				return text, err
 			}
-			if err := writeDiskGoMod(ctx, file, text); err != nil && !isErrReadOnlyFS(err) {
+			if err := writeDiskGoMod(ctx, file, text); err != nil {
 				fmt.Fprintf(os.Stderr, "go: writing go.mod cache: %v\n", err)
 			}
 		}
@@ -344,7 +341,7 @@ func (r *cachingRepo) Zip(ctx context.Context, dst io.Writer, version string) er
 
 // InfoFile is like Lookup(ctx, path).Stat(version) but also returns the name of the file
 // containing the cached information.
-func (f *Fetcher) InfoFile(ctx context.Context, path, version string) (*RevInfo, string, error) {
+func InfoFile(ctx context.Context, path, version string) (*RevInfo, string, error) {
 	if !gover.ModIsValid(path, version) {
 		return nil, "", fmt.Errorf("invalid version %q", version)
 	}
@@ -356,7 +353,7 @@ func (f *Fetcher) InfoFile(ctx context.Context, path, version string) (*RevInfo,
 	var info *RevInfo
 	var err2info map[error]*RevInfo
 	err := TryProxies(func(proxy string) error {
-		i, err := f.Lookup(ctx, proxy, path).Stat(ctx, version)
+		i, err := Lookup(ctx, proxy, path).Stat(ctx, version)
 		if err == nil {
 			info = i
 		} else {
@@ -382,7 +379,7 @@ func (f *Fetcher) InfoFile(ctx context.Context, path, version string) (*RevInfo,
 // GoMod is like Lookup(ctx, path).GoMod(rev) but avoids the
 // repository path resolution in Lookup if the result is
 // already cached on local disk.
-func (f *Fetcher) GoMod(ctx context.Context, path, rev string) ([]byte, error) {
+func GoMod(ctx context.Context, path, rev string) ([]byte, error) {
 	// Convert commit hash to pseudo-version
 	// to increase cache hit rate.
 	if !gover.ModIsValid(path, rev) {
@@ -393,7 +390,7 @@ func (f *Fetcher) GoMod(ctx context.Context, path, rev string) ([]byte, error) {
 				return nil, err
 			}
 			err := TryProxies(func(proxy string) error {
-				info, err := f.Lookup(ctx, proxy, path).Stat(ctx, rev)
+				info, err := Lookup(ctx, proxy, path).Stat(ctx, rev)
 				if err == nil {
 					rev = info.Version
 				}
@@ -405,13 +402,13 @@ func (f *Fetcher) GoMod(ctx context.Context, path, rev string) ([]byte, error) {
 		}
 	}
 
-	_, data, err := f.readDiskGoMod(ctx, path, rev)
+	_, data, err := readDiskGoMod(ctx, path, rev)
 	if err == nil {
 		return data, nil
 	}
 
 	err = TryProxies(func(proxy string) (err error) {
-		data, err = f.Lookup(ctx, proxy, path).GoMod(ctx, rev)
+		data, err = Lookup(ctx, proxy, path).GoMod(ctx, rev)
 		return err
 	})
 	return data, err
@@ -419,11 +416,11 @@ func (f *Fetcher) GoMod(ctx context.Context, path, rev string) ([]byte, error) {
 
 // GoModFile is like GoMod but returns the name of the file containing
 // the cached information.
-func (f *Fetcher) GoModFile(ctx context.Context, path, version string) (string, error) {
+func GoModFile(ctx context.Context, path, version string) (string, error) {
 	if !gover.ModIsValid(path, version) {
 		return "", fmt.Errorf("invalid version %q", version)
 	}
-	if _, err := f.GoMod(ctx, path, version); err != nil {
+	if _, err := GoMod(ctx, path, version); err != nil {
 		return "", err
 	}
 	// GoMod should have populated the disk cache for us.
@@ -436,11 +433,11 @@ func (f *Fetcher) GoModFile(ctx context.Context, path, version string) (string, 
 
 // GoModSum returns the go.sum entry for the module version's go.mod file.
 // (That is, it returns the entry listed in go.sum as "path version/go.mod".)
-func (f *Fetcher) GoModSum(ctx context.Context, path, version string) (string, error) {
+func GoModSum(ctx context.Context, path, version string) (string, error) {
 	if !gover.ModIsValid(path, version) {
 		return "", fmt.Errorf("invalid version %q", version)
 	}
-	data, err := f.GoMod(ctx, path, version)
+	data, err := GoMod(ctx, path, version)
 	if err != nil {
 		return "", err
 	}
@@ -498,7 +495,7 @@ func readDiskStat(ctx context.Context, path, rev string) (file string, info *Rev
 	// Remarshal and update the cache file if needed.
 	data2, err := json.Marshal(info)
 	if err == nil && !bytes.Equal(data2, data) {
-		writeDiskCache(ctx, file, data2)
+		writeDiskCache(ctx, file, data)
 	}
 	return file, info, nil
 }
@@ -568,7 +565,7 @@ var oldVgoPrefix = []byte("//vgo 0.0.")
 // returning the name of the cache file and the result.
 // If the read fails, the caller can use
 // writeDiskGoMod(file, data) to write a new cache entry.
-func (f *Fetcher) readDiskGoMod(ctx context.Context, path, rev string) (file string, data []byte, err error) {
+func readDiskGoMod(ctx context.Context, path, rev string) (file string, data []byte, err error) {
 	if gover.IsToolchain(path) {
 		return "", nil, errNotCached
 	}
@@ -581,7 +578,7 @@ func (f *Fetcher) readDiskGoMod(ctx context.Context, path, rev string) (file str
 	}
 
 	if err == nil {
-		if err := checkGoMod(f, path, rev, data); err != nil {
+		if err := checkGoMod(path, rev, data); err != nil {
 			return "", nil, err
 		}
 	}
@@ -625,11 +622,10 @@ func writeDiskStat(ctx context.Context, file string, info *RevInfo) error {
 		o := *info.Origin
 		info.Origin = &o
 
-		// Tags and RepoSum never matter if you are starting with a semver version,
+		// Tags never matter if you are starting with a semver version,
 		// as we would be when finding this cache entry.
 		o.TagSum = ""
 		o.TagPrefix = ""
-		o.RepoSum = ""
 		// Ref doesn't matter if you have a pseudoversion.
 		if module.IsPseudoVersion(info.Version) {
 			o.Ref = ""
@@ -656,13 +652,13 @@ func writeDiskCache(ctx context.Context, file string, data []byte) error {
 		return nil
 	}
 	// Make sure directory for file exists.
-	if err := os.MkdirAll(filepath.Dir(file), 0o777); err != nil {
+	if err := os.MkdirAll(filepath.Dir(file), 0777); err != nil {
 		return err
 	}
 
 	// Write the file to a temporary location, and then rename it to its final
 	// path to reduce the likelihood of a corrupt file existing at that final path.
-	f, err := tempFile(ctx, filepath.Dir(file), filepath.Base(file), 0o666)
+	f, err := tempFile(ctx, filepath.Dir(file), filepath.Base(file), 0666)
 	if err != nil {
 		return err
 	}
@@ -690,24 +686,6 @@ func writeDiskCache(ctx context.Context, file string, data []byte) error {
 		rewriteVersionList(ctx, filepath.Dir(file))
 	}
 	return nil
-}
-
-// isErrReadOnlyFS reports whether err is a read-only filesystem error
-// (syscall.EROFS on Unix/wasip1, ERROR_NOT_SUPPORTED on Windows).
-func isErrReadOnlyFS(err error) bool {
-	switch runtime.GOOS {
-	case "plan9":
-		return false
-	case "windows":
-		const ERROR_NOT_SUPPORTED = 50
-		return errors.Is(err, syscall.Errno(ERROR_NOT_SUPPORTED))
-	case "wasip1":
-		const EROFS = 69
-		return errors.Is(err, syscall.Errno(EROFS))
-	default: // unix and js
-		const EROFS = 30
-		return errors.Is(err, syscall.Errno(EROFS))
-	}
 }
 
 // tempFile creates a new temporary file with given permission bits.
@@ -781,7 +759,7 @@ func rewriteVersionList(ctx context.Context, dir string) (err error) {
 	}
 	if fi, err := f.Stat(); err == nil && int(fi.Size()) == buf.Len() {
 		old := make([]byte, buf.Len()+1)
-		if n, err := f.ReadAt(old, 0); err == io.EOF && n == buf.Len() && bytes.Equal(buf.Bytes(), old[:n]) {
+		if n, err := f.ReadAt(old, 0); err == io.EOF && n == buf.Len() && bytes.Equal(buf.Bytes(), old) {
 			return nil // No edit needed.
 		}
 	}
@@ -833,7 +811,7 @@ func checkCacheDir(ctx context.Context) error {
 				statCacheErr = fmt.Errorf("could not create module cache: %w", err)
 				return
 			}
-			if err := os.MkdirAll(cfg.GOMODCACHE, 0o777); err != nil {
+			if err := os.MkdirAll(cfg.GOMODCACHE, 0777); err != nil {
 				statCacheErr = fmt.Errorf("could not create module cache: %w", err)
 				return
 			}

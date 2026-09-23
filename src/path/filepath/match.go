@@ -28,14 +28,12 @@ var ErrBadPattern = errors.New("syntax error in pattern")
 //		'[' [ '^' ] { character-range } ']'
 //		            character class (must be non-empty)
 //		c           matches character c (c != '*', '?', '\\', '[')
-//		'\\' c      matches character c (except on Windows)
+//		'\\' c      matches character c
 //
 //	character-range:
 //		c           matches character c (c != '\\', '-', ']')
-//		'\\' c      matches character c (except on Windows)
+//		'\\' c      matches character c
 //		lo '-' hi   matches character c for lo <= c <= hi
-//
-// Path segments in the pattern must be separated by [Separator].
 //
 // Match requires pattern to match all of name, not just a substring.
 // The only possible returned error is [ErrBadPattern], when pattern
@@ -96,12 +94,16 @@ func scanChunk(pattern string) (star bool, chunk, rest string) {
 		star = true
 	}
 	inrange := false
-	for i := 0; i < len(pattern); i++ {
+	var i int
+Scan:
+	for i = 0; i < len(pattern); i++ {
 		switch pattern[i] {
 		case '\\':
-			// error check handled in matchChunk: bad pattern.
-			if runtime.GOOS != "windows" && i+1 < len(pattern) {
-				i++
+			if runtime.GOOS != "windows" {
+				// error check handled in matchChunk: bad pattern.
+				if i+1 < len(pattern) {
+					i++
+				}
 			}
 		case '[':
 			inrange = true
@@ -109,11 +111,11 @@ func scanChunk(pattern string) (star bool, chunk, rest string) {
 			inrange = false
 		case '*':
 			if !inrange {
-				return star, pattern[:i], pattern[i:]
+				break Scan
 			}
 		}
 	}
-	return star, pattern, ""
+	return star, pattern[0:i], pattern[i:]
 }
 
 // matchChunk checks whether chunk matches the beginning of s.
@@ -125,7 +127,9 @@ func matchChunk(chunk, s string) (rest string, ok bool, err error) {
 	// checking that the pattern is well-formed but no longer reading s.
 	failed := false
 	for len(chunk) > 0 {
-		failed = failed || len(s) == 0
+		if !failed && len(s) == 0 {
+			failed = true
+		}
 		switch chunk[0] {
 		case '[':
 			// character class
@@ -160,14 +164,20 @@ func matchChunk(chunk, s string) (rest string, ok bool, err error) {
 						return "", false, err
 					}
 				}
-				match = match || lo <= r && r <= hi
+				if lo <= r && r <= hi {
+					match = true
+				}
 				nrange++
 			}
-			failed = failed || match == negated
+			if match == negated {
+				failed = true
+			}
 
 		case '?':
 			if !failed {
-				failed = s[0] == Separator
+				if s[0] == Separator {
+					failed = true
+				}
 				_, n := utf8.DecodeRuneInString(s)
 				s = s[n:]
 			}
@@ -184,7 +194,9 @@ func matchChunk(chunk, s string) (rest string, ok bool, err error) {
 
 		default:
 			if !failed {
-				failed = chunk[0] != s[0]
+				if chunk[0] != s[0] {
+					failed = true
+				}
 				s = s[1:]
 			}
 			chunk = chunk[1:]

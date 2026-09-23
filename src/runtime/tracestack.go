@@ -30,7 +30,7 @@ const (
 //
 // Avoid calling this function directly. Prefer traceEventWriter.stack.
 func traceStack(skip int, gp *g, tab *traceStackTable) uint64 {
-	pcBuf := getg().m.profStack
+	var pcBuf [tracev2.MaxFramesPerStack]uintptr
 
 	// Figure out gp and mp for the backtrace.
 	var mp *m
@@ -136,9 +136,8 @@ func traceStack(skip int, gp *g, tab *traceStackTable) uint64 {
 	return id
 }
 
-// traceStackTable maps stack traces (arrays of PC's) to unique IDs.
-//
-// ID 0 is reserved for a zero-length stack.
+// traceStackTable maps stack traces (arrays of PC's) to unique uint32 ids.
+// It is lock-free for reading.
 type traceStackTable struct {
 	tab traceMap
 }
@@ -146,10 +145,8 @@ type traceStackTable struct {
 // put returns a unique id for the stack trace pcs and caches it in the table,
 // if it sees the trace for the first time.
 func (t *traceStackTable) put(pcs []uintptr) uint64 {
-	// Even though put will handle this for us, taking the address of pcs forces a bounds check
-	// that will fail if len(pcs) == 0.
 	if len(pcs) == 0 {
-		return 0 // ID 0 is reserved for zero-length stacks.
+		return 0
 	}
 	id, _ := t.tab.put(noescape(unsafe.Pointer(&pcs[0])), uintptr(len(pcs))*unsafe.Sizeof(uintptr(0)))
 	return id
@@ -193,7 +190,7 @@ func dumpStacksRec(node *traceMapNode, w traceWriter, stackBuf []uintptr) traceW
 
 	// Emit stack event.
 	w.byte(byte(tracev2.EvStack))
-	w.varint(node.id)
+	w.varint(uint64(node.id))
 	w.varint(uint64(len(frames)))
 	for _, frame := range frames {
 		w.varint(uint64(frame.PC))

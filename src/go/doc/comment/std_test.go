@@ -13,9 +13,7 @@ import (
 )
 
 func TestStd(t *testing.T) {
-	cmd := testenv.Command(t, testenv.GoToolPath(t), "list", "std")
-	cmd.Env = append(cmd.Environ(), "GOEXPERIMENT=none")
-	out, err := cmd.CombinedOutput()
+	out, err := testenv.Command(t, testenv.GoToolPath(t), "list", "std").CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

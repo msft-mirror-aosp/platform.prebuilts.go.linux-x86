@@ -37,9 +37,6 @@ func RegName(r int) string {
 }
 
 func opSuffixString(s uint8) string {
-	if s == fenceTsoSuffixBit {
-		return ".TSO"
-	}
 	if s&rmSuffixBit == 0 {
 		return ""
 	}
@@ -55,14 +52,9 @@ func opSuffixString(s uint8) string {
 }
 
 func specialOperandConv(a int64) string {
-	var s string
-
 	spc := SpecialOperand(a)
 	if spc >= SPOP_BEGIN && spc < SPOP_END {
-		s = spc.String()
+		return spc.String()
 	}
-	if s == "" {
-		return "SPC_??"
-	}
-	return s
+	return "SPC_??"
 }

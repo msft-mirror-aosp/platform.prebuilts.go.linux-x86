@@ -50,7 +50,6 @@ func Compact(dst *bytes.Buffer, src []byte) error {
 	dst.Grow(len(src))
 	b := dst.AvailableBuffer()
 	b, err := jsontext.AppendFormat(b, src,
-		ReportErrorsWithLegacySemantics(true),
 		jsontext.AllowDuplicateNames(true),
 		jsontext.AllowInvalidUTF8(true),
 		jsontext.PreserveRawStrings(true))
@@ -89,8 +88,17 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 }
 
 func appendIndent(dst, src []byte, prefix, indent string) ([]byte, error) {
-	// In v2, only spaces and tabs are allowed, while v1 allowed any character.
+	// In v2, trailing whitespace is discarded, while v1 preserved it.
 	dstLen := len(dst)
+	if n := len(src) - len(bytes.TrimRight(src, " \n\r\t")); n > 0 {
+		// Append the trailing whitespace afterwards.
+		defer func() {
+			if len(dst) > dstLen {
+				dst = append(dst, src[len(src)-n:]...)
+			}
+		}()
+	}
+	// In v2, only spaces and tabs are allowed, while v1 allowed any character.
 	if len(strings.Trim(prefix, " \t"))+len(strings.Trim(indent, " \t")) > 0 {
 		// Use placeholder spaces of correct length, and replace afterwards.
 		invalidPrefix, invalidIndent := prefix, indent
@@ -112,7 +120,6 @@ func appendIndent(dst, src []byte, prefix, indent string) ([]byte, error) {
 	}
 
 	dst, err := jsontext.AppendFormat(dst, src,
-		ReportErrorsWithLegacySemantics(true),
 		jsontext.AllowDuplicateNames(true),
 		jsontext.AllowInvalidUTF8(true),
 		jsontext.PreserveRawStrings(true),
@@ -121,11 +128,6 @@ func appendIndent(dst, src []byte, prefix, indent string) ([]byte, error) {
 		jsontext.WithIndent(indent))
 	if err != nil {
 		return dst[:dstLen], transformSyntacticError(err)
-	}
-
-	// In v2, trailing whitespace is discarded, while v1 preserved it.
-	if n := len(src) - len(bytes.TrimRight(src, " \n\r\t")); n > 0 {
-		dst = append(dst, src[len(src)-n:]...)
 	}
 	return dst, nil
 }

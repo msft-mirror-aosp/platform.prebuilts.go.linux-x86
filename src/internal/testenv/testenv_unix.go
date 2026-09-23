@@ -21,7 +21,8 @@ func syscallIsNotSupported(err error) bool {
 		return false
 	}
 
-	if errno, ok := errors.AsType[syscall.Errno](err); ok {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
 		switch errno {
 		case syscall.EPERM, syscall.EROFS:
 			// User lacks permission: either the call requires root permission and the

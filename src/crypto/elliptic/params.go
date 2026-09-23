@@ -295,13 +295,13 @@ func (curve *CurveParams) ScalarMult(Bx, By *big.Int, k []byte) (*big.Int, *big.
 	Bz := new(big.Int).SetInt64(1)
 	x, y, z := new(big.Int), new(big.Int), new(big.Int)
 
-	for _, b := range k {
-		for range 8 {
+	for _, byte := range k {
+		for bitNum := 0; bitNum < 8; bitNum++ {
 			x, y, z = curve.doubleJacobian(x, y, z)
-			if b&0x80 == 0x80 {
+			if byte&0x80 == 0x80 {
 				x, y, z = curve.addJacobian(Bx, By, Bz, x, y, z)
 			}
-			b <<= 1
+			byte <<= 1
 		}
 	}
 

@@ -115,7 +115,7 @@ func genFilenames(t *testing.T, filenames chan<- string) {
 			return nil
 		}
 		// don't descend into testdata directories
-		if !d.IsDir() && isGoFilename(d.Name()) && !strings.Contains(filepath.ToSlash(filename), "/testdata/") {
+		if isGoFile(d) && !strings.Contains(filepath.ToSlash(filename), "/testdata/") {
 			filenames <- filename
 			nfiles++
 		}

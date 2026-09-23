@@ -62,7 +62,8 @@ func findListener() (net.Listener, error) {
 		l, err := net.FileListener(f)
 		f.Close()
 
-		switch se, _ := errors.AsType[syscall.Errno](err); se {
+		var se syscall.Errno
+		switch errors.As(err, &se); se {
 		case syscall.ENOTSOCK:
 			continue
 		case syscall.EBADF:

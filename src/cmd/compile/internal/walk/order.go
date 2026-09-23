@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go/constant"
 	"internal/abi"
+	"internal/buildcfg"
 
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
@@ -260,7 +261,7 @@ func (o *orderState) addrTemp(n ir.Node) ir.Node {
 			// v can be directly represented in the read-only data section.
 			lit := v.(*ir.CompLitExpr)
 			vstat := readonlystaticname(n.Type())
-			fixedlit(initKindStatic, lit, vstat, nil) // nil init
+			fixedlit(inInitFunction, initKindStatic, lit, vstat, nil) // nil init
 			vstat = typecheck.Expr(vstat).(*ir.Name)
 			return vstat
 		}
@@ -845,7 +846,7 @@ func (o *orderState) stmt(n ir.Node) {
 		o.out = append(o.out, n)
 		o.popTemp(t)
 
-	case ir.OPRINT, ir.OPRINTLN, ir.ORECOVER:
+	case ir.OPRINT, ir.OPRINTLN, ir.ORECOVERFP:
 		n := n.(*ir.CallExpr)
 		t := o.markTemp()
 		o.call(n)
@@ -967,7 +968,11 @@ func (o *orderState) stmt(n ir.Node) {
 
 			// n.Prealloc is the temp for the iterator.
 			// MapIterType contains pointers and needs to be zeroed.
-			n.Prealloc = o.newTemp(reflectdata.MapIterType(), true)
+			if buildcfg.Experiment.SwissMap {
+				n.Prealloc = o.newTemp(reflectdata.SwissMapIterType(), true)
+			} else {
+				n.Prealloc = o.newTemp(reflectdata.OldMapIterType(), true)
+			}
 		}
 		n.Key = o.exprInPlace(n.Key)
 		n.Value = o.exprInPlace(n.Value)
@@ -1350,7 +1355,7 @@ func (o *orderState) expr1(n, lhs ir.Node) ir.Node {
 		ir.OMIN,
 		ir.ONEW,
 		ir.OREAL,
-		ir.ORECOVER,
+		ir.ORECOVERFP,
 		ir.OSTR2BYTES,
 		ir.OSTR2BYTESTMP,
 		ir.OSTR2RUNES:

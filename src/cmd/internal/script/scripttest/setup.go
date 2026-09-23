@@ -6,10 +6,8 @@
 package scripttest
 
 import (
-	"errors"
 	"internal/testenv"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -85,7 +83,7 @@ func ReplaceGoToolInTestGoRoot(t *testing.T, testgoroot, toolname, newtoolpath s
 		exename += ".exe"
 	}
 	toolpath := filepath.Join(testgoroot, toolsub, exename)
-	if err := os.Remove(toolpath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := os.Remove(toolpath); err != nil {
 		t.Fatalf("removing %s: %v", toolpath, err)
 	}
 	linkOrCopy(t, newtoolpath, toolpath)

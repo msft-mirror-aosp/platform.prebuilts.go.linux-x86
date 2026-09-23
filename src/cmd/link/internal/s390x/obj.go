@@ -52,10 +52,9 @@ func Init() (*sys.Arch, ld.Arch) {
 		Archrelocvariant: archrelocvariant,
 		Gentext:          gentext,
 		Machoreloc1:      machoreloc1,
-		TLSIEtoLE:        tlsIEtoLE,
 
 		ELF: ld.ELFArch{
-			Linuxdynld:     "/lib/ld64.so.1",
+			Linuxdynld:     "/lib64/ld64.so.1",
 			LinuxdynldMusl: "/lib/ld-musl-s390x.so.1",
 
 			// not relevant for s390x

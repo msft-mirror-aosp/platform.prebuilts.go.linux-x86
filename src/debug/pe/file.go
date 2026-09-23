@@ -22,7 +22,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"internal/saferio"
 	"io"
 	"os"
 	"strings"
@@ -82,9 +81,7 @@ func NewFile(r io.ReaderAt) (*File, error) {
 	if dosheader[0] == 'M' && dosheader[1] == 'Z' {
 		signoff := int64(binary.LittleEndian.Uint32(dosheader[0x3c:]))
 		var sign [4]byte
-		if _, err := r.ReadAt(sign[:], signoff); err != nil {
-			return nil, err
-		}
+		r.ReadAt(sign[:], signoff)
 		if !(sign[0] == 'P' && sign[1] == 'E' && sign[2] == 0 && sign[3] == 0) {
 			return nil, fmt.Errorf("invalid PE file signature: % x", sign)
 		}
@@ -240,12 +237,12 @@ func (f *File) DWARF() (*dwarf.Data, error) {
 
 		if len(b) >= 12 && string(b[:4]) == "ZLIB" {
 			dlen := binary.BigEndian.Uint64(b[4:12])
+			dbuf := make([]byte, dlen)
 			r, err := zlib.NewReader(bytes.NewBuffer(b[12:]))
 			if err != nil {
 				return nil, err
 			}
-			dbuf, err := saferio.ReadData(r, dlen)
-			if err != nil {
+			if _, err := io.ReadFull(r, dbuf); err != nil {
 				return nil, err
 			}
 			if err := r.Close(); err != nil {
@@ -382,11 +379,7 @@ func (f *File) ImportedSymbols() ([]string, error) {
 	}
 
 	// seek to the virtual address specified in the import data directory
-	seek := idd.VirtualAddress - ds.VirtualAddress
-	if seek >= uint32(len(d)) {
-		return nil, errors.New("optional header data directory virtual size doesn't fit within data seek")
-	}
-	d = d[seek:]
+	d = d[idd.VirtualAddress-ds.VirtualAddress:]
 
 	// start decoding the import directory
 	var ida []ImportDirectory
@@ -415,16 +408,9 @@ func (f *File) ImportedSymbols() ([]string, error) {
 		dt.dll, _ = getString(names, int(dt.Name-ds.VirtualAddress))
 		d, _ = ds.Data()
 		// seek to OriginalFirstThunk
-		seek := dt.OriginalFirstThunk - ds.VirtualAddress
-		if seek >= uint32(len(d)) {
-			return nil, errors.New("import directory original first thunk doesn't fit within data seek")
-		}
-		d = d[seek:]
+		d = d[dt.OriginalFirstThunk-ds.VirtualAddress:]
 		for len(d) > 0 {
 			if pe64 { // 64bit
-				if len(d) < 8 {
-					return nil, errors.New("thunk parsing needs at least 8-bytes")
-				}
 				va := binary.LittleEndian.Uint64(d[0:8])
 				d = d[8:]
 				if va == 0 {
@@ -437,9 +423,6 @@ func (f *File) ImportedSymbols() ([]string, error) {
 					all = append(all, fn+":"+dt.dll)
 				}
 			} else { // 32bit
-				if len(d) <= 4 {
-					return nil, errors.New("thunk parsing needs at least 5-bytes")
-				}
 				va := binary.LittleEndian.Uint32(d[0:4])
 				d = d[4:]
 				if va == 0 {

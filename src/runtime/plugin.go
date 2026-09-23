@@ -66,7 +66,9 @@ func plugin_lastmoduleinit() (path string, syms map[string]any, initTasks []*ini
 	moduledataverify1(md)
 
 	lock(&itabLock)
-	addModuleItabs(md)
+	for _, i := range md.itablinks {
+		itabAdd(i)
+	}
 	unlock(&itabLock)
 
 	// Build a map of symbol names to symbols. Here in the runtime
@@ -86,7 +88,7 @@ func plugin_lastmoduleinit() (path string, syms map[string]any, initTasks []*ini
 		(*valp)[0] = unsafe.Pointer(t)
 
 		name := symName.Name()
-		if t.Kind() == abi.Func {
+		if t.Kind_&abi.KindMask == abi.Func {
 			name = "." + name
 		}
 		syms[name] = val

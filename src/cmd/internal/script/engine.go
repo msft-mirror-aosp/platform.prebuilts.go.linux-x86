@@ -74,6 +74,14 @@ type Engine struct {
 	Quiet bool
 }
 
+// NewEngine returns an Engine configured with a basic set of commands and conditions.
+func NewEngine() *Engine {
+	return &Engine{
+		Cmds:  DefaultCmds(),
+		Conds: DefaultConds(),
+	}
+}
+
 // A Cmd is a command that is available to a script.
 type Cmd interface {
 	// Run begins running the command.
@@ -187,7 +195,7 @@ func (e *Engine) Execute(s *State, file string, script *bufio.Reader, log io.Wri
 
 	var lineno int
 	lineErr := func(err error) error {
-		if _, ok := errors.AsType[*CommandError](err); ok {
+		if errors.As(err, new(*CommandError)) {
 			return err
 		}
 		return fmt.Errorf("%s:%d: %w", file, lineno, err)
@@ -285,7 +293,7 @@ func (e *Engine) Execute(s *State, file string, script *bufio.Reader, log io.Wri
 		// Run the command.
 		err = e.runCommand(s, cmd, impl)
 		if err != nil {
-			if stop, ok := errors.AsType[stopError](err); ok {
+			if stop := (stopError{}); errors.As(err, &stop) {
 				// Since the 'stop' command halts execution of the entire script,
 				// log its message separately from the section in which it appears.
 				err = endSection(true)
@@ -493,13 +501,15 @@ func expandArgs(s *State, rawArgs [][]argFragment, regexpArgs []int) []string {
 }
 
 // quoteArgs returns a string that parse would parse as args when passed to a command.
+//
+// TODO(bcmills): This function should have a fuzz test.
 func quoteArgs(args []string) string {
 	var b strings.Builder
 	for i, arg := range args {
 		if i > 0 {
 			b.WriteString(" ")
 		}
-		if len(arg) == 0 || strings.ContainsAny(arg, "&'$"+argSepChars) {
+		if strings.ContainsAny(arg, "'"+argSepChars) {
 			// Quote the argument to a form that would be parsed as a single argument.
 			b.WriteString("'")
 			b.WriteString(strings.ReplaceAll(arg, "'", "''"))
@@ -578,21 +588,23 @@ func (e *Engine) runCommand(s *State, cmd *command, impl Cmd) error {
 		return nil
 	}
 
-	stdout, stderr, waitErr := wait(s)
-	s.stdout = stdout
-	s.stderr = stderr
-	if stdout != "" {
-		s.Logf("[stdout]\n%s", stdout)
-	}
-	if stderr != "" {
-		s.Logf("[stderr]\n%s", stderr)
-	}
-	if cmdErr := checkStatus(cmd, waitErr); cmdErr != nil {
-		return cmdErr
-	}
-	if waitErr != nil {
-		// waitErr was expected (by cmd.want), so log it instead of returning it.
-		s.Logf("[%v]\n", waitErr)
+	if wait != nil {
+		stdout, stderr, waitErr := wait(s)
+		s.stdout = stdout
+		s.stderr = stderr
+		if stdout != "" {
+			s.Logf("[stdout]\n%s", stdout)
+		}
+		if stderr != "" {
+			s.Logf("[stderr]\n%s", stderr)
+		}
+		if cmdErr := checkStatus(cmd, waitErr); cmdErr != nil {
+			return cmdErr
+		}
+		if waitErr != nil {
+			// waitErr was expected (by cmd.want), so log it instead of returning it.
+			s.Logf("[%v]\n", waitErr)
+		}
 	}
 	return nil
 }
@@ -605,13 +617,13 @@ func checkStatus(cmd *command, err error) error {
 		return nil
 	}
 
-	if _, ok := errors.AsType[stopError](err); ok {
+	if s := (stopError{}); errors.As(err, &s) {
 		// This error originated in the Stop command.
 		// Propagate it as-is.
 		return cmdError(cmd, err)
 	}
 
-	if _, ok := errors.AsType[waitError](err); ok {
+	if w := (waitError{}); errors.As(err, &w) {
 		// This error was surfaced from a background process by a call to Wait.
 		// Add a call frame for Wait itself, but ignore its "want" field.
 		// (Wait itself cannot fail to wait on commands or else it would leak

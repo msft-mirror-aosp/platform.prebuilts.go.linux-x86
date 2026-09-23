@@ -8,10 +8,9 @@ import (
 	"internal/abi"
 	"internal/bytealg"
 	"internal/goarch"
-	"internal/goos"
 	"internal/runtime/math"
+	"internal/runtime/strconv"
 	"internal/runtime/sys"
-	"internal/strconv"
 	"unsafe"
 )
 
@@ -60,9 +59,6 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	return s
 }
 
-// concatstring2 helps make the callsite smaller (compared to concatstrings),
-// and we think this is currently more valuable than omitting one call in the
-// chain, the same goes for concatstring{3,4,5}.
 func concatstring2(buf *tmpBuf, a0, a1 string) string {
 	return concatstrings(buf, []string{a0, a1})
 }
@@ -112,9 +108,6 @@ func concatbytes(buf *tmpBuf, a []string) []byte {
 	return b
 }
 
-// concatbyte2 helps make the callsite smaller (compared to concatbytes),
-// and we think this is currently more valuable than omitting one call in
-// the chain, the same goes for concatbyte{3,4,5}.
 func concatbyte2(buf *tmpBuf, a0, a1 string) []byte {
 	return concatbytes(buf, []string{a0, a1})
 }
@@ -421,11 +414,11 @@ func parseByteCount(s string) (int64, bool) {
 	// Handle the easy non-suffix case.
 	last := s[len(s)-1]
 	if last >= '0' && last <= '9' {
-		n, err := strconv.ParseInt(s, 10, 64)
-		if err != nil || n < 0 {
+		n, ok := strconv.Atoi64(s)
+		if !ok || n < 0 {
 			return 0, false
 		}
-		return n, true
+		return n, ok
 	}
 	// Failing a trailing digit, this must always end in 'B'.
 	// Also at this point there must be at least one digit before
@@ -436,11 +429,11 @@ func parseByteCount(s string) (int64, bool) {
 	// The one before that must always be a digit or 'i'.
 	if c := s[len(s)-2]; c >= '0' && c <= '9' {
 		// Trivial 'B' suffix.
-		n, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
-		if err != nil || n < 0 {
+		n, ok := strconv.Atoi64(s[:len(s)-1])
+		if !ok || n < 0 {
 			return 0, false
 		}
-		return n, true
+		return n, ok
 	} else if c != 'i' {
 		return 0, false
 	}
@@ -467,8 +460,8 @@ func parseByteCount(s string) (int64, bool) {
 	for i := 0; i < power; i++ {
 		m *= 1024
 	}
-	n, err := strconv.ParseInt(s[:len(s)-3], 10, 64)
-	if err != nil || n < 0 {
+	n, ok := strconv.Atoi64(s[:len(s)-3])
+	if !ok || n < 0 {
 		return 0, false
 	}
 	un := uint64(n)
@@ -506,9 +499,7 @@ func findnull(s *byte) int {
 	// It must be the minimum page size for any architecture Go
 	// runs on. It's okay (just a minor performance loss) if the
 	// actual system page size is larger than this value.
-	// For Android, we set the page size to the MTE size, as MTE
-	// might be enforced. See issue 59090.
-	const pageSize = 4096*(1-goos.IsAndroid) + 16*goos.IsAndroid
+	const pageSize = 4096
 
 	offset := 0
 	ptr := unsafe.Pointer(s)

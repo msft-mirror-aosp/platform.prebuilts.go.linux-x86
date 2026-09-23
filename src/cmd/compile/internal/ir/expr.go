@@ -184,20 +184,14 @@ func (n *BinaryExpr) SetOp(op Op) {
 // A CallExpr is a function call Fun(Args).
 type CallExpr struct {
 	miniExpr
-	Fun           Node
-	Args          Nodes
-	DeferAt       Node
-	RType         Node    `mknode:"-"` // see reflectdata/helpers.go
-	KeepAlive     []*Name // vars to be kept alive until call returns
-	IsDDD         bool
-	GoDefer       bool // whether this call is part of a go or defer statement
-	NoInline      bool // whether this call must not be inlined
-	UseBuf        bool // use stack buffer for backing store (OAPPEND only)
-	AppendNoAlias bool // backing store proven to be unaliased (OAPPEND only)
-	// whether it's a runtime.KeepAlive call the compiler generates to
-	// keep a variable alive. See #73137.
-	IsCompilerVarLive bool
-	Reshape           bool
+	Fun       Node
+	Args      Nodes
+	DeferAt   Node
+	RType     Node    `mknode:"-"` // see reflectdata/helpers.go
+	KeepAlive []*Name // vars to be kept alive until call returns
+	IsDDD     bool
+	GoDefer   bool // whether this call is part of a go or defer statement
+	NoInline  bool // whether this call must not be inlined
 }
 
 func NewCallExpr(pos src.XPos, op Op, fun Node, args []Node) *CallExpr {
@@ -219,7 +213,7 @@ func (n *CallExpr) SetOp(op Op) {
 		ODELETE,
 		OGETG, OGETCALLERSP,
 		OMAKE, OMAX, OMIN, OPRINT, OPRINTLN,
-		ORECOVER:
+		ORECOVER, ORECOVERFP:
 		n.op = op
 	}
 }
@@ -377,7 +371,6 @@ type InlinedCallExpr struct {
 	miniExpr
 	Body       Nodes
 	ReturnVars Nodes // must be side-effect free
-	Reshape    bool
 }
 
 func NewInlinedCallExpr(pos src.XPos, body, retvars []Node) *InlinedCallExpr {
@@ -393,16 +386,10 @@ func (n *InlinedCallExpr) SingleResult() Node {
 	if have := len(n.ReturnVars); have != 1 {
 		base.FatalfAt(n.Pos(), "inlined call has %v results, expected 1", have)
 	}
-
-	// If the type of the call is not a shape, but the type of the return value
-	// is a shape, we need to do an implicit conversion, so the real type
-	// of n is maintained.
-	needImplicitConv := !n.Type().HasShape() && n.ReturnVars[0].Type().HasShape()
-	if n.Reshape { // or if the inlined call expr needs reshaping.
-		needImplicitConv = true
-	}
-
-	if needImplicitConv {
+	if !n.Type().HasShape() && n.ReturnVars[0].Type().HasShape() {
+		// If the type of the call is not a shape, but the type of the return value
+		// is a shape, we need to do an implicit conversion, so the real type
+		// of n is maintained.
 		r := NewConvExpr(n.Pos(), OCONVNOP, n.Type(), n.ReturnVars[0])
 		r.SetTypecheck(1)
 		return r
@@ -630,7 +617,7 @@ func (o Op) IsSlice3() bool {
 	return false
 }
 
-// A SliceHeaderExpr constructs a slice header from its parts.
+// A SliceHeader expression constructs a slice header from its parts.
 type SliceHeaderExpr struct {
 	miniExpr
 	Ptr Node
@@ -678,7 +665,7 @@ func NewStarExpr(pos src.XPos, x Node) *StarExpr {
 func (n *StarExpr) Implicit() bool     { return n.flags&miniExprImplicit != 0 }
 func (n *StarExpr) SetImplicit(b bool) { n.flags.set(miniExprImplicit, b) }
 
-// A TypeAssertExpr is a selector expression X.(Type).
+// A TypeAssertionExpr is a selector expression X.(Type).
 // Before type-checking, the type is Ntype.
 type TypeAssertExpr struct {
 	miniExpr
@@ -690,11 +677,6 @@ type TypeAssertExpr struct {
 
 	// An internal/abi.TypeAssert descriptor to pass to the runtime.
 	Descriptor *obj.LSym
-
-	// When set to true, if this assert would panic, then use a nil pointer panic
-	// instead of an interface conversion panic.
-	// It must not be set for type assertions using the commaok form.
-	UseNilPanic bool
 }
 
 func NewTypeAssertExpr(pos src.XPos, x Node, typ *types.Type) *TypeAssertExpr {
@@ -930,12 +912,12 @@ FindRHS:
 				break FindRHS
 			}
 		}
-		base.FatalfAt(defn.Pos(), "%v missing from LHS of %v", n, defn)
+		base.Fatalf("%v missing from LHS of %v", n, defn)
 	default:
 		return nil
 	}
 	if rhs == nil {
-		base.FatalfAt(defn.Pos(), "RHS is nil: %v", defn)
+		base.Fatalf("RHS is nil: %v", defn)
 	}
 
 	if Reassigned(n) {
@@ -1039,9 +1021,6 @@ func StaticCalleeName(n Node) *Name {
 
 // IsIntrinsicCall reports whether the compiler back end will treat the call as an intrinsic operation.
 var IsIntrinsicCall = func(*CallExpr) bool { return false }
-
-// IsIntrinsicSym reports whether the compiler back end will treat a call to this symbol as an intrinsic operation.
-var IsIntrinsicSym = func(*types.Sym) bool { return false }
 
 // SameSafeExpr checks whether it is safe to reuse one of l and r
 // instead of computing both. SameSafeExpr assumes that l and r are
@@ -1156,14 +1135,6 @@ func IsReflectHeaderDataField(l Node) bool {
 func ParamNames(ft *types.Type) []Node {
 	args := make([]Node, ft.NumParams())
 	for i, f := range ft.Params() {
-		args[i] = f.Nname.(*Name)
-	}
-	return args
-}
-
-func RecvParamNames(ft *types.Type) []Node {
-	args := make([]Node, ft.NumRecvs()+ft.NumParams())
-	for i, f := range ft.RecvParams() {
 		args[i] = f.Nname.(*Name)
 	}
 	return args
@@ -1292,29 +1263,4 @@ func MethodExprFunc(n Node) *types.Field {
 	}
 	base.Fatalf("unexpected node: %v (%v)", n, n.Op())
 	panic("unreachable")
-}
-
-// A MoveToHeapExpr takes a slice as input and moves it to the
-// heap (by copying the backing store if it is not already
-// on the heap).
-type MoveToHeapExpr struct {
-	miniExpr
-	Slice Node
-	// An expression that evaluates to a *runtime._type
-	// that represents the slice element type.
-	RType Node
-	// If PreserveCapacity is true, the capacity of
-	// the resulting slice, and all of the elements in
-	// [len:cap], must be preserved.
-	// If PreserveCapacity is false, the resulting
-	// slice may have any capacity >= len, with any
-	// elements in the resulting [len:cap] range zeroed.
-	PreserveCapacity bool
-}
-
-func NewMoveToHeapExpr(pos src.XPos, slice Node) *MoveToHeapExpr {
-	n := &MoveToHeapExpr{Slice: slice}
-	n.pos = pos
-	n.op = OMOVE2HEAP
-	return n
 }

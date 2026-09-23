@@ -95,7 +95,9 @@ func scanChunk(pattern string) (star bool, chunk, rest string) {
 		star = true
 	}
 	inrange := false
-	for i := 0; i < len(pattern); i++ {
+	var i int
+Scan:
+	for i = 0; i < len(pattern); i++ {
 		switch pattern[i] {
 		case '\\':
 			// error check handled in matchChunk: bad pattern.
@@ -108,11 +110,11 @@ func scanChunk(pattern string) (star bool, chunk, rest string) {
 			inrange = false
 		case '*':
 			if !inrange {
-				return star, pattern[:i], pattern[i:]
+				break Scan
 			}
 		}
 	}
-	return star, pattern, ""
+	return star, pattern[0:i], pattern[i:]
 }
 
 // matchChunk checks whether chunk matches the beginning of s.
@@ -124,7 +126,9 @@ func matchChunk(chunk, s string) (rest string, ok bool, err error) {
 	// checking that the pattern is well-formed but no longer reading s.
 	failed := false
 	for len(chunk) > 0 {
-		failed = failed || len(s) == 0
+		if !failed && len(s) == 0 {
+			failed = true
+		}
 		switch chunk[0] {
 		case '[':
 			// character class
@@ -159,14 +163,20 @@ func matchChunk(chunk, s string) (rest string, ok bool, err error) {
 						return "", false, err
 					}
 				}
-				match = match || lo <= r && r <= hi
+				if lo <= r && r <= hi {
+					match = true
+				}
 				nrange++
 			}
-			failed = failed || match == negated
+			if match == negated {
+				failed = true
+			}
 
 		case '?':
 			if !failed {
-				failed = s[0] == '/'
+				if s[0] == '/' {
+					failed = true
+				}
 				_, n := utf8.DecodeRuneInString(s)
 				s = s[n:]
 			}
@@ -181,7 +191,9 @@ func matchChunk(chunk, s string) (rest string, ok bool, err error) {
 
 		default:
 			if !failed {
-				failed = chunk[0] != s[0]
+				if chunk[0] != s[0] {
+					failed = true
+				}
 				s = s[1:]
 			}
 			chunk = chunk[1:]

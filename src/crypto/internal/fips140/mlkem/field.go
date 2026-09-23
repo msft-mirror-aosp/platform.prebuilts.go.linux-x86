@@ -203,7 +203,9 @@ func sliceForAppend(in []byte, n int) (head, tail []byte) {
 // followed by ByteEncode₁, according to FIPS 203, Algorithm 5.
 func ringCompressAndEncode1(s []byte, f ringElement) []byte {
 	s, b := sliceForAppend(s, encodingSize1)
-	clear(b)
+	for i := range b {
+		b[i] = 0
+	}
 	for i := range f {
 		b[i/8] |= uint8(compress(f[i], 1) << (i % 8))
 	}

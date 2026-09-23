@@ -41,10 +41,6 @@ type Writer struct {
 //
 // It is the caller's responsibility to call Close on the Writer when done.
 // Writes may be buffered and not flushed until Close.
-//
-// Note that the exact bytes written to w are not covered by the Go 1
-// compatibility promise. Callers, including tests, should not depend on the
-// exact written bytes.
 func NewWriter(w io.Writer) *Writer {
 	z, _ := NewWriterLevelDict(w, DefaultCompression, nil)
 	return z
@@ -56,10 +52,6 @@ func NewWriter(w io.Writer) *Writer {
 // The compression level can be [DefaultCompression], [NoCompression], [HuffmanOnly]
 // or any integer value between [BestSpeed] and [BestCompression] inclusive.
 // The error returned will be nil if the level is valid.
-//
-// Note that the exact bytes written to w are not covered by the Go 1
-// compatibility promise. Callers, including tests, should not depend on the
-// exact written bytes.
 func NewWriterLevel(w io.Writer, level int) (*Writer, error) {
 	return NewWriterLevelDict(w, level, nil)
 }
@@ -69,10 +61,6 @@ func NewWriterLevel(w io.Writer, level int) (*Writer, error) {
 //
 // The dictionary may be nil. If not, its contents should not be modified until
 // the Writer is closed.
-//
-// Note that the exact bytes written to w are not covered by the Go 1
-// compatibility promise. Callers, including tests, should not depend on the
-// exact written bytes.
 func NewWriterLevelDict(w io.Writer, level int, dict []byte) (*Writer, error) {
 	if level < HuffmanOnly || level > BestCompression {
 		return nil, fmt.Errorf("zlib: invalid compression level: %d", level)

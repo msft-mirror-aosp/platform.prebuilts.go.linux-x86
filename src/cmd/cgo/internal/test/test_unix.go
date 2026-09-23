@@ -6,13 +6,6 @@
 
 package cgotest
 
-import (
-	"syscall"
-	"testing"
-)
+import "syscall"
 
 var syscall_dot_SIGCHLD = syscall.SIGCHLD
-
-func usesUCRT(t *testing.T) bool {
-	return false
-}

@@ -286,7 +286,7 @@ func TestRegIndex(t *testing.T) {
 			have := regIndex(int16(reg))
 			want := index
 			if have != want {
-				regName := rconv(reg)
+				regName := rconv(int(reg))
 				t.Errorf("regIndex(%s):\nhave: %d\nwant: %d",
 					regName, have, want)
 			}

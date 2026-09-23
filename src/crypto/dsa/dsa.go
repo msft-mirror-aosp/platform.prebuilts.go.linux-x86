@@ -19,7 +19,7 @@ import (
 	"math/big"
 
 	"crypto/internal/fips140only"
-	"crypto/internal/rand"
+	"crypto/internal/randutil"
 )
 
 // Parameters represents the domain parameters for a key. These parameters can
@@ -64,7 +64,7 @@ const numMRTests = 64
 // GenerateParameters puts a random, valid set of DSA parameters into params.
 // This function can take many seconds, even on fast machines.
 func GenerateParameters(params *Parameters, rand io.Reader, sizes ParameterSizes) error {
-	if fips140only.Enforced() {
+	if fips140only.Enabled {
 		return errors.New("crypto/dsa: use of DSA is not allowed in FIPS 140-only mode")
 	}
 
@@ -162,7 +162,7 @@ GeneratePrimes:
 // GenerateKey generates a public&private key pair. The Parameters of the
 // [PrivateKey] must already be valid (see [GenerateParameters]).
 func GenerateKey(priv *PrivateKey, rand io.Reader) error {
-	if fips140only.Enforced() {
+	if fips140only.Enabled {
 		return errors.New("crypto/dsa: use of DSA is not allowed in FIPS 140-only mode")
 	}
 
@@ -209,18 +209,14 @@ func fermatInverse(k, P *big.Int) *big.Int {
 // to the byte-length of the subgroup. This function does not perform that
 // truncation itself.
 //
-// Since Go 1.26, a secure source of random bytes is always used, and the Reader is
-// ignored unless GODEBUG=cryptocustomrand=1 is set. This setting will be removed
-// in a future Go release. Instead, use [testing/cryptotest.SetGlobalRandom].
-//
 // Be aware that calling Sign with an attacker-controlled [PrivateKey] may
 // require an arbitrary amount of CPU.
-func Sign(random io.Reader, priv *PrivateKey, hash []byte) (r, s *big.Int, err error) {
-	if fips140only.Enforced() {
+func Sign(rand io.Reader, priv *PrivateKey, hash []byte) (r, s *big.Int, err error) {
+	if fips140only.Enabled {
 		return nil, nil, errors.New("crypto/dsa: use of DSA is not allowed in FIPS 140-only mode")
 	}
 
-	random = rand.CustomReader(random)
+	randutil.MaybeReadByte(rand)
 
 	// FIPS 186-3, section 4.6
 
@@ -236,7 +232,7 @@ func Sign(random io.Reader, priv *PrivateKey, hash []byte) (r, s *big.Int, err e
 		k := new(big.Int)
 		buf := make([]byte, n)
 		for {
-			_, err = io.ReadFull(random, buf)
+			_, err = io.ReadFull(rand, buf)
 			if err != nil {
 				return
 			}
@@ -288,7 +284,7 @@ func Sign(random io.Reader, priv *PrivateKey, hash []byte) (r, s *big.Int, err e
 // to the byte-length of the subgroup. This function does not perform that
 // truncation itself.
 func Verify(pub *PublicKey, hash []byte, r, s *big.Int) bool {
-	if fips140only.Enforced() {
+	if fips140only.Enabled {
 		panic("crypto/dsa: use of DSA is not allowed in FIPS 140-only mode")
 	}
 

@@ -24,7 +24,7 @@ import (
 func (b *Builder) CovData(a *Action, cmdargs ...any) ([]byte, error) {
 	cmdline := str.StringList(cmdargs...)
 	args := append([]string{}, cfg.BuildToolexec...)
-	args = append(args, filepath.Join(cfg.GOROOTbin, "go"), "tool", "covdata")
+	args = append(args, "go", "tool", "covdata")
 	args = append(args, cmdline...)
 	return b.Shell(a).runOut(a.Objdir, nil, args)
 }
@@ -36,9 +36,8 @@ func (b *Builder) CovData(a *Action, cmdargs ...any) ([]byte, error) {
 // but will be empty; in this case the return is an empty string.
 func BuildActionCoverMetaFile(runAct *Action) (string, error) {
 	p := runAct.Package
-	barrierAct := runAct.Deps[0]
-	for i := range barrierAct.Deps {
-		pred := barrierAct.Deps[i]
+	for i := range runAct.Deps {
+		pred := runAct.Deps[i]
 		if pred.Mode != "build" || pred.Package == nil {
 			continue
 		}

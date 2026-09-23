@@ -148,7 +148,6 @@ func osinit() {
 	physPageSize = getPageSize()
 
 	osinit_hack()
-	initWorkingDir()
 }
 
 func sysctlbynameInt32(name []byte) (int32, int32) {
@@ -158,20 +157,9 @@ func sysctlbynameInt32(name []byte) (int32, int32) {
 	return ret, out
 }
 
-func sysctlbynameBytes(name, out []byte) int32 {
-	nout := uintptr(len(out))
-	ret := sysctlbyname(&name[0], &out[0], &nout, nil, 0)
-	return ret
-}
-
-//go:linkname internal_cpu_sysctlbynameInt32 internal/cpu.sysctlbynameInt32
-func internal_cpu_sysctlbynameInt32(name []byte) (int32, int32) {
+//go:linkname internal_cpu_getsysctlbyname internal/cpu.getsysctlbyname
+func internal_cpu_getsysctlbyname(name []byte) (int32, int32) {
 	return sysctlbynameInt32(name)
-}
-
-//go:linkname internal_cpu_sysctlbynameBytes internal/cpu.sysctlbynameBytes
-func internal_cpu_sysctlbynameBytes(name, out []byte) int32 {
-	return sysctlbynameBytes(name, out)
 }
 
 const (
@@ -269,7 +257,7 @@ func mstart_stub()
 // This function is not safe to use after initialization as it does not pass an M as fnarg.
 //
 //go:nosplit
-func newosproc0(stacksize uintptr, fn unsafe.Pointer) {
+func newosproc0(stacksize uintptr, fn uintptr) {
 	// Initialize an attribute object.
 	var attr pthreadattr
 	var err int32
@@ -301,7 +289,7 @@ func newosproc0(stacksize uintptr, fn unsafe.Pointer) {
 	// setup and then calls mstart.
 	var oset sigset
 	sigprocmask(_SIG_SETMASK, &sigset_all, &oset)
-	err = pthread_create(&attr, uintptr(fn), nil)
+	err = pthread_create(&attr, fn, nil)
 	sigprocmask(_SIG_SETMASK, &oset, nil)
 	if err != 0 {
 		writeErrStr(failthreadcreate)

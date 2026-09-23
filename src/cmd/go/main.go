@@ -24,6 +24,7 @@ import (
 	"cmd/go/internal/clean"
 	"cmd/go/internal/doc"
 	"cmd/go/internal/envcmd"
+	"cmd/go/internal/fix"
 	"cmd/go/internal/fmtcmd"
 	"cmd/go/internal/generate"
 	"cmd/go/internal/help"
@@ -54,20 +55,20 @@ func init() {
 		clean.CmdClean,
 		doc.CmdDoc,
 		envcmd.CmdEnv,
-		vet.CmdFix,
+		fix.CmdFix,
 		fmtcmd.CmdFmt,
 		generate.CmdGenerate,
 		modget.CmdGet,
 		work.CmdInstall,
 		list.CmdList,
 		modcmd.CmdMod,
+		workcmd.CmdWork,
 		run.CmdRun,
 		telemetrycmd.CmdTelemetry,
 		test.CmdTest,
 		tool.CmdTool,
 		version.CmdVersion,
 		vet.CmdVet,
-		workcmd.CmdWork,
 
 		help.HelpBuildConstraint,
 		help.HelpBuildJSON,

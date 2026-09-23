@@ -13,33 +13,15 @@ import (
 // Defaults are collected in this file to allow distributions to more easily patch
 // them to apply local policies.
 
-// tlsmlkem=0 restores the pre-Go 1.24 default key exchanges.
 var tlsmlkem = godebug.New("tlsmlkem")
 
-// tlssecpmlkem=0 restores the pre-Go 1.26 default key exchanges.
-var tlssecpmlkem = godebug.New("tlssecpmlkem")
-
-// defaultCurveEnabled returns whether the key exchange c is enabled by default.
-func defaultCurveEnabled(c CurveID) bool {
-	switch c {
-	case X25519, CurveP256, CurveP384, CurveP521:
-		return true
-	case X25519MLKEM768:
-		return tlsmlkem.Value() != "0"
-	case SecP256r1MLKEM768, SecP384r1MLKEM1024:
-		return tlsmlkem.Value() != "0" && tlssecpmlkem.Value() != "0"
-	default:
-		return false
+// defaultCurvePreferences is the default set of supported key exchanges, as
+// well as the preference order.
+func defaultCurvePreferences() []CurveID {
+	if tlsmlkem.Value() == "0" {
+		return []CurveID{X25519, CurveP256, CurveP384, CurveP521}
 	}
-}
-
-// curvePreferenceOrder is the fixed preference order of key exchanges. It must
-// include every supported key exchange.
-func curvePreferenceOrder() []CurveID {
-	return []CurveID{
-		X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, MLKEM1024,
-		X25519, CurveP256, CurveP384, CurveP521,
-	}
+	return []CurveID{X25519MLKEM768, X25519, CurveP256, CurveP384, CurveP521}
 }
 
 // defaultSupportedSignatureAlgorithms returns the signature and hash algorithms that
@@ -48,9 +30,6 @@ func curvePreferenceOrder() []CurveID {
 // Note that in TLS 1.2, the ECDSA algorithms are not constrained to P-256, etc.
 func defaultSupportedSignatureAlgorithms() []SignatureScheme {
 	return []SignatureScheme{
-		MLDSA44,
-		MLDSA65,
-		MLDSA87,
 		PSSWithSHA256,
 		ECDSAWithP256AndSHA256,
 		Ed25519,
@@ -66,6 +45,9 @@ func defaultSupportedSignatureAlgorithms() []SignatureScheme {
 	}
 }
 
+var tlsrsakex = godebug.New("tlsrsakex")
+var tls3des = godebug.New("tls3des")
+
 func supportedCipherSuites(aesGCMPreferred bool) []uint16 {
 	if aesGCMPreferred {
 		return slices.Clone(cipherSuitesPreferenceOrder)
@@ -77,7 +59,9 @@ func supportedCipherSuites(aesGCMPreferred bool) []uint16 {
 func defaultCipherSuites(aesGCMPreferred bool) []uint16 {
 	cipherSuites := supportedCipherSuites(aesGCMPreferred)
 	return slices.DeleteFunc(cipherSuites, func(c uint16) bool {
-		return disabledCipherSuites[c]
+		return disabledCipherSuites[c] ||
+			tlsrsakex.Value() != "1" && rsaKexCiphers[c] ||
+			tls3des.Value() != "1" && tdesCiphers[c]
 	})
 }
 

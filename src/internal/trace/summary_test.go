@@ -17,7 +17,6 @@ func TestSummarizeGoroutinesTrace(t *testing.T) {
 		hasSchedWaitTime    bool
 		hasSyncBlockTime    bool
 		hasGCMarkAssistTime bool
-		hasUnknownTime      bool
 	)
 
 	assertContainsGoroutine(t, summaries, "runtime.gcBgMarkWorker")
@@ -32,7 +31,6 @@ func TestSummarizeGoroutinesTrace(t *testing.T) {
 		if dt, ok := summary.RangeTime["GC mark assist"]; ok && dt > 0 {
 			hasGCMarkAssistTime = true
 		}
-		hasUnknownTime = hasUnknownTime || summary.UnknownTime() > 0
 	}
 	if !hasSchedWaitTime {
 		t.Error("missing sched wait time")
@@ -42,9 +40,6 @@ func TestSummarizeGoroutinesTrace(t *testing.T) {
 	}
 	if !hasGCMarkAssistTime {
 		t.Error("missing GC mark assist time")
-	}
-	if hasUnknownTime {
-		t.Error("has time that is unaccounted for")
 	}
 }
 

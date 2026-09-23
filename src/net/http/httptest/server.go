@@ -7,128 +7,29 @@
 package httptest
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
 	"fmt"
-	"internal/nettest"
 	"log"
 	"net"
 	"net/http"
 	"net/http/internal/testcert"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
-	"testing"
 	"time"
-	_ "unsafe" // for linkname
 )
 
-// A Server is an HTTP server for use in end-to-end HTTP tests.
-//
-// Most tests should create a server with [NewTestServer].
-// The [Server.Client] method returns a client which sends requests to the test server.
-//
-//	// Create a test server and send a request to it.
-//	server := httptest.NewTestServer(t, handler)
-//	resp, err := server.Client().Get("http://www.example.com/")
-//
-// # Configuration
-//
-// Tests may change a Server's configuration prior to using it.
-// The configuration must not be changed after the first call to
-// [Server.Client], [Server.Start], or [Server.StartTLS].
-//
-//	// Configure a test server before using.
-//	server := httptest.NewTestServer(t, handler)
-//	server.Config.MaxHeaderBytes = 1024
-//	resp, err := server.Client().Get("http://www.example.com/")
-//
-// # Tests
-//
-// Servers created with [NewTestServer] will:
-//
-//   - Fail the test if the server handler panics with
-//     any value other than [http.ErrAbortHandler].
-//   - Register a Cleanup function to shut down the server at the end of the test.
-//
-// Servers created in any other way must be manually shut down with [Server.Close].
-//
-// # In-Memory Network
-//
-// A Server may use an in-memory network implementation or
-// listen on a local network loopback interface.
-// Most tests should use the in-memory network,
-// which avoids port exhaustion and other transient networking issues
-// and is suitable for use with the [testing/synctest] package.
-//
-// To use the in-memory network, create a server with [NewTestServer].
-// Do not call [Server.Start] or [Server.StartTLS].
-//
-// When using the in-memory network, the [http.Client] returned by [Server.Client]
-// is configured to send all requests to the server.
-// The client will direct HTTP and HTTPS requests,
-// regardless of destination address or hostname, to the server.
-// Requests do not need to use [Server.URL] as the base URL.
-//
-//	server := httptest.NewTestServer(t, handler)
-//	client := server.Client()
-//
-//	// All of these requests are sent to the test server.
-//	// https:// requests use TLS over the in-memory network.
-//	_, _ = client.Get("http://www.example.com/")
-//	_, _ = client.Get("https://go.dev/")
-//	_, _ = client.Get("http://10.0.0.1/")
-//
-// The [Server.Listener] field is not set when using the in-memory network.
-//
-// # Loopback Network
-//
-// To listen on a loopback interface, call [Server.Start] or [Server.StartTLS].
-// The server will listen on a system-chosen port.
-//
-// Loopback servers serve one of HTTP (when started with [Server.Start])
-// or HTTPS (when started with [Server.StartTLS]).
-//
-// When using the loopback network, the [http.Client] returned by [Server.Client]
-// is configured to send requests with a hostname of "example.com" or a subdomain
-// of ".example.com" to the server.
-//
-// Requests may also be sent to the server's loopback address.
-// The [Server.URL] field is set to a base URL containing the server's address.
-//
-//	server := httptest.NewTestServer(t, handler)
-//	server.Start()
-//	client := server.Client()
-//
-//	// This request is sent to the test server.
-//	_, _ = server.Client().Get(server.URL + "/")
-//
-//	// This request (using http.DefaultClient) is also sent to the test server,
-//	// since server.URL contains the server's local IP address.
-//	_, _ = http.Get(server.URL + "/")
+// A Server is an HTTP server listening on a system-chosen port on the
+// local loopback interface, for use in end-to-end HTTP tests.
 type Server struct {
-	// URL is the base URL of the server, of the form http://address:port
-	// with no trailing slash.
-	//
-	// It is set by the first call to Client, Start, or StartTLS.
-	//
-	// For servers listening on loopback, the address is the loopback IP address
-	// of the server.
-	//
-	// For servers using the in-memory network, this address is "example.com".
-	// Requests sent to servers using the in-memory network may use any address.
-	// It is not necessary to use this base URL.
-	URL string
-
-	// Listener is the network listener for servers listening on loopback.
-	// It is not set for servers using the in-memory network.
+	URL      string // base URL of form http://ipaddr:port with no trailing slash
 	Listener net.Listener
 
-	// EnableHTTP2 controls whether HTTP/2 is enabled on the server.
-	// It must be set before calling Client, Start, or StartTLS.
+	// EnableHTTP2 controls whether HTTP/2 is enabled
+	// on the server. It must be set between calling
+	// NewUnstartedServer and calling Server.StartTLS.
 	EnableHTTP2 bool
 
 	// TLS is the optional TLS configuration, populated with a new config
@@ -136,23 +37,12 @@ type Server struct {
 	// is called, existing fields are copied into the new config.
 	TLS *tls.Config
 
-	// Config may be changed before calling Client, Start, or StartTLS.
+	// Config may be changed after calling NewUnstartedServer and
+	// before Start or StartTLS.
 	Config *http.Server
-
-	t testing.TB
 
 	// certificate is a parsed version of the TLS config certificate, if present.
 	certificate *x509.Certificate
-
-	// startOnce is used to start fakenet servers once.
-	startOnce sync.Once
-
-	// started indicates whether the server has been started.
-	started bool
-
-	// Fake network listeners, one for HTTP and one for HTTPS.
-	fakeListener    *nettest.Listener
-	fakeTLSListener *nettest.Listener
 
 	// wg counts the number of outstanding HTTP requests on this server.
 	// Close blocks until all requests are finished.
@@ -165,51 +55,6 @@ type Server struct {
 	// client is configured for use with the server.
 	// Its transport is automatically closed when Close is called.
 	client *http.Client
-}
-
-// NewTestServer returns a new [Server] for a test.
-// The server will use an in-memory network implementation by default.
-//
-// If the handler is nil, the server will serve 500 responses to all requests.
-// It will not use [http.DefaultServeMux].
-//
-// See the [Server] documentation for more details.
-func NewTestServer(t testing.TB, handler http.Handler) *Server {
-	s := &Server{
-		t:      t,
-		Config: &http.Server{Handler: testServerHandler{t: t, h: handler}},
-	}
-	t.Cleanup(func() {
-		s.Close()
-	})
-	return s
-}
-
-type testServerHandler struct {
-	t testing.TB
-	h http.Handler
-}
-
-func (h testServerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	defer func() {
-		if err := recover(); err != nil {
-			if err != http.ErrAbortHandler {
-				// This is the same logging http.Server would do,
-				// but we can put it into the test output rather than stderr.
-				const size = 64 << 10
-				buf := make([]byte, size)
-				buf = buf[:runtime.Stack(buf, false)]
-				h.t.Errorf("httptest: panic in server handler: %v\n%s", err, buf)
-			}
-			// Convert panic to ErrAbortHandler to suppress http.Server's logging.
-			panic(http.ErrAbortHandler)
-		}
-	}()
-	if h.h != nil {
-		h.h.ServeHTTP(w, req)
-	} else {
-		w.WriteHeader(500)
-	}
 }
 
 func newLocalListener() net.Listener {
@@ -255,30 +100,20 @@ func strSliceContainsPrefix(v []string, pre string) bool {
 	return false
 }
 
-// NewServer starts and returns a new [Server] listening on a
-// local network loopback interface.
-// This is equivalent to calling [NewUnstartedServer] followed by [Server.Start].
-//
-// The caller should call [Server.Close] when finished, to shut it down.
-//
-// Most users should use [NewTestServer] instead.
-// See the [Server] documentation for details.
+// NewServer starts and returns a new [Server].
+// The caller should call Close when finished, to shut it down.
 func NewServer(handler http.Handler) *Server {
 	ts := NewUnstartedServer(handler)
 	ts.Start()
 	return ts
 }
 
-// NewUnstartedServer returns a new [Server] listening on a
-// local network loopback interface. It does not start the server.
+// NewUnstartedServer returns a new [Server] but doesn't start it.
 //
-// After changing the server's configuration, the caller should
-// call [Server.Start] or [Server.StartTLS].
+// After changing its configuration, the caller should call Start or
+// StartTLS.
 //
-// The caller should call [Server.Close] when finished, to shut it down.
-//
-// Most users should use [NewTestServer] instead.
-// See the [Server] documentation for details.
+// The caller should call Close when finished, to shut it down.
 func NewUnstartedServer(handler http.Handler) *Server {
 	return &Server{
 		Listener: newLocalListener(),
@@ -286,69 +121,34 @@ func NewUnstartedServer(handler http.Handler) *Server {
 	}
 }
 
-func (s *Server) startCommon(useLoopback bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.started {
+// Start starts a server from NewUnstartedServer.
+func (s *Server) Start() {
+	if s.URL != "" {
 		panic("Server already started")
 	}
-	if s.closed {
-		panic("Start of closed Server")
-	}
-	s.started = true
-	if s.t != nil && useLoopback {
-		// We're being called from Start or StartTLS.
-		// Don't try to start the server again when Client is called.
-		s.startOnce.Do(func() {})
-
-		// NewTestServer servers create their listener at start time.
-		//
-		// We might want to permit the user to provide their own Listener
-		// in the future. For now, we panic.
-		if s.Listener != nil {
-			panic("Server.Listener is unexpectedly set")
-		}
-		s.Listener = newLocalListener()
-	}
-	s.wrap()
-}
-
-// Start starts a server on a local loopback network interface.
-//
-// The server should have been created by [NewTestServer] or [NewUnstartedServer].
-func (s *Server) Start() {
-	s.startCommon(true)
-
-	tr := &http.Transport{}
-	s.client = &http.Client{Transport: tr}
-	if s.Listener == nil {
-		return
-	}
-	dialer := net.Dialer{}
-	// User code may set either of Dial or DialContext, with DialContext taking precedence.
-	// We set DialContext here to preserve any context values that are passed in,
-	// but fall back to Dial if the user has set it.
-	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if tr.Dial != nil {
-			return tr.Dial(network, addr)
-		}
-		if addr == "example.com:80" || strings.HasSuffix(addr, ".example.com:80") {
-			addr = s.Listener.Addr().String()
-		}
-		return dialer.DialContext(ctx, network, addr)
+	if s.client == nil {
+		s.client = &http.Client{Transport: &http.Transport{}}
 	}
 	s.URL = "http://" + s.Listener.Addr().String()
-	s.goServe(s.Listener)
+	s.wrap()
+	s.goServe()
 	if serveFlag != "" {
 		fmt.Fprintln(os.Stderr, "httptest: serving on", s.URL)
 		select {}
 	}
 }
 
-func (s *Server) initTLS() (tlsClientConfig *tls.Config, err error) {
+// StartTLS starts TLS on a server from NewUnstartedServer.
+func (s *Server) StartTLS() {
+	if s.URL != "" {
+		panic("Server already started")
+	}
+	if s.client == nil {
+		s.client = &http.Client{}
+	}
 	cert, err := tls.X509KeyPair(testcert.LocalhostCert, testcert.LocalhostKey)
 	if err != nil {
-		return nil, err
+		panic(fmt.Sprintf("httptest: NewTLSServer: %v", err))
 	}
 
 	existingConfig := s.TLS
@@ -369,92 +169,24 @@ func (s *Server) initTLS() (tlsClientConfig *tls.Config, err error) {
 	}
 	s.certificate, err = x509.ParseCertificate(s.TLS.Certificates[0].Certificate[0])
 	if err != nil {
-		return nil, err
+		panic(fmt.Sprintf("httptest: NewTLSServer: %v", err))
 	}
 	certpool := x509.NewCertPool()
 	certpool.AddCert(s.certificate)
-	return &tls.Config{
-		RootCAs: certpool,
-	}, nil
-}
-
-// Start starts TLS on a server on a local loopback network interface.
-//
-// The server should have been created by [NewTestServer] or [NewUnstartedServer].
-func (s *Server) StartTLS() {
-	s.startCommon(true)
-
-	s.client = &http.Client{}
-
-	tlsClientConfig, err := s.initTLS()
-	if err != nil {
-		panic(fmt.Sprintf("httptest: NewTLSServer: %v", err))
-	}
-
-	tr := &http.Transport{
-		TLSClientConfig:   tlsClientConfig,
+	s.client.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			RootCAs: certpool,
+		},
 		ForceAttemptHTTP2: s.EnableHTTP2,
-	}
-	s.client.Transport = tr
-
-	if s.Listener == nil {
-		return
-	}
-	dialer := net.Dialer{}
-	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if tr.Dial != nil {
-			return tr.Dial(network, addr)
-		}
-		if addr == "example.com:443" || strings.HasSuffix(addr, ".example.com:443") {
-			addr = s.Listener.Addr().String()
-		}
-		return dialer.DialContext(ctx, network, addr)
 	}
 	s.Listener = tls.NewListener(s.Listener, s.TLS)
 	s.URL = "https://" + s.Listener.Addr().String()
-	s.goServe(s.Listener)
+	s.wrap()
+	s.goServe()
 }
 
-func (s *Server) startFakeNet() {
-	s.startCommon(false)
-
-	s.client = &http.Client{}
-
-	tlsClientConfig, err := s.initTLS()
-	if err != nil {
-		panic(fmt.Sprintf("httptest: NewTestServer: %v", err))
-	}
-
-	tr := &http.Transport{
-		TLSClientConfig:   tlsClientConfig,
-		ForceAttemptHTTP2: s.EnableHTTP2,
-	}
-	s.client.Transport = tr
-
-	s.fakeListener = nettest.NewListener()
-	s.fakeTLSListener = nettest.NewListener()
-
-	// Set InsecureSkipVerify rather than depending on a specific server hostname.
-	tr.TLSClientConfig.InsecureSkipVerify = true
-	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return s.fakeListener.NewConn(), nil
-	}
-	tr.DialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return tls.Client(s.fakeTLSListener.NewConn(), tr.TLSClientConfig), nil
-	}
-	s.URL = "http://example.com"
-	s.goServe(s.fakeListener)
-	s.goServe(tls.NewListener(s.fakeTLSListener, s.TLS))
-}
-
-// NewTLSServer starts and returns a new [Server] using TLS and listening on a
-// local network loopback interface.
-// This is equivalent to calling [NewUnstartedServer] followed by [Server.StartTLS].
-//
-// The caller should call [Server.Close] when finished, to shut it down.
-//
-// Most users should use [NewTestServer] instead.
-// See the [Server] documentation for details.
+// NewTLSServer starts and returns a new [Server] using TLS.
+// The caller should call Close when finished, to shut it down.
 func NewTLSServer(handler http.Handler) *Server {
 	ts := NewUnstartedServer(handler)
 	ts.StartTLS()
@@ -471,13 +203,7 @@ func (s *Server) Close() {
 	s.mu.Lock()
 	if !s.closed {
 		s.closed = true
-		if s.Listener != nil {
-			s.Listener.Close()
-		}
-		if s.fakeListener != nil {
-			s.fakeListener.Close()
-			s.fakeTLSListener.Close()
-		}
+		s.Listener.Close()
 		s.Config.SetKeepAlivesEnabled(false)
 		for c, st := range s.conns {
 			// Force-close any idle connections (those between
@@ -521,6 +247,7 @@ func (s *Server) Close() {
 			t.CloseIdleConnections()
 		}
 	}
+
 	s.wg.Wait()
 }
 
@@ -572,18 +299,16 @@ func (s *Server) Certificate() *x509.Certificate {
 // Client returns an HTTP client configured for making requests to the server.
 // It is configured to trust the server's TLS test certificate and will
 // close its idle connections on [Server.Close].
+// Use Server.URL as the base URL to send requests to the server.
 func (s *Server) Client() *http.Client {
-	if s.t != nil {
-		s.startOnce.Do(s.startFakeNet)
-	}
 	return s.client
 }
 
-func (s *Server) goServe(li net.Listener) {
+func (s *Server) goServe() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.Config.Serve(li)
+		s.Config.Serve(s.Listener)
 	}()
 }
 

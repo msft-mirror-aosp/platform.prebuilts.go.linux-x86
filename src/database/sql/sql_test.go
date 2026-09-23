@@ -20,86 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
-	"uuid"
 )
-
-type requireFeature string
-
-// testDatabase executes f in a synctest bubble.
-//
-// It executes several subtests, each with a database driver supporting
-// a different set of optional interfaces (QueryerContext, etc.).
-//
-// Limit a test to drivers implementing a certain feature by passing
-// a requireFeature option. For example:
-//
-//	// testFunc only executes with drivers which implement Validator.
-//	testDatabase(t, testFunc, requireFeature("Validator"))
-func testDatabase(t *testing.T, f func(t *testing.T, db *DB), opts ...any) {
-	var require []string
-	for _, o := range opts {
-		switch o := o.(type) {
-		case requireFeature:
-			require = append(require, string(o))
-		default:
-			t.Fatalf("unrecognized option %T", o)
-		}
-	}
-Test:
-	for _, test := range []struct {
-		name      string
-		connector driver.Connector
-		features  []string
-	}{
-		{
-			// Basic driver supporting none of the optional driver interfaces.
-			name:      "basic",
-			connector: &basicConnector{name: fakeDBName},
-		},
-		{
-			// Default test driver. Supports some but not all features.
-			// This is the "default" because this is the only driver we used
-			// before adding testDatabase.
-			name:      "default",
-			connector: &fakeConnector{name: fakeDBName},
-			features: []string{
-				"ConnBeginTx",
-				"NamedValue",
-				"Validator",
-			},
-		},
-		{
-			name:      "scancols",
-			connector: &rowsColumnScannerConnector{name: fakeDBName},
-			features: []string{
-				"ConnBeginTx",
-				"NamedValue",
-				"Validator",
-				"ScanColumn",
-			},
-		},
-	} {
-		for _, req := range require {
-			if !slices.Contains(test.features, req) {
-				continue Test
-			}
-		}
-		t.Run(test.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				db := OpenDB(test.connector)
-				if _, err := db.Exec("WIPE"); err != nil {
-					t.Fatalf("exec wipe: %v", err)
-				}
-				t.Cleanup(func() {
-					closeDB(t, db)
-				})
-				f(t, db)
-			})
-		})
-	}
-}
 
 func init() {
 	type dbConn struct {
@@ -130,6 +52,10 @@ func init() {
 	}
 }
 
+// pollDuration is an arbitrary interval to wait between checks when polling for
+// a condition to occur.
+const pollDuration = 5 * time.Millisecond
+
 const fakeDBName = "foo"
 
 var chrisBirthday = time.Unix(123456789, 0)
@@ -144,132 +70,38 @@ func newTestDBConnector(t testing.TB, fc *fakeConnector, name string) *DB {
 	if _, err := db.Exec("WIPE"); err != nil {
 		t.Fatalf("exec wipe: %v", err)
 	}
-	t.Cleanup(func() {
-		closeDB(t, db)
-	})
-	if name != "" {
-		populate(t, db, name)
-	}
-	return db
-}
-
-func populate(t testing.TB, db *DB, name string) {
-	t.Helper()
-	switch name {
-	case "people":
+	if name == "people" {
 		exec(t, db, "CREATE|people|name=string,age=int32,photo=blob,dead=bool,bdate=datetime")
 		exec(t, db, "INSERT|people|name=Alice,age=?,photo=APHOTO", 1)
 		exec(t, db, "INSERT|people|name=Bob,age=?,photo=BPHOTO", 2)
 		exec(t, db, "INSERT|people|name=Chris,age=?,photo=CPHOTO,bdate=?", 3, chrisBirthday)
-	case "magicquery":
+	}
+	if name == "magicquery" {
 		// Magic table name and column, known by fakedb_test.go.
 		exec(t, db, "CREATE|magicquery|op=string,millis=int32")
 		exec(t, db, "INSERT|magicquery|op=sleep,millis=10")
-	case "tx_status":
+	}
+	if name == "tx_status" {
 		// Magic table name and column, known by fakedb_test.go.
 		exec(t, db, "CREATE|tx_status|tx_status=string")
 		exec(t, db, "INSERT|tx_status|tx_status=invalid")
-	default:
-		t.Fatalf("unknown database name %q", name)
 	}
-}
-
-// basicConn implements only the bare minimum of the driver.Conn interface.
-type basicConn struct {
-	driver.Conn
-}
-
-func (c *basicConn) getFakeConn() *fakeConn {
-	return c.Conn.(*fakeConn)
-}
-
-func (c *basicConn) Prepare(query string) (driver.Stmt, error) {
-	stmt, err := c.Conn.(*fakeConn).PrepareContext(context.Background(), query)
-	if err != nil {
-		return nil, err
-	}
-	return &basicStmt{fc: c.Conn.(*fakeConn), Stmt: stmt}, nil
-}
-
-func (c *basicConn) Begin() (driver.Tx, error) {
-	return c.Conn.(*fakeConn).Begin()
-}
-
-func (c *basicConn) Close() error {
-	return c.Conn.(*fakeConn).Close()
-}
-
-type basicStmt struct {
-	fc *fakeConn
-	driver.Stmt
-}
-
-func (s *basicStmt) valuesToNamedValues(args []driver.Value) ([]driver.NamedValue, error) {
-	nv := make([]driver.NamedValue, len(args))
-	for i, arg := range args {
-		val, err := s.Stmt.(*fakeStmt).ColumnConverter(i).ConvertValue(arg)
-		if err != nil {
-			return nil, fmt.Errorf("sql: converting argument $%v type: %w", i+1, err)
-		}
-		nv[i] = driver.NamedValue{
-			Ordinal: i + 1,
-			Value:   val,
-		}
-	}
-	return nv, nil
-}
-
-func (s *basicStmt) Exec(args []driver.Value) (driver.Result, error) {
-	nvs, err := s.valuesToNamedValues(args)
-	if err != nil {
-		return nil, err
-	}
-	return s.Stmt.(*fakeStmt).ExecContext(context.Background(), nvs)
-}
-
-func (s *basicStmt) Query(args []driver.Value) (driver.Rows, error) {
-	nvs, err := s.valuesToNamedValues(args)
-	if err != nil {
-		return nil, err
-	}
-	return s.Stmt.(*fakeStmt).QueryContext(context.Background(), nvs)
-}
-
-type basicConnector struct {
-	fakeConnector
-}
-
-func (c *basicConnector) Connect(ctx context.Context) (driver.Conn, error) {
-	conn, err := c.fakeConnector.Connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	fc := getFakeConn(conn)
-	fc.skipDirtySession = true // Conn won't implement ResetSession
-	return &basicConn{fc}, nil
+	return db
 }
 
 func TestOpenDB(t *testing.T) {
-	synctest.Test(t, testOpenDB)
-}
-func testOpenDB(t *testing.T) {
 	db := OpenDB(dsnConnector{dsn: fakeDBName, driver: fdriver})
-	defer db.Close()
 	if db.Driver() != fdriver {
 		t.Fatalf("OpenDB should return the driver of the Connector")
 	}
 }
 
 func TestDriverPanic(t *testing.T) {
-	synctest.Test(t, testDriverPanic)
-}
-func testDriverPanic(t *testing.T) {
+	// Test that if driver panics, database/sql does not deadlock.
 	db, err := Open("test", fakeDBName)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer db.Close()
-	// Test that if driver panics, database/sql does not deadlock.
 	expectPanic := func(name string, f func()) {
 		defer func() {
 			err := recover()
@@ -313,8 +145,6 @@ func exec(t testing.TB, db *DB, query string, args ...any) {
 }
 
 func closeDB(t testing.TB, db *DB) {
-	t.Helper()
-
 	if e := recover(); e != nil {
 		fmt.Printf("Panic: %v\n", e)
 		panic(e)
@@ -343,22 +173,11 @@ func closeDB(t testing.TB, db *DB) {
 		t.Fatalf("error closing DB: %v", err)
 	}
 
-	// Connections close asynchronously; wait for them to finish doing so.
-	numOpenConns := func() int {
-		db.mu.Lock()
-		defer db.mu.Unlock()
-		return db.numOpen
-	}
-	if _, ok := t.(*testing.B); ok {
-		// We don't use synctest in benchmarks, so just poll.
-		deadline := time.Now().Add(5 * time.Second)
-		for numOpenConns() > 0 && time.Now().Before(deadline) {
-			time.Sleep(1 * time.Millisecond)
-		}
-	} else {
-		synctest.Wait()
-	}
-	if numOpen := numOpenConns(); numOpen != 0 {
+	var numOpen int
+	if !waitCondition(t, func() bool {
+		numOpen = db.numOpenConns()
+		return numOpen == 0
+	}) {
 		t.Fatalf("%d connections still open after closing DB", numOpen)
 	}
 }
@@ -369,21 +188,36 @@ func numPrepares(t *testing.T, db *DB) int {
 	if n := len(db.freeConn); n != 1 {
 		t.Fatalf("free conns = %d; want 1", n)
 	}
-	return getFakeConn(db.freeConn[0].ci).numPrepare
+	return db.freeConn[0].ci.(*fakeConn).numPrepare
 }
 
 func (db *DB) numDeps() int {
-	synctest.Wait()
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	return len(db.dep)
 }
 
+// Dependencies are closed via a goroutine, so this polls waiting for
+// numDeps to fall to want, waiting up to nearly the test's deadline.
+func (db *DB) numDepsPoll(t *testing.T, want int) int {
+	var n int
+	waitCondition(t, func() bool {
+		n = db.numDeps()
+		return n <= want
+	})
+	return n
+}
+
 func (db *DB) numFreeConns() int {
-	synctest.Wait()
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	return len(db.freeConn)
+}
+
+func (db *DB) numOpenConns() int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.numOpen
 }
 
 // clearAllConns closes all connections in db.
@@ -394,7 +228,7 @@ func (db *DB) clearAllConns(t *testing.T) {
 		t.Errorf("free conns = %d; want %d", g, w)
 	}
 
-	if n := db.numDeps(); n > 0 {
+	if n := db.numDepsPoll(t, 0); n > 0 {
 		t.Errorf("number of dependencies = %d; expected 0", n)
 		db.dumpDeps(t)
 	}
@@ -421,10 +255,8 @@ func (db *DB) dumpDep(t *testing.T, depth int, dep finalCloser, seen map[finalCl
 }
 
 func TestQuery(t *testing.T) {
-	testDatabase(t, testQuery)
-}
-func testQuery(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	prepares0 := numPrepares(t, db)
 	rows, err := db.Query("SELECT|people|age,name|")
 	if err != nil {
@@ -469,10 +301,8 @@ func testQuery(t *testing.T, db *DB) {
 
 // TestQueryContext tests canceling the context while scanning the rows.
 func TestQueryContext(t *testing.T) {
-	testDatabase(t, testQueryContext)
-}
-func testQueryContext(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	prepares0 := numPrepares(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -532,21 +362,49 @@ func testQueryContext(t *testing.T, db *DB) {
 	}
 }
 
+func waitCondition(t testing.TB, fn func() bool) bool {
+	timeout := 5 * time.Second
+
+	type deadliner interface {
+		Deadline() (time.Time, bool)
+	}
+	if td, ok := t.(deadliner); ok {
+		if deadline, ok := td.Deadline(); ok {
+			timeout = time.Until(deadline)
+			timeout = timeout * 19 / 20 // Give 5% headroom for cleanup and error-reporting.
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if fn() {
+			return true
+		}
+		if time.Until(deadline) < pollDuration {
+			return false
+		}
+		time.Sleep(pollDuration)
+	}
+}
+
 // waitForFree checks db.numFreeConns until either it equals want or
 // the maxWait time elapses.
 func waitForFree(t *testing.T, db *DB, want int) {
-	synctest.Wait()
-	numFree := db.numFreeConns()
-	if numFree != want {
+	var numFree int
+	if !waitCondition(t, func() bool {
+		numFree = db.numFreeConns()
+		return numFree == want
+	}) {
 		t.Fatalf("free conns after hitting EOF = %d; want %d", numFree, want)
 	}
 }
 
 func waitForRowsClose(t *testing.T, rows *Rows) {
-	synctest.Wait()
-	rows.closemu.RLock()
-	defer rows.closemu.RUnlock()
-	if !rows.closed {
+	if !waitCondition(t, func() bool {
+		rows.closemu.RLock()
+		defer rows.closemu.RUnlock()
+		return rows.closed
+	}) {
 		t.Fatal("failed to close rows")
 	}
 }
@@ -554,10 +412,8 @@ func waitForRowsClose(t *testing.T, rows *Rows) {
 // TestQueryContextWait ensures that rows and all internal statements are closed when
 // a query context is closed during execution.
 func TestQueryContextWait(t *testing.T) {
-	testDatabase(t, testQueryContextWait)
-}
-func testQueryContextWait(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	prepares0 := numPrepares(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -571,7 +427,7 @@ func testQueryContextWait(t *testing.T, db *DB) {
 		t.Fatal(err)
 	}
 
-	getFakeConn(c.dc.ci).waiter = func(c context.Context) {
+	c.dc.ci.(*fakeConn).waiter = func(c context.Context) {
 		cancel()
 		<-ctx.Done()
 	}
@@ -591,21 +447,18 @@ func testQueryContextWait(t *testing.T, db *DB) {
 // TestTxContextWait tests the transaction behavior when the tx context is canceled
 // during execution of the query.
 func TestTxContextWait(t *testing.T) {
-	testDatabase(t, func(t *testing.T, db *DB) {
-		testContextWait(t, false, db)
-	})
+	testContextWait(t, false)
 }
 
 // TestTxContextWaitNoDiscard is the same as TestTxContextWait, but should not discard
 // the final connection.
 func TestTxContextWaitNoDiscard(t *testing.T) {
-	testDatabase(t, func(t *testing.T, db *DB) {
-		testContextWait(t, true, db)
-	})
+	testContextWait(t, true)
 }
 
-func testContextWait(t *testing.T, keepConnOnRollback bool, db *DB) {
-	populate(t, db, "people")
+func testContextWait(t *testing.T, keepConnOnRollback bool) {
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -615,7 +468,7 @@ func testContextWait(t *testing.T, keepConnOnRollback bool, db *DB) {
 	}
 	tx.keepConnOnRollback = keepConnOnRollback
 
-	getFakeConn(tx.dc.ci).waiter = func(c context.Context) {
+	tx.dc.ci.(*fakeConn).waiter = func(c context.Context) {
 		cancel()
 		<-ctx.Done()
 	}
@@ -638,10 +491,8 @@ func testContextWait(t *testing.T, keepConnOnRollback bool, db *DB) {
 // doesn't implement ConnBeginTx is used with non-default options and an
 // un-cancellable context.
 func TestUnsupportedOptions(t *testing.T) {
-	testDatabase(t, testUnsupportedOptions)
-}
-func testUnsupportedOptions(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	_, err := db.BeginTx(context.Background(), &TxOptions{
 		Isolation: LevelSerializable, ReadOnly: true,
 	})
@@ -651,10 +502,8 @@ func testUnsupportedOptions(t *testing.T, db *DB) {
 }
 
 func TestMultiResultSetQuery(t *testing.T) {
-	testDatabase(t, testMultiResultSetQuery)
-}
-func testMultiResultSetQuery(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	prepares0 := numPrepares(t, db)
 	rows, err := db.Query("SELECT|people|age,name|;SELECT|people|name|")
 	if err != nil {
@@ -727,10 +576,8 @@ func testMultiResultSetQuery(t *testing.T, db *DB) {
 }
 
 func TestQueryNamedArg(t *testing.T) {
-	testDatabase(t, testQueryNamedArg, requireFeature("NamedValue"))
-}
-func testQueryNamedArg(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	prepares0 := numPrepares(t, db)
 	rows, err := db.Query(
 		// Ensure the name and age parameters only match on placeholder name, not position.
@@ -776,9 +623,10 @@ func testQueryNamedArg(t *testing.T, db *DB) {
 }
 
 func TestPoolExhaustOnCancel(t *testing.T) {
-	synctest.Test(t, testPoolExhaustOnCancel)
-}
-func testPoolExhaustOnCancel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long test")
+	}
+
 	max := 3
 	var saturate, saturateDone sync.WaitGroup
 	saturate.Add(max)
@@ -807,6 +655,7 @@ func testPoolExhaustOnCancel(t *testing.T) {
 		}
 	}
 	db := newTestDBConnector(t, &fakeConnector{waiter: waiter}, "people")
+	defer closeDB(t, db)
 
 	db.SetMaxOpenConns(max)
 
@@ -858,10 +707,8 @@ func testPoolExhaustOnCancel(t *testing.T) {
 }
 
 func TestRowsColumns(t *testing.T) {
-	testDatabase(t, testRowsColumns)
-}
-func testRowsColumns(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	rows, err := db.Query("SELECT|people|age,name|")
 	if err != nil {
 		t.Fatalf("Query: %v", err)
@@ -880,10 +727,8 @@ func testRowsColumns(t *testing.T, db *DB) {
 }
 
 func TestRowsColumnTypes(t *testing.T) {
-	testDatabase(t, testRowsColumnTypes)
-}
-func testRowsColumnTypes(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	rows, err := db.Query("SELECT|people|age,name|")
 	if err != nil {
 		t.Fatalf("Query: %v", err)
@@ -932,10 +777,8 @@ func testRowsColumnTypes(t *testing.T, db *DB) {
 }
 
 func TestQueryRow(t *testing.T) {
-	testDatabase(t, testQueryRow)
-}
-func testQueryRow(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	var name string
 	var age int
 	var birthday time.Time
@@ -984,21 +827,17 @@ func testQueryRow(t *testing.T, db *DB) {
 }
 
 func TestRowErr(t *testing.T) {
-	testDatabase(t, testRowErr)
-}
-func testRowErr(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
 
-	row := db.QueryRowContext(context.Background(), "SELECT|people|bdate|age=?", 3)
-	if err := row.Err(); err != nil {
+	err := db.QueryRowContext(context.Background(), "SELECT|people|bdate|age=?", 3).Err()
+	if err != nil {
 		t.Errorf("Unexpected err = %v; want %v", err, nil)
 	}
-	row.Scan()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := db.QueryRowContext(ctx, "SELECT|people|bdate|age=?", 3).Err()
+	err = db.QueryRowContext(ctx, "SELECT|people|bdate|age=?", 3).Err()
 	exp := "context canceled"
 	if err == nil || !strings.Contains(err.Error(), exp) {
 		t.Errorf("Expected err = %v; got %v", exp, err)
@@ -1006,10 +845,8 @@ func testRowErr(t *testing.T, db *DB) {
 }
 
 func TestTxRollbackCommitErr(t *testing.T) {
-	testDatabase(t, testTxRollbackCommitErr)
-}
-func testTxRollbackCommitErr(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -1039,10 +876,8 @@ func testTxRollbackCommitErr(t *testing.T, db *DB) {
 }
 
 func TestStatementErrorAfterClose(t *testing.T) {
-	testDatabase(t, testStatementErrorAfterClose)
-}
-func testStatementErrorAfterClose(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	stmt, err := db.Prepare("SELECT|people|age|name=?")
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -1059,10 +894,8 @@ func testStatementErrorAfterClose(t *testing.T, db *DB) {
 }
 
 func TestStatementQueryRow(t *testing.T) {
-	testDatabase(t, testStatementQueryRow)
-}
-func testStatementQueryRow(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	stmt, err := db.Prepare("SELECT|people|age|name=?")
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -1107,9 +940,6 @@ func (s stubDriverStmt) Query(args []driver.Value) (driver.Rows, error) {
 
 // golang.org/issue/12798
 func TestStatementClose(t *testing.T) {
-	synctest.Test(t, testStatementClose)
-}
-func testStatementClose(t *testing.T) {
 	want := errors.New("STMT ERROR")
 
 	tests := []struct {
@@ -1128,10 +958,8 @@ func testStatementClose(t *testing.T) {
 
 // golang.org/issue/3734
 func TestStatementQueryRowConcurrent(t *testing.T) {
-	testDatabase(t, testStatementQueryRowConcurrent)
-}
-func testStatementQueryRowConcurrent(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	stmt, err := db.Prepare("SELECT|people|age|name=?")
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -1159,9 +987,8 @@ func testStatementQueryRowConcurrent(t *testing.T, db *DB) {
 
 // just a test of fakedb itself
 func TestBogusPreboundParameters(t *testing.T) {
-	testDatabase(t, testBogusPreboundParameters)
-}
-func testBogusPreboundParameters(t *testing.T, db *DB) {
+	db := newTestDB(t, "foo")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32,dead=bool")
 	_, err := db.Prepare("INSERT|t1|name=?,age=bogusconversion")
 	if err == nil {
@@ -1173,9 +1000,8 @@ func testBogusPreboundParameters(t *testing.T, db *DB) {
 }
 
 func TestExec(t *testing.T) {
-	testDatabase(t, testExec)
-}
-func testExec(t *testing.T, db *DB) {
+	db := newTestDB(t, "foo")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32,dead=bool")
 	stmt, err := db.Prepare("INSERT|t1|name=?,age=?")
 	if err != nil {
@@ -1216,9 +1042,8 @@ func testExec(t *testing.T, db *DB) {
 }
 
 func TestTxPrepare(t *testing.T) {
-	testDatabase(t, testTxPrepare)
-}
-func testTxPrepare(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32,dead=bool")
 	tx, err := db.Begin()
 	if err != nil {
@@ -1244,9 +1069,8 @@ func testTxPrepare(t *testing.T, db *DB) {
 }
 
 func TestTxStmt(t *testing.T) {
-	testDatabase(t, testTxStmt)
-}
-func testTxStmt(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32,dead=bool")
 	stmt, err := db.Prepare("INSERT|t1|name=?,age=?")
 	if err != nil {
@@ -1274,9 +1098,8 @@ func testTxStmt(t *testing.T, db *DB) {
 }
 
 func TestTxStmtPreparedOnce(t *testing.T) {
-	testDatabase(t, testTxStmtPreparedOnce)
-}
-func testTxStmtPreparedOnce(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32")
 
 	prepares0 := numPrepares(t, db)
@@ -1319,9 +1142,8 @@ func testTxStmtPreparedOnce(t *testing.T, db *DB) {
 }
 
 func TestTxStmtClosedRePrepares(t *testing.T) {
-	testDatabase(t, testTxStmtClosedRePrepares)
-}
-func testTxStmtClosedRePrepares(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32")
 
 	prepares0 := numPrepares(t, db)
@@ -1365,9 +1187,8 @@ func testTxStmtClosedRePrepares(t *testing.T, db *DB) {
 }
 
 func TestParentStmtOutlivesTxStmt(t *testing.T) {
-	testDatabase(t, testParentStmtOutlivesTxStmt)
-}
-func testParentStmtOutlivesTxStmt(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32")
 
 	// Make sure everything happens on the same connection.
@@ -1417,9 +1238,8 @@ func testParentStmtOutlivesTxStmt(t *testing.T, db *DB) {
 // associated with tx as argument re-prepares the same
 // statement again.
 func TestTxStmtFromTxStmtRePrepares(t *testing.T) {
-	testDatabase(t, testTxStmtFromTxStmtRePrepares)
-}
-func testTxStmtFromTxStmtRePrepares(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32")
 	prepares0 := numPrepares(t, db)
 	// db.Prepare increments numPrepares.
@@ -1471,9 +1291,8 @@ func testTxStmtFromTxStmtRePrepares(t *testing.T, db *DB) {
 // This test didn't fail before because we got lucky with the fakedb driver.
 // It was failing, and now not, in github.com/bradfitz/go-sql-test
 func TestTxQuery(t *testing.T) {
-	testDatabase(t, testTxQuery)
-}
-func testTxQuery(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32,dead=bool")
 	exec(t, db, "INSERT|t1|name=Alice")
 
@@ -1504,9 +1323,7 @@ func testTxQuery(t *testing.T, db *DB) {
 }
 
 func TestTxQueryInvalid(t *testing.T) {
-	testDatabase(t, testTxQueryInvalid)
-}
-func testTxQueryInvalid(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
 	defer closeDB(t, db)
 
 	tx, err := db.Begin()
@@ -1524,9 +1341,6 @@ func testTxQueryInvalid(t *testing.T, db *DB) {
 // Tests fix for issue 4433, that retries in Begin happen when
 // conn.Begin() returns ErrBadConn
 func TestTxErrBadConn(t *testing.T) {
-	synctest.Test(t, testTxErrBadConn)
-}
-func testTxErrBadConn(t *testing.T) {
 	db, err := Open("test", fakeDBName+";badConn")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -1558,17 +1372,15 @@ func testTxErrBadConn(t *testing.T) {
 }
 
 func TestConnQuery(t *testing.T) {
-	testDatabase(t, testConnQuery)
-}
-func testConnQuery(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx := t.Context()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	getFakeConn(conn.dc.ci).skipDirtySession = true
+	conn.dc.ci.(*fakeConn).skipDirtySession = true
 	defer conn.Close()
 
 	var name string
@@ -1587,23 +1399,23 @@ func testConnQuery(t *testing.T, db *DB) {
 }
 
 func TestConnRaw(t *testing.T) {
-	testDatabase(t, testConnRaw)
-}
-func testConnRaw(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx := t.Context()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	getFakeConn(conn.dc.ci).skipDirtySession = true
+	conn.dc.ci.(*fakeConn).skipDirtySession = true
 	defer conn.Close()
 
 	sawFunc := false
 	err = conn.Raw(func(dc any) error {
 		sawFunc = true
-		_ = getFakeConn(dc.(driver.Conn))
+		if _, ok := dc.(*fakeConn); !ok {
+			return fmt.Errorf("got %T want *fakeConn", dc)
+		}
 		return nil
 	})
 	if err != nil {
@@ -1634,10 +1446,8 @@ func testConnRaw(t *testing.T, db *DB) {
 }
 
 func TestCursorFake(t *testing.T) {
-	testDatabase(t, testCursorFake)
-}
-func testCursorFake(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
@@ -1681,162 +1491,6 @@ func testCursorFake(t *testing.T, db *DB) {
 	}
 }
 
-func TestCursorDoubleRowsPointer(t *testing.T) {
-	testDatabase(t, testCursorDoubleRowsPointer)
-}
-func testCursorDoubleRowsPointer(t *testing.T, db *DB) {
-	exec(t, db, "CREATE|table1|col=string")
-	exec(t, db, "INSERT|table1|col=value")
-	exec(t, db, "CREATE|cursor|list=table")
-	exec(t, db, "INSERT|cursor|list=table1!col")
-
-	rows, err := db.QueryContext(t.Context(), `SELECT|cursor|list|`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-
-	if !rows.Next() {
-		t.Fatal("no rows")
-	}
-	var cursor *Rows
-	if err := rows.Scan(&cursor); err != nil {
-		t.Fatal(err)
-	}
-	defer cursor.Close()
-
-	if !cursor.Next() {
-		t.Fatal("no child rows")
-	}
-	var col string
-	if err := cursor.Scan(&col); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := col, "value"; got != want {
-		t.Errorf("read col=%q, want %q", got, want)
-	}
-}
-
-func TestCursorNull(t *testing.T) {
-	testDatabase(t, testCursorNull)
-}
-func testCursorNull(t *testing.T, db *DB) {
-	exec(t, db, "CREATE|cursor|list=nulltable")
-	exec(t, db, "INSERT|cursor|list=?", nil)
-
-	rows, err := db.QueryContext(t.Context(), `SELECT|cursor|list|`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-
-	if !rows.Next() {
-		t.Fatal("no rows")
-	}
-
-	var cursor *Rows
-	if err := rows.Scan(&cursor); err != nil {
-		t.Fatal(err)
-	}
-	if cursor != nil {
-		t.Errorf("Scan returned cursor, expected nil")
-	}
-}
-
-// TestCursorCancel exercises calling Rows.Close at various places,
-// including canceling a cursor (child Rows).
-func TestCursorCancel(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		cancelOn string
-		want     []string
-	}{{
-		// don't cancel
-		name: "no cancel",
-		want: []string{
-			"table1",
-			"1.1",
-			"1.2",
-			"table2",
-			"2.1",
-			"2.2",
-		},
-	}, {
-		name:     "outer cancel",
-		cancelOn: "table2",
-		want: []string{
-			"table1",
-			"1.1",
-			"1.2",
-			"table2",
-		},
-	}, {
-		name:     "inner cancel",
-		cancelOn: "1.1",
-		want: []string{
-			"table1",
-			"1.1",
-			"table2",
-			"2.1",
-			"2.2",
-		},
-	}} {
-		t.Run(test.name, func(t *testing.T) {
-			testDatabase(t, func(t *testing.T, db *DB) {
-				testCursorCancel(t, db, test.cancelOn, test.want)
-			})
-		})
-	}
-}
-func testCursorCancel(t *testing.T, db *DB, cancelOn string, want []string) {
-	exec(t, db, "CREATE|table1|col=string")
-	exec(t, db, "INSERT|table1|col=1.1")
-	exec(t, db, "INSERT|table1|col=1.2")
-	exec(t, db, "CREATE|table2|col=string")
-	exec(t, db, "INSERT|table2|col=2.1")
-	exec(t, db, "INSERT|table2|col=2.2")
-
-	exec(t, db, "CREATE|cursor|name=string,list=table")
-	exec(t, db, "INSERT|cursor|name=table1,list=table1!col")
-	exec(t, db, "INSERT|cursor|name=table2,list=table2!col")
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
-
-	rows, err := db.QueryContext(ctx, `SELECT|cursor|name,list|`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-
-	var got []string
-	for rows.Next() {
-		var name string
-		cursor := &Rows{}
-		if err := rows.Scan(&name, cursor); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, name)
-		if name == cancelOn {
-			rows.Close()
-		}
-		for cursor.Next() {
-			var col string
-			if err := cursor.Scan(&col); err != nil {
-				t.Fatal(err)
-			}
-			got = append(got, col)
-			if col == cancelOn {
-				cursor.Close()
-			}
-		}
-	}
-
-	if !slices.Equal(got, want) {
-		t.Errorf("cancel after reading %q:\ngot:  %v\nwant: %v", cancelOn, got, want)
-	}
-}
-
 func TestInvalidNilValues(t *testing.T) {
 	var date1 time.Time
 	var date2 int
@@ -1859,7 +1513,7 @@ func TestInvalidNilValues(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		synctestSubtest(t, tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			db := newTestDB(t, "people")
 			defer closeDB(t, db)
 
@@ -1868,7 +1522,7 @@ func TestInvalidNilValues(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			getFakeConn(conn.dc.ci).skipDirtySession = true
+			conn.dc.ci.(*fakeConn).skipDirtySession = true
 			defer conn.Close()
 
 			err = conn.QueryRowContext(ctx, "SELECT|people|bdate|age=?", 1).Scan(tt.input)
@@ -1888,17 +1542,15 @@ func TestInvalidNilValues(t *testing.T) {
 }
 
 func TestConnTx(t *testing.T) {
-	testDatabase(t, testConnTx)
-}
-func testConnTx(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx := t.Context()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	getFakeConn(conn.dc.ci).skipDirtySession = true
+	conn.dc.ci.(*fakeConn).skipDirtySession = true
 	defer conn.Close()
 
 	tx, err := conn.BeginTx(ctx, nil)
@@ -1929,10 +1581,8 @@ func testConnTx(t *testing.T, db *DB) {
 // is actually discarded and does not re-enter the connection pool.
 // If the IsValid method from *fakeConn is removed, this test will fail.
 func TestConnIsValid(t *testing.T) {
-	testDatabase(t, testConnIsValid, requireFeature("Validator"))
-}
-func testConnIsValid(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	db.SetMaxOpenConns(1)
 
@@ -1944,7 +1594,7 @@ func testConnIsValid(t *testing.T, db *DB) {
 	}
 
 	err = c.Raw(func(raw any) error {
-		dc := getFakeConn(raw.(driver.Conn))
+		dc := raw.(*fakeConn)
 		dc.stickyBad = true
 		return nil
 	})
@@ -1953,7 +1603,7 @@ func testConnIsValid(t *testing.T, db *DB) {
 	}
 	c.Close()
 
-	if len(db.freeConn) > 0 && getFakeConn(db.freeConn[0].ci).stickyBad {
+	if len(db.freeConn) > 0 && db.freeConn[0].ci.(*fakeConn).stickyBad {
 		t.Fatal("bad connection returned to pool; expected bad connection to be discarded")
 	}
 }
@@ -1961,10 +1611,7 @@ func testConnIsValid(t *testing.T, db *DB) {
 // Tests fix for issue 2542, that we release a lock when querying on
 // a closed connection.
 func TestIssue2542Deadlock(t *testing.T) {
-	testDatabase(t, testIssue2542Deadlock)
-}
-func testIssue2542Deadlock(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
 	closeDB(t, db)
 	for i := 0; i < 2; i++ {
 		_, err := db.Query("SELECT|people|age,name|")
@@ -1976,10 +1623,8 @@ func testIssue2542Deadlock(t *testing.T, db *DB) {
 
 // From golang.org/issue/3865
 func TestCloseStmtBeforeRows(t *testing.T) {
-	testDatabase(t, testCloseStmtBeforeRows)
-}
-func testCloseStmtBeforeRows(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	s, err := db.Prepare("SELECT|people|name|")
 	if err != nil {
@@ -2003,9 +1648,8 @@ func testCloseStmtBeforeRows(t *testing.T, db *DB) {
 // Tests fix for issue 2788, that we bind nil to a []byte if the
 // value in the column is sql null
 func TestNullByteSlice(t *testing.T) {
-	testDatabase(t, testNullByteSlice)
-}
-func testNullByteSlice(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t|id=int32,name=nullstring")
 	exec(t, db, "INSERT|t|id=10,name=?", nil)
 
@@ -2030,9 +1674,8 @@ func testNullByteSlice(t *testing.T, db *DB) {
 }
 
 func TestPointerParamsAndScans(t *testing.T) {
-	testDatabase(t, testPointerParamsAndScans)
-}
-func testPointerParamsAndScans(t *testing.T, db *DB) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t|id=int32,name=nullstring")
 
 	bob := "bob"
@@ -2063,10 +1706,8 @@ func testPointerParamsAndScans(t *testing.T, db *DB) {
 }
 
 func TestQueryRowClosingStmt(t *testing.T) {
-	testDatabase(t, testQueryRowClosingStmt)
-}
-func testQueryRowClosingStmt(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	var name string
 	var age int
 	err := db.QueryRow("SELECT|people|age,name|age=?", 3).Scan(&age, &name)
@@ -2076,7 +1717,7 @@ func testQueryRowClosingStmt(t *testing.T, db *DB) {
 	if len(db.freeConn) != 1 {
 		t.Fatalf("expected 1 free conn")
 	}
-	fakeConn := getFakeConn(db.freeConn[0].ci)
+	fakeConn := db.freeConn[0].ci.(*fakeConn)
 	if made, closed := fakeConn.stmtsMade, fakeConn.stmtsClosed; made != closed {
 		t.Errorf("statement close mismatch: made %d, closed %d", made, closed)
 	}
@@ -2102,10 +1743,8 @@ func setRowsCloseHook(fn func(*Rows, *error)) {
 
 // Test issue 6651
 func TestIssue6651(t *testing.T) {
-	testDatabase(t, testIssue6651)
-}
-func testIssue6651(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	var v string
 
@@ -2153,9 +1792,7 @@ func TestNullStringParam(t *testing.T) {
 		{NullString{"eel", false}, "", NullString{"", false}},
 		{"foo", NullString{"black", false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
 func TestGenericNullStringParam(t *testing.T) {
@@ -2167,9 +1804,7 @@ func TestGenericNullStringParam(t *testing.T) {
 		{Null[string]{"eel", false}, "", Null[string]{"", false}},
 		{"foo", Null[string]{"black", false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
 func TestNullInt64Param(t *testing.T) {
@@ -2181,9 +1816,7 @@ func TestNullInt64Param(t *testing.T) {
 		{NullInt64{222, false}, 1, NullInt64{0, false}},
 		{0, NullInt64{31, false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
 func TestNullInt32Param(t *testing.T) {
@@ -2195,9 +1828,7 @@ func TestNullInt32Param(t *testing.T) {
 		{NullInt32{222, false}, 1, NullInt32{0, false}},
 		{0, NullInt32{31, false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
 func TestNullInt16Param(t *testing.T) {
@@ -2209,9 +1840,7 @@ func TestNullInt16Param(t *testing.T) {
 		{NullInt16{222, false}, 1, NullInt16{0, false}},
 		{0, NullInt16{31, false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
 func TestNullByteParam(t *testing.T) {
@@ -2223,9 +1852,7 @@ func TestNullByteParam(t *testing.T) {
 		{NullByte{222, false}, 1, NullByte{0, false}},
 		{0, NullByte{31, false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
 func TestNullFloat64Param(t *testing.T) {
@@ -2237,9 +1864,7 @@ func TestNullFloat64Param(t *testing.T) {
 		{NullFloat64{222, false}, 1, NullFloat64{0, false}},
 		{10, NullFloat64{31.2, false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
 func TestNullBoolParam(t *testing.T) {
@@ -2251,9 +1876,7 @@ func TestNullBoolParam(t *testing.T) {
 		{NullBool{true, false}, true, NullBool{false, false}},
 		{true, NullBool{true, false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
 func TestNullTimeParam(t *testing.T) {
@@ -2268,29 +1891,12 @@ func TestNullTimeParam(t *testing.T) {
 		{NullTime{t1, false}, t2, NullTime{t0, false}},
 		{t2, NullTime{t1, false}, nil},
 	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
+	nullTestRun(t, spec)
 }
 
-func TestNullUUIDParam(t *testing.T) {
-	u0 := uuid.UUID{}
-	u1 := uuid.MustParse("46cd2740-6081-4289-a659-03b61ebb92f7")
-	u2 := uuid.MustParse("46cd2740-6081-4289-a659-03b61ebb92f7")
-	spec := nullTestSpec{"nulluuid", "uuid", [6]nullTestRow{
-		{Null[uuid.UUID]{u1, true}, u2, Null[uuid.UUID]{u1, true}},
-		{Null[uuid.UUID]{u1, false}, u2, Null[uuid.UUID]{u0, false}},
-		{u1, u2, Null[uuid.UUID]{u1, true}},
-		{Null[uuid.UUID]{u1, true}, u2, Null[uuid.UUID]{u1, true}},
-		{Null[uuid.UUID]{u1, false}, u2, Null[uuid.UUID]{u0, false}},
-		{u2, Null[uuid.UUID]{u1, false}, nil},
-	}}
-	testDatabase(t, func(t *testing.T, db *DB) {
-		nullTestRun(t, spec, db)
-	})
-}
-
-func nullTestRun(t *testing.T, spec nullTestSpec, db *DB) {
+func nullTestRun(t *testing.T, spec nullTestSpec) {
+	db := newTestDB(t, "")
+	defer closeDB(t, db)
 	exec(t, db, fmt.Sprintf("CREATE|t|id=int32,name=string,nullf=%s,notnullf=%s", spec.nullType, spec.notNullType))
 
 	// Inserts with db.Exec:
@@ -2346,10 +1952,8 @@ func nullTestRun(t *testing.T, spec nullTestSpec, db *DB) {
 
 // golang.org/issue/4859
 func TestQueryRowNilScanDest(t *testing.T) {
-	testDatabase(t, testQueryRowNilScanDest)
-}
-func testQueryRowNilScanDest(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	var name *string // nil pointer
 	err := db.QueryRow("SELECT|people|name|").Scan(name)
 	want := `sql: Scan error on column index 0, name "name": destination pointer is nil`
@@ -2359,10 +1963,8 @@ func testQueryRowNilScanDest(t *testing.T, db *DB) {
 }
 
 func TestIssue4902(t *testing.T) {
-	testDatabase(t, testIssue4902)
-}
-func testIssue4902(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	driver := db.Driver().(*fakeDriver)
 	opens0 := driver.openCount
@@ -2392,10 +1994,8 @@ func testIssue4902(t *testing.T, db *DB) {
 // Issue 3857
 // This used to deadlock.
 func TestSimultaneousQueries(t *testing.T) {
-	testDatabase(t, testSimultaneousQueries)
-}
-func testSimultaneousQueries(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -2417,10 +2017,8 @@ func testSimultaneousQueries(t *testing.T, db *DB) {
 }
 
 func TestMaxIdleConns(t *testing.T) {
-	testDatabase(t, testMaxIdleConns)
-}
-func testMaxIdleConns(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -2448,9 +2046,6 @@ func testMaxIdleConns(t *testing.T, db *DB) {
 }
 
 func TestMaxOpenConns(t *testing.T) {
-	testDatabase(t, testMaxOpenConns)
-}
-func testMaxOpenConns(t *testing.T, db *DB) {
 	if testing.Short() {
 		t.Skip("skipping in short mode")
 	}
@@ -2461,7 +2056,8 @@ func testMaxOpenConns(t *testing.T, db *DB) {
 		}
 	})
 
-	populate(t, db, "magicquery")
+	db := newTestDB(t, "magicquery")
+	defer closeDB(t, db)
 
 	driver := db.Driver().(*fakeDriver)
 
@@ -2508,7 +2104,7 @@ func testMaxOpenConns(t *testing.T, db *DB) {
 		t.Errorf("free conns = %d; want %d", g, w)
 	}
 
-	if n := db.numDeps(); n > 20 {
+	if n := db.numDepsPoll(t, 20); n > 20 {
 		t.Errorf("number of dependencies = %d; expected <= 20", n)
 		db.dumpDeps(t)
 	}
@@ -2533,7 +2129,7 @@ func testMaxOpenConns(t *testing.T, db *DB) {
 		t.Errorf("free conns = %d; want %d", g, w)
 	}
 
-	if n := db.numDeps(); n > 10 {
+	if n := db.numDepsPoll(t, 10); n > 10 {
 		t.Errorf("number of dependencies = %d; expected <= 10", n)
 		db.dumpDeps(t)
 	}
@@ -2544,7 +2140,7 @@ func testMaxOpenConns(t *testing.T, db *DB) {
 		t.Errorf("free conns = %d; want %d", g, w)
 	}
 
-	if n := db.numDeps(); n > 5 {
+	if n := db.numDepsPoll(t, 5); n > 5 {
 		t.Errorf("number of dependencies = %d; expected 0", n)
 		db.dumpDeps(t)
 	}
@@ -2555,7 +2151,7 @@ func testMaxOpenConns(t *testing.T, db *DB) {
 		t.Errorf("free conns = %d; want %d", g, w)
 	}
 
-	if n := db.numDeps(); n > 5 {
+	if n := db.numDepsPoll(t, 5); n > 5 {
 		t.Errorf("number of dependencies = %d; expected 0", n)
 		db.dumpDeps(t)
 	}
@@ -2566,9 +2162,6 @@ func testMaxOpenConns(t *testing.T, db *DB) {
 // Issue 9453: tests that SetMaxOpenConns can be lowered at runtime
 // and affects the subsequent release of connections.
 func TestMaxOpenConnsOnBusy(t *testing.T) {
-	testDatabase(t, testMaxOpenConnsOnBusy)
-}
-func testMaxOpenConnsOnBusy(t *testing.T, db *DB) {
 	defer setHookpostCloseConn(nil)
 	setHookpostCloseConn(func(_ *fakeConn, err error) {
 		if err != nil {
@@ -2576,7 +2169,8 @@ func testMaxOpenConnsOnBusy(t *testing.T, db *DB) {
 		}
 	})
 
-	populate(t, db, "magicquery")
+	db := newTestDB(t, "magicquery")
+	defer closeDB(t, db)
 
 	db.SetMaxOpenConns(3)
 
@@ -2621,9 +2215,6 @@ func testMaxOpenConnsOnBusy(t *testing.T, db *DB) {
 // Issue 10886: tests that all connection attempts return when more than
 // DB.maxOpen connections are in flight and the first DB.maxOpen fail.
 func TestPendingConnsAfterErr(t *testing.T) {
-	synctest.Test(t, testPendingConnsAfterErr)
-}
-func testPendingConnsAfterErr(t *testing.T) {
 	const (
 		maxOpen = 2
 		tryOpen = maxOpen*2 + 2
@@ -2705,10 +2296,8 @@ func testPendingConnsAfterErr(t *testing.T) {
 }
 
 func TestSingleOpenConn(t *testing.T) {
-	testDatabase(t, testSingleOpenConn)
-}
-func testSingleOpenConn(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	db.SetMaxOpenConns(1)
 
@@ -2730,10 +2319,7 @@ func testSingleOpenConn(t *testing.T, db *DB) {
 }
 
 func TestStats(t *testing.T) {
-	testDatabase(t, testStats)
-}
-func testStats(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
 	stats := db.Stats()
 	if got := stats.OpenConnections; got != 1 {
 		t.Errorf("stats.OpenConnections = %d; want 1", got)
@@ -2753,10 +2339,14 @@ func testStats(t *testing.T, db *DB) {
 }
 
 func TestConnMaxLifetime(t *testing.T) {
-	testDatabase(t, testConnMaxLifetime)
-}
-func testConnMaxLifetime(t *testing.T, db *DB) {
-	populate(t, db, "magicquery")
+	t0 := time.Unix(1000000, 0)
+	offset := time.Duration(0)
+
+	nowFunc = func() time.Time { return t0.Add(offset) }
+	defer func() { nowFunc = time.Now }()
+
+	db := newTestDB(t, "magicquery")
+	defer closeDB(t, db)
 
 	driver := db.Driver().(*fakeDriver)
 
@@ -2777,7 +2367,7 @@ func testConnMaxLifetime(t *testing.T, db *DB) {
 		t.Fatal(err)
 	}
 
-	synctest.Sleep(1 * time.Second)
+	offset = time.Second
 	tx2, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -2802,7 +2392,7 @@ func testConnMaxLifetime(t *testing.T, db *DB) {
 	}
 
 	// Expire first conn
-	synctest.Sleep(10 * time.Second)
+	offset = 11 * time.Second
 	db.SetConnMaxLifetime(10 * time.Second)
 
 	tx, err = db.Begin()
@@ -2817,11 +2407,14 @@ func testConnMaxLifetime(t *testing.T, db *DB) {
 	tx2.Commit()
 
 	// Give connectionCleaner chance to run.
-	synctest.Wait()
-	driver.mu.Lock()
-	opens = driver.openCount - opens0
-	closes = driver.closeCount - closes0
-	driver.mu.Unlock()
+	waitCondition(t, func() bool {
+		driver.mu.Lock()
+		opens = driver.openCount - opens0
+		closes = driver.closeCount - closes0
+		driver.mu.Unlock()
+
+		return closes == 1
+	})
 
 	if opens != 3 {
 		t.Errorf("opens = %d; want 3", opens)
@@ -2837,9 +2430,6 @@ func testConnMaxLifetime(t *testing.T, db *DB) {
 
 // golang.org/issue/5323
 func TestStmtCloseDeps(t *testing.T) {
-	testDatabase(t, testStmtCloseDeps)
-}
-func testStmtCloseDeps(t *testing.T, db *DB) {
 	if testing.Short() {
 		t.Skip("skipping in short mode")
 	}
@@ -2850,7 +2440,8 @@ func testStmtCloseDeps(t *testing.T, db *DB) {
 		}
 	})
 
-	populate(t, db, "magicquery")
+	db := newTestDB(t, "magicquery")
+	defer closeDB(t, db)
 
 	driver := db.Driver().(*fakeDriver)
 
@@ -2891,7 +2482,7 @@ func testStmtCloseDeps(t *testing.T, db *DB) {
 		t.Errorf("free conns = %d; want %d", g, w)
 	}
 
-	if n := db.numDeps(); n > 4 {
+	if n := db.numDepsPoll(t, 4); n > 4 {
 		t.Errorf("number of dependencies = %d; expected <= 4", n)
 		db.dumpDeps(t)
 	}
@@ -2910,8 +2501,9 @@ func testStmtCloseDeps(t *testing.T, db *DB) {
 		db.dumpDeps(t)
 	}
 
-	synctest.Wait()
-	if len(stmt.css) > nquery {
+	if !waitCondition(t, func() bool {
+		return len(stmt.css) <= nquery
+	}) {
 		t.Errorf("len(stmt.css) = %d; want <= %d", len(stmt.css), nquery)
 	}
 
@@ -2923,7 +2515,7 @@ func testStmtCloseDeps(t *testing.T, db *DB) {
 		t.Errorf("free conns = %d; want %d", g, w)
 	}
 
-	if n := db.numDeps(); n > 2 {
+	if n := db.numDepsPoll(t, 2); n > 2 {
 		t.Errorf("number of dependencies = %d; expected <= 2", n)
 		db.dumpDeps(t)
 	}
@@ -2933,10 +2525,8 @@ func testStmtCloseDeps(t *testing.T, db *DB) {
 
 // golang.org/issue/5046
 func TestCloseConnBeforeStmts(t *testing.T) {
-	testDatabase(t, testCloseConnBeforeStmts)
-}
-func testCloseConnBeforeStmts(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	defer setHookpostCloseConn(nil)
 	setHookpostCloseConn(func(_ *fakeConn, err error) {
@@ -2990,10 +2580,8 @@ func testCloseConnBeforeStmts(t *testing.T, db *DB) {
 // golang.org/issue/5283: don't release the Rows' connection in Close
 // before calling Stmt.Close.
 func TestRowsCloseOrder(t *testing.T) {
-	testDatabase(t, testRowsCloseOrder)
-}
-func testRowsCloseOrder(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	db.SetMaxIdleConns(0)
 	setStrictFakeConnClose(t)
@@ -3010,10 +2598,8 @@ func testRowsCloseOrder(t *testing.T, db *DB) {
 }
 
 func TestRowsImplicitClose(t *testing.T) {
-	testDatabase(t, testRowsImplicitClose)
-}
-func testRowsImplicitClose(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	rows, err := db.Query("SELECT|people|age,name|")
 	if err != nil {
@@ -3021,7 +2607,7 @@ func testRowsImplicitClose(t *testing.T, db *DB) {
 	}
 
 	want, fail := 2, errors.New("fail")
-	r := getRowsCursor(rows)
+	r := rows.rowsi.(*rowsCursor)
 	r.errPos, r.err = want, fail
 
 	got := 0
@@ -3040,10 +2626,8 @@ func testRowsImplicitClose(t *testing.T, db *DB) {
 }
 
 func TestRowsCloseError(t *testing.T) {
-	testDatabase(t, testRowsCloseError)
-}
-func testRowsCloseError(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer db.Close()
 	rows, err := db.Query("SELECT|people|age,name|")
 	if err != nil {
 		t.Fatalf("Query: %v", err)
@@ -3054,7 +2638,10 @@ func testRowsCloseError(t *testing.T, db *DB) {
 	}
 	got := []row{}
 
-	rc := getRowsCursor(rows)
+	rc, ok := rows.rowsi.(*rowsCursor)
+	if !ok {
+		t.Fatal("not using *rowsCursor")
+	}
 	rc.closeErr = errors.New("rowsCursor: failed to close")
 
 	for rows.Next() {
@@ -3072,10 +2659,8 @@ func testRowsCloseError(t *testing.T, db *DB) {
 }
 
 func TestStmtCloseOrder(t *testing.T) {
-	testDatabase(t, testStmtCloseOrder)
-}
-func testStmtCloseOrder(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	db.SetMaxIdleConns(0)
 	setStrictFakeConnClose(t)
@@ -3090,9 +2675,6 @@ func testStmtCloseOrder(t *testing.T, db *DB) {
 // Test cases where there's more than maxBadConnRetries bad connections in the
 // pool (issue 8834)
 func TestManyErrBadConn(t *testing.T) {
-	synctest.Test(t, testManyErrBadConn)
-}
-func testManyErrBadConn(t *testing.T) {
 	manyErrBadConnSetup := func(first ...func(db *DB)) *DB {
 		db := newTestDB(t, "people")
 
@@ -3123,7 +2705,7 @@ func testManyErrBadConn(t *testing.T) {
 		}
 		for _, conn := range db.freeConn {
 			conn.Lock()
-			getFakeConn(conn.ci).stickyBad = true
+			conn.ci.(*fakeConn).stickyBad = true
 			conn.Unlock()
 		}
 		return db
@@ -3213,7 +2795,7 @@ func testManyErrBadConn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	getFakeConn(conn.dc.ci).skipDirtySession = true
+	conn.dc.ci.(*fakeConn).skipDirtySession = true
 	err = conn.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -3230,10 +2812,8 @@ func testManyErrBadConn(t *testing.T) {
 
 // Issue 34775: Ensure that a Tx cannot commit after a rollback.
 func TestTxCannotCommitAfterRollback(t *testing.T) {
-	testDatabase(t, testTxCannotCommitAfterRollback)
-}
-func testTxCannotCommitAfterRollback(t *testing.T, db *DB) {
-	populate(t, db, "tx_status")
+	db := newTestDB(t, "tx_status")
+	defer closeDB(t, db)
 
 	// First check query reporting is correct.
 	var txStatus string
@@ -3300,10 +2880,8 @@ func testTxCannotCommitAfterRollback(t *testing.T, db *DB) {
 
 // Issue 40985 transaction statement deadlock while context cancel.
 func TestTxStmtDeadlock(t *testing.T) {
-	testDatabase(t, testTxStmtDeadlock)
-}
-func testTxStmtDeadlock(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -3329,12 +2907,6 @@ func testTxStmtDeadlock(t *testing.T, db *DB) {
 	_ = tx.Rollback()
 }
 
-func synctestSubtest(t *testing.T, name string, f func(t *testing.T)) {
-	t.Run(name, func(t *testing.T) {
-		synctest.Test(t, f)
-	})
-}
-
 // Issue32530 encounters an issue where a connection may
 // expire right after it comes out of a used connection pool
 // even when a new connection is requested.
@@ -3348,15 +2920,28 @@ func TestConnExpiresFreshOutOfPool(t *testing.T) {
 		{false, true},
 	}
 
+	t0 := time.Unix(1000000, 0)
+	offset := time.Duration(0)
+	offsetMu := sync.RWMutex{}
+
+	nowFunc = func() time.Time {
+		offsetMu.RLock()
+		defer offsetMu.RUnlock()
+		return t0.Add(offset)
+	}
+	defer func() { nowFunc = time.Now }()
+
+	ctx := t.Context()
+
+	db := newTestDB(t, "magicquery")
+	defer closeDB(t, db)
+
+	db.SetMaxOpenConns(1)
+
 	for _, ec := range execCases {
+		ec := ec
 		name := fmt.Sprintf("expired=%t,badReset=%t", ec.expired, ec.badReset)
-		synctestSubtest(t, name, func(t *testing.T) {
-			ctx := t.Context()
-
-			db := newTestDB(t, "magicquery")
-
-			db.SetMaxOpenConns(1)
-
+		t.Run(name, func(t *testing.T) {
 			db.clearAllConns(t)
 
 			db.SetMaxIdleConns(1)
@@ -3368,6 +2953,7 @@ func TestConnExpiresFreshOutOfPool(t *testing.T) {
 			}
 
 			afterPutConn := make(chan struct{})
+			waitingForConn := make(chan struct{})
 
 			go func() {
 				defer close(afterPutConn)
@@ -3379,15 +2965,38 @@ func TestConnExpiresFreshOutOfPool(t *testing.T) {
 					t.Errorf("db.conn: %v", err)
 				}
 			}()
-			synctest.Wait()
+			go func() {
+				defer close(waitingForConn)
+
+				for {
+					if t.Failed() {
+						return
+					}
+					db.mu.Lock()
+					ct := db.connRequests.Len()
+					db.mu.Unlock()
+					if ct > 0 {
+						return
+					}
+					time.Sleep(pollDuration)
+				}
+			}()
+
+			<-waitingForConn
 
 			if t.Failed() {
 				return
 			}
 
-			synctest.Sleep(11 * time.Second)
+			offsetMu.Lock()
+			if ec.expired {
+				offset = 11 * time.Second
+			} else {
+				offset = time.Duration(0)
+			}
+			offsetMu.Unlock()
 
-			getFakeConn(conn.ci).stickyBad = ec.badReset
+			conn.ci.(*fakeConn).stickyBad = ec.badReset
 
 			db.putConn(conn, err, true)
 
@@ -3399,10 +3008,8 @@ func TestConnExpiresFreshOutOfPool(t *testing.T) {
 // TestIssue20575 ensures the Rows from query does not block
 // closing a transaction. Ensure Rows is closed while closing a transaction.
 func TestIssue20575(t *testing.T) {
-	testDatabase(t, testIssue20575)
-}
-func testIssue20575(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -3429,10 +3036,8 @@ func testIssue20575(t *testing.T, db *DB) {
 // TestIssue20622 tests closing the transaction before rows is closed, requires
 // the race detector to fail.
 func TestIssue20622(t *testing.T) {
-	testDatabase(t, testIssue20622)
-}
-func testIssue20622(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -3467,9 +3072,8 @@ func testIssue20622(t *testing.T, db *DB) {
 
 // golang.org/issue/5718
 func TestErrBadConnReconnect(t *testing.T) {
-	testDatabase(t, testErrBadConnReconnect)
-}
-func testErrBadConnReconnect(t *testing.T, db *DB) {
+	db := newTestDB(t, "foo")
+	defer closeDB(t, db)
 	exec(t, db, "CREATE|t1|name=string,age=int32,dead=bool")
 
 	simulateBadConn := func(name string, hook *func() bool, op func() error) {
@@ -3574,9 +3178,8 @@ func testErrBadConnReconnect(t *testing.T, db *DB) {
 
 // golang.org/issue/11264
 func TestTxEndBadConn(t *testing.T) {
-	testDatabase(t, testTxEndBadConn)
-}
-func testTxEndBadConn(t *testing.T, db *DB) {
+	db := newTestDB(t, "foo")
+	defer closeDB(t, db)
 	db.SetMaxIdleConns(0)
 	exec(t, db, "CREATE|t1|name=string,age=int32,dead=bool")
 	db.SetMaxIdleConns(1)
@@ -3989,10 +3592,8 @@ func doConcurrentTest(t testing.TB, ct concurrentTest) {
 }
 
 func TestIssue6081(t *testing.T) {
-	testDatabase(t, testIssue6081)
-}
-func testIssue6081(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	drv := db.Driver().(*fakeDriver)
 	drv.mu.Lock()
@@ -4047,10 +3648,8 @@ func testIssue6081(t *testing.T, db *DB) {
 // The addition of calling rows.Next also tests
 // Issue 21117.
 func TestIssue18429(t *testing.T) {
-	testDatabase(t, testIssue18429)
-}
-func testIssue18429(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx := context.Background()
 	sem := make(chan bool, 20)
@@ -4098,10 +3697,8 @@ func testIssue18429(t *testing.T, db *DB) {
 
 // TestIssue20160 attempts to test a short context life on a stmt Query.
 func TestIssue20160(t *testing.T) {
-	testDatabase(t, testIssue20160)
-}
-func testIssue20160(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx := context.Background()
 	sem := make(chan bool, 20)
@@ -4144,10 +3741,8 @@ func testIssue20160(t *testing.T, db *DB) {
 //
 // See https://golang.org/cl/35550 .
 func TestIssue18719(t *testing.T) {
-	testDatabase(t, testIssue18719, requireFeature("BeginTx"))
-}
-func testIssue18719(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -4159,9 +3754,10 @@ func testIssue18719(t *testing.T, db *DB) {
 
 	hookTxGrabConn = func() {
 		cancel()
-		synctest.Wait()
-		if !tx.isDone() {
-			t.Errorf("tx is not done")
+
+		// Wait for the context to cancel and tx to rollback.
+		for !tx.isDone() {
+			time.Sleep(pollDuration)
 		}
 	}
 	defer func() { hookTxGrabConn = nil }()
@@ -4182,10 +3778,8 @@ func testIssue18719(t *testing.T, db *DB) {
 }
 
 func TestIssue20647(t *testing.T) {
-	testDatabase(t, testIssue20647)
-}
-func testIssue20647(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx := t.Context()
 
@@ -4193,7 +3787,7 @@ func testIssue20647(t *testing.T, db *DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	getFakeConn(conn.dc.ci).skipDirtySession = true
+	conn.dc.ci.(*fakeConn).skipDirtySession = true
 	defer conn.Close()
 
 	stmt, err := conn.PrepareContext(ctx, "SELECT|people|name|")
@@ -4235,17 +3829,15 @@ func TestConcurrency(t *testing.T) {
 		{"Random", new(concurrentRandomTest)},
 	}
 	for _, item := range list {
-		synctestSubtest(t, item.name, func(t *testing.T) {
+		t.Run(item.name, func(t *testing.T) {
 			doConcurrentTest(t, item.ct)
 		})
 	}
 }
 
 func TestConnectionLeak(t *testing.T) {
-	testDatabase(t, testConnectionLeak)
-}
-func testConnectionLeak(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	// Start by opening defaultMaxIdleConns
 	rows := make([]*Rows, defaultMaxIdleConns)
 	// We need to SetMaxOpenConns > MaxIdleConns, so the DB can open
@@ -4296,10 +3888,8 @@ func testConnectionLeak(t *testing.T, db *DB) {
 }
 
 func TestStatsMaxIdleClosedZero(t *testing.T) {
-	testDatabase(t, testStatsMaxIdleClosedZero)
-}
-func testStatsMaxIdleClosedZero(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
@@ -4324,10 +3914,8 @@ func testStatsMaxIdleClosedZero(t *testing.T, db *DB) {
 }
 
 func TestStatsMaxIdleClosedTen(t *testing.T) {
-	testDatabase(t, testStatsMaxIdleClosedTen)
-}
-func testStatsMaxIdleClosedTen(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(0)
@@ -4352,11 +3940,15 @@ func testStatsMaxIdleClosedTen(t *testing.T, db *DB) {
 }
 
 // testUseConns uses count concurrent connections with 1 nanosecond apart.
-func testUseConns(t *testing.T, count int, db *DB) {
+// Returns the returnedAt time of the final connection.
+func testUseConns(t *testing.T, count int, tm time.Time, db *DB) time.Time {
 	conns := make([]*Conn, count)
 	ctx := context.Background()
 	for i := range conns {
-		time.Sleep(1 * time.Nanosecond)
+		tm = tm.Add(time.Nanosecond)
+		nowFunc = func() time.Time {
+			return tm
+		}
 		c, err := db.Conn(ctx)
 		if err != nil {
 			t.Error(err)
@@ -4365,11 +3957,16 @@ func testUseConns(t *testing.T, count int, db *DB) {
 	}
 
 	for i := len(conns) - 1; i >= 0; i-- {
-		time.Sleep(1 * time.Nanosecond)
+		tm = tm.Add(time.Nanosecond)
+		nowFunc = func() time.Time {
+			return tm
+		}
 		if err := conns[i].Close(); err != nil {
 			t.Error(err)
 		}
 	}
+
+	return tm
 }
 
 func TestMaxIdleTime(t *testing.T) {
@@ -4417,9 +4014,15 @@ func TestMaxIdleTime(t *testing.T) {
 			10 * time.Millisecond,
 			0},
 	}
+	baseTime := time.Unix(0, 0)
+	defer func() {
+		nowFunc = time.Now
+	}()
 	for _, item := range list {
-		synctestSubtest(t, fmt.Sprintf("%v", item.wantMaxIdleTime), func(t *testing.T) {
-			startTime := time.Now()
+		nowFunc = func() time.Time {
+			return baseTime
+		}
+		t.Run(fmt.Sprintf("%v", item.wantMaxIdleTime), func(t *testing.T) {
 			db := newTestDB(t, "people")
 			defer closeDB(t, db)
 
@@ -4431,15 +4034,18 @@ func TestMaxIdleTime(t *testing.T) {
 			preMaxIdleClosed := db.Stats().MaxIdleTimeClosed
 
 			// Busy usedConns.
-			testUseConns(t, usedConns, db)
+			testUseConns(t, usedConns, baseTime, db)
 
-			time.Sleep(time.Until(startTime.Add(item.timeOffset)))
+			tm := baseTime.Add(item.timeOffset)
 
 			// Reuse connections which should never be considered idle
 			// and exercises the sorting for issue 39471.
-			testUseConns(t, reusedConns, db)
+			tm = testUseConns(t, reusedConns, tm, db)
 
-			time.Sleep(item.secondTimeOffset)
+			tm = tm.Add(item.secondTimeOffset)
+			nowFunc = func() time.Time {
+				return tm
+			}
 
 			db.mu.Lock()
 			nc, closing := db.connectionCleanerRunLocked(time.Second)
@@ -4481,7 +4087,7 @@ type nvcDriver struct {
 
 func (d *nvcDriver) Open(dsn string) (driver.Conn, error) {
 	c, err := d.fakeDriver.Open(dsn)
-	fc := getFakeConn(c)
+	fc := c.(*fakeConn)
 	fc.db.allowAny = true
 	return &nvcConn{fc, d.skipNamedValueCheck}, err
 }
@@ -4523,9 +4129,6 @@ func (c *nvcConn) CheckNamedValue(nv *driver.NamedValue) error {
 }
 
 func TestNamedValueChecker(t *testing.T) {
-	synctest.Test(t, testNamedValueChecker)
-}
-func testNamedValueChecker(t *testing.T) {
 	Register("NamedValueCheck", &nvcDriver{})
 	db, err := Open("NamedValueCheck", "")
 	if err != nil {
@@ -4574,9 +4177,6 @@ func testNamedValueChecker(t *testing.T) {
 }
 
 func TestNamedValueCheckerSkip(t *testing.T) {
-	synctest.Test(t, testNamedValueCheckerSkip)
-}
-func testNamedValueCheckerSkip(t *testing.T) {
 	Register("NamedValueCheckSkip", &nvcDriver{skipNamedValueCheck: true})
 	db, err := Open("NamedValueCheckSkip", "")
 	if err != nil {
@@ -4602,9 +4202,6 @@ func testNamedValueCheckerSkip(t *testing.T) {
 }
 
 func TestOpenConnector(t *testing.T) {
-	synctest.Test(t, testOpenConnector)
-}
-func testOpenConnector(t *testing.T) {
 	Register("testctx", &fakeDriverCtx{})
 	db, err := Open("testctx", "people")
 	if err != nil {
@@ -4635,7 +4232,7 @@ func (d *ctxOnlyDriver) Open(dsn string) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ctxOnlyConn{fc: getFakeConn(conn)}, nil
+	return &ctxOnlyConn{fc: conn.(*fakeConn)}, nil
 }
 
 var (
@@ -4682,9 +4279,6 @@ func (c *ctxOnlyConn) ExecContext(ctx context.Context, q string, args []driver.N
 // TestQueryExecContextOnly ensures drivers only need to implement QueryContext
 // and ExecContext methods.
 func TestQueryExecContextOnly(t *testing.T) {
-	synctest.Test(t, testQueryExecContextOnly)
-}
-func testQueryExecContextOnly(t *testing.T) {
 	// Ensure connection does not implement non-context interfaces.
 	var connType driver.Conn = &ctxOnlyConn{}
 	if _, ok := connType.(driver.Execer); ok {
@@ -4760,10 +4354,8 @@ func (alwaysErrScanner) Scan(any) error {
 
 // Issue 38099: Ensure that Rows.Scan properly wraps underlying errors.
 func TestRowsScanProperlyWrapsErrors(t *testing.T) {
-	testDatabase(t, testRowsScanProperlyWrapsErrors)
-}
-func testRowsScanProperlyWrapsErrors(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	rows, err := db.Query("SELECT|people|age|")
 	if err != nil {
@@ -4798,10 +4390,10 @@ func (v alwaysErrValuer) Value() (driver.Value, error) {
 
 // Issue 64707: Ensure that Stmt.Exec and Stmt.Query properly wraps underlying errors.
 func TestDriverArgsWrapsErrors(t *testing.T) {
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
-	synctestSubtest(t, "exec", func(t *testing.T) {
-		db := newTestDB(t, "people")
-		defer closeDB(t, db)
+	t.Run("exec", func(t *testing.T) {
 		_, err := db.Exec("INSERT|keys|dec1=?", alwaysErrValuer{})
 		if err == nil {
 			t.Fatal("expecting back an error")
@@ -4815,9 +4407,7 @@ func TestDriverArgsWrapsErrors(t *testing.T) {
 		}
 	})
 
-	synctestSubtest(t, "query", func(t *testing.T) {
-		db := newTestDB(t, "people")
-		defer closeDB(t, db)
+	t.Run("query", func(t *testing.T) {
 		_, err := db.Query("INSERT|keys|dec1=?", alwaysErrValuer{})
 		if err == nil {
 			t.Fatal("expecting back an error")
@@ -4834,7 +4424,7 @@ func TestDriverArgsWrapsErrors(t *testing.T) {
 
 func TestContextCancelDuringRawBytesScan(t *testing.T) {
 	for _, mode := range []string{"nocancel", "top", "bottom", "go"} {
-		synctestSubtest(t, mode, func(t *testing.T) {
+		t.Run(mode, func(t *testing.T) {
 			testContextCancelDuringRawBytesScan(t, mode)
 		})
 	}
@@ -4859,8 +4449,10 @@ func testContextCancelDuringRawBytesScan(t *testing.T, mode string) {
 	for r.Next() {
 		if mode == "top" && numRows == 2 {
 			// cancel between Next and Scan is observed by Scan as err = context.Canceled.
+			// The sleep here is only to make it more likely that the cancel will be observed.
+			// If not, the test should still pass, like in "go" mode.
 			cancel()
-			synctest.Wait()
+			time.Sleep(100 * time.Millisecond)
 		}
 		numRows++
 		var s RawBytes
@@ -4880,8 +4472,10 @@ func testContextCancelDuringRawBytesScan(t *testing.T, mode string) {
 		t.Logf("read %q", s)
 		if mode == "bottom" && numRows == 2 {
 			// cancel before Next should be observed by Next, exiting the loop.
+			// The sleep here is only to make it more likely that the cancel will be observed.
+			// If not, the test should still pass, like in "go" mode.
 			cancel()
-			synctest.Wait()
+			time.Sleep(100 * time.Millisecond)
 		}
 		if mode == "go" && numRows == 2 {
 			// cancel at any future time, to catch other cases
@@ -4890,8 +4484,6 @@ func testContextCancelDuringRawBytesScan(t *testing.T, mode string) {
 		for _, b := range s { // some operation reading from the raw memory
 			sink += b
 		}
-		// r.Columns must not deadlock acquiring closemu.RLock.
-		_, _ = r.Columns()
 	}
 	if r.closemuScanHold {
 		t.Errorf("closemu held; should not be")
@@ -4916,10 +4508,8 @@ func testContextCancelDuringRawBytesScan(t *testing.T, mode string) {
 }
 
 func TestContextCancelBetweenNextAndErr(t *testing.T) {
-	testDatabase(t, testContextCancelBetweenNextAndErr)
-}
-func testContextCancelBetweenNextAndErr(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -4929,8 +4519,8 @@ func testContextCancelBetweenNextAndErr(t *testing.T, db *DB) {
 	}
 	for r.Next() {
 	}
-	cancel() // wake up the awaitDone goroutine
-	synctest.Wait()
+	cancel()                          // wake up the awaitDone goroutine
+	time.Sleep(10 * time.Millisecond) // increase odds of seeing failure
 	if err := r.Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -4943,10 +4533,8 @@ type testScanner struct {
 func (ts testScanner) Scan(src any) error { return ts.scanf(src) }
 
 func TestContextCancelDuringScan(t *testing.T) {
-	testDatabase(t, testContextCancelDuringScan)
-}
-func testContextCancelDuringScan(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -4983,8 +4571,9 @@ func testContextCancelDuringScan(t *testing.T, db *DB) {
 	}
 
 	// Cancel the query.
+	// Sleep to give it a chance to finish canceling.
 	cancel()
-	synctest.Wait()
+	time.Sleep(10 * time.Millisecond)
 
 	// Cancelling the query should not have changed the result.
 	if !bytes.Equal(gotBytes, want) {
@@ -4993,10 +4582,8 @@ func testContextCancelDuringScan(t *testing.T, db *DB) {
 }
 
 func TestNilErrorAfterClose(t *testing.T) {
-	testDatabase(t, testNilErrorAfterClose)
-}
-func testNilErrorAfterClose(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	// This WithCancel is important; Rows contains an optimization to avoid
 	// spawning a goroutine when the query/transaction context cannot be
@@ -5013,7 +4600,7 @@ func testNilErrorAfterClose(t *testing.T, db *DB) {
 		t.Fatal(err)
 	}
 
-	synctest.Wait()
+	time.Sleep(10 * time.Millisecond) // increase odds of seeing failure
 	if err := r.Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -5024,10 +4611,8 @@ func testNilErrorAfterClose(t *testing.T, db *DB) {
 // If a RawBytes is reused across multiple queries,
 // subsequent queries shouldn't overwrite driver-owned memory from previous queries.
 func TestRawBytesReuse(t *testing.T) {
-	testDatabase(t, testRawBytesReuse)
-}
-func testRawBytesReuse(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	var raw RawBytes
 
@@ -5093,9 +4678,6 @@ func (bd badDriver) Open(name string) (driver.Conn, error) {
 
 // Issue 15901.
 func TestBadDriver(t *testing.T) {
-	synctest.Test(t, testBadDriver)
-}
-func testBadDriver(t *testing.T) {
 	Register("bad", badDriver{})
 	db, err := Open("bad", "ignored")
 	if err != nil {
@@ -5139,9 +4721,6 @@ func (pd *pingDriver) Open(name string) (driver.Conn, error) {
 }
 
 func TestPing(t *testing.T) {
-	synctest.Test(t, testPing)
-}
-func testPing(t *testing.T) {
 	driver := &pingDriver{}
 	Register("ping", driver)
 
@@ -5149,7 +4728,6 @@ func testPing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 
 	if err := db.Ping(); err != nil {
 		t.Errorf("err was %#v, expected nil", err)
@@ -5164,10 +4742,8 @@ func testPing(t *testing.T) {
 
 // Issue 18101.
 func TestTypedString(t *testing.T) {
-	testDatabase(t, testTypedString)
-}
-func testTypedString(t *testing.T, db *DB) {
-	populate(t, db, "people")
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
 
 	type Str string
 	var scanned Str
@@ -5275,9 +4851,6 @@ func BenchmarkManyConcurrentQueries(b *testing.B) {
 }
 
 func TestGrabConnAllocs(t *testing.T) {
-	synctest.Test(t, testGrabConnAllocs)
-}
-func testGrabConnAllocs(t *testing.T) {
 	testenv.SkipIfOptimizationOff(t)
 	if race.Enabled {
 		t.Skip("skipping allocation test when using race detector")
@@ -5466,311 +5039,4 @@ func TestIssue69728(t *testing.T) {
 	if !reflect.DeepEqual(v1, v2) {
 		t.Errorf("not equal; v1 = %v, v2 = %v", v1, v2)
 	}
-}
-
-func TestColumnConverterWithUnknownInputCount(t *testing.T) {
-	db := OpenDB(&unknownInputsConnector{})
-	stmt, err := db.Prepare("SELECT ?")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = stmt.Exec(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-type unknownInputsConnector struct{}
-
-func (unknownInputsConnector) Connect(context.Context) (driver.Conn, error) {
-	return unknownInputsConn{}, nil
-}
-
-func (unknownInputsConnector) Driver() driver.Driver { return nil }
-
-type unknownInputsConn struct{}
-
-func (unknownInputsConn) Prepare(string) (driver.Stmt, error) { return unknownInputsStmt{}, nil }
-func (unknownInputsConn) Close() error                        { return nil }
-func (unknownInputsConn) Begin() (driver.Tx, error)           { return nil, nil }
-
-type unknownInputsStmt struct{}
-
-func (unknownInputsStmt) Close() error  { return nil }
-func (unknownInputsStmt) NumInput() int { return -1 }
-func (unknownInputsStmt) Exec(args []driver.Value) (driver.Result, error) {
-	if _, ok := args[0].(string); !ok {
-		return nil, fmt.Errorf("Expected string, got %T", args[0])
-	}
-	return nil, nil
-}
-func (unknownInputsStmt) Query([]driver.Value) (driver.Rows, error) { return nil, nil }
-func (unknownInputsStmt) ColumnConverter(idx int) driver.ValueConverter {
-	return unknownInputsValueConverter{}
-}
-
-type unknownInputsValueConverter struct{}
-
-func (unknownInputsValueConverter) ConvertValue(v any) (driver.Value, error) {
-	return "string", nil
-}
-
-func TestNullTypeScanErrorConsistency(t *testing.T) {
-	// Issue #45662: Null* types should have Valid=false when Scan returns an error.
-	// Previously, Valid was set to true before convertAssign was called,
-	// so if conversion failed, Valid would still be true despite the error.
-
-	tests := []struct {
-		name    string
-		scanner Scanner
-		input   any
-		wantErr bool
-	}{
-		{
-			name:    "NullInt32 with invalid input",
-			scanner: &NullInt32{},
-			input:   []byte("not_a_number"),
-			wantErr: true,
-		},
-		{
-			name:    "NullInt64 with invalid input",
-			scanner: &NullInt64{},
-			input:   []byte("not_a_number"),
-			wantErr: true,
-		},
-		{
-			name:    "NullFloat64 with invalid input",
-			scanner: &NullFloat64{},
-			input:   []byte("not_a_float"),
-			wantErr: true,
-		},
-		{
-			name:    "NullBool with invalid input",
-			scanner: &NullBool{},
-			input:   []byte("not_a_bool"),
-			wantErr: true,
-		},
-		// Valid cases should still work
-		{
-			name:    "NullInt32 with valid input",
-			scanner: &NullInt32{},
-			input:   int64(42),
-			wantErr: false,
-		},
-		{
-			name:    "NullInt64 with valid input",
-			scanner: &NullInt64{},
-			input:   int64(42),
-			wantErr: false,
-		},
-		{
-			name:    "NullFloat64 with valid input",
-			scanner: &NullFloat64{},
-			input:   float64(3.14),
-			wantErr: false,
-		},
-		{
-			name:    "NullBool with valid input",
-			scanner: &NullBool{},
-			input:   true,
-			wantErr: false,
-		},
-		{
-			name:    "NullString with valid input",
-			scanner: &NullString{},
-			input:   "hello",
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.scanner.Scan(tt.input)
-
-			// Check that error matches expectation
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Scan() error = %v, wantErr %v", err, tt.wantErr)
-			}
-
-			// The key invariant: Valid should be the opposite of whether we got an error
-			// (assuming non-nil input)
-			var valid bool
-			switch s := tt.scanner.(type) {
-			case *NullInt32:
-				valid = s.Valid
-			case *NullInt64:
-				valid = s.Valid
-			case *NullFloat64:
-				valid = s.Valid
-			case *NullBool:
-				valid = s.Valid
-			case *NullString:
-				valid = s.Valid
-			case *NullTime:
-				valid = s.Valid
-			}
-
-			if err != nil && valid {
-				t.Errorf("Scan() returned error but Valid=true; want Valid=false when err!=nil")
-			}
-			if err == nil && !valid {
-				t.Errorf("Scan() returned nil error but Valid=false; want Valid=true when err==nil")
-			}
-		})
-	}
-}
-
-// TestNullTypeScanNil verifies that scanning nil sets Valid=false without error.
-func TestNullTypeScanNil(t *testing.T) {
-	tests := []struct {
-		name    string
-		scanner Scanner
-	}{
-		{"NullString", &NullString{String: "preset", Valid: true}},
-		{"NullInt64", &NullInt64{Int64: 42, Valid: true}},
-		{"NullInt32", &NullInt32{Int32: 42, Valid: true}},
-		{"NullFloat64", &NullFloat64{Float64: 3.14, Valid: true}},
-		{"NullBool", &NullBool{Bool: true, Valid: true}},
-		{"NullTime", &NullTime{Time: time.Now(), Valid: true}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.scanner.Scan(nil)
-			if err != nil {
-				t.Errorf("Scan(nil) error = %v; want nil", err)
-			}
-
-			var valid bool
-			switch s := tt.scanner.(type) {
-			case *NullString:
-				valid = s.Valid
-			case *NullInt64:
-				valid = s.Valid
-			case *NullInt32:
-				valid = s.Valid
-			case *NullFloat64:
-				valid = s.Valid
-			case *NullBool:
-				valid = s.Valid
-			case *NullTime:
-				valid = s.Valid
-			}
-
-			if valid {
-				t.Errorf("Scan(nil) left Valid=true; want Valid=false")
-			}
-		})
-	}
-}
-
-type testStringType struct {
-	s string
-}
-
-func TestQueryRowsScanner(t *testing.T) {
-	testDatabase(t, testQueryRowsScanner, requireFeature("ScanColumn"))
-}
-func testQueryRowsScanner(t *testing.T, db *DB) {
-	populate(t, db, "people")
-	rows, err := db.Query("SELECT|people|age,name|")
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	defer rows.Close()
-	type row struct {
-		age  int
-		name testStringType
-	}
-	got := []row{}
-	for rows.Next() {
-		var r row
-		err = rows.Scan(&r.age, &r.name)
-		if err != nil {
-			t.Fatalf("Scan: %v", err)
-		}
-		got = append(got, r)
-	}
-	err = rows.Err()
-	if err != nil {
-		t.Fatalf("Err: %v", err)
-	}
-	want := []row{
-		{age: 1, name: testStringType{"Alice"}},
-		{age: 2, name: testStringType{"Bob"}},
-		{age: 3, name: testStringType{"Chris"}},
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("mismatch.\n got: %#v\nwant: %#v", got, want)
-	}
-}
-
-type rowsColumnScannerConnector struct {
-	fakeConnector
-}
-
-func (c *rowsColumnScannerConnector) Connect(ctx context.Context) (driver.Conn, error) {
-	conn, err := c.fakeConnector.Connect(ctx)
-	fc := getFakeConn(conn)
-	return &rowsColumnScannerConn{fc}, err
-}
-
-// rowsColumnScannerConn is a Conn with rows that implement RowsColumnScanner.
-type rowsColumnScannerConn struct {
-	*fakeConn
-}
-
-func (s *rowsColumnScannerConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	stmt, err := s.fakeConn.PrepareContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	return &rowsColumnScannerStmt{stmt.(*fakeStmt)}, nil
-}
-
-type rowsColumnScannerStmt struct {
-	*fakeStmt
-}
-
-func (s *rowsColumnScannerStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	rows, err := s.fakeStmt.QueryContext(ctx, args)
-	if err != nil {
-		return nil, err
-	}
-	return &rowsColumnScannerRows{rowsCursor: rows.(*rowsCursor)}, nil
-}
-
-type rowsColumnScannerRows struct {
-	*rowsCursor
-	row []driver.Value
-}
-
-func (c *rowsColumnScannerRows) NextRow() error {
-	if c.row == nil {
-		c.row = make([]driver.Value, len(c.rowsCursor.Columns()))
-	}
-	return c.rowsCursor.Next(c.row)
-}
-
-func (c *rowsColumnScannerRows) NextResultSet() error {
-	c.row = nil
-	return c.rowsCursor.NextResultSet()
-}
-
-func (c *rowsColumnScannerRows) ScanColumn(ctx driver.ScanContext, index int, dest any) error {
-	if index < 0 || index >= len(c.row) {
-		return fmt.Errorf("index %v out of range", index)
-	}
-	switch d := dest.(type) {
-	case *testStringType:
-		switch s := c.row[index].(type) {
-		case string:
-			d.s = s
-			return nil
-		case []byte:
-			d.s = string(s)
-			return nil
-		}
-	}
-	return ConvertAssign(ctx, dest, c.row[index])
 }

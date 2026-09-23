@@ -12,6 +12,7 @@ package types
 import (
 	"go/ast"
 	"go/constant"
+	"internal/buildcfg"
 	. "internal/types/errors"
 )
 
@@ -37,8 +38,8 @@ func (check *Checker) rangeStmt(inner stmtContext, rangeStmt *ast.RangeStmt, noN
 	check.hasCallOrRecv = false
 	check.expr(nil, &x, rangeVar)
 
-	if isTypes2 && x.isValid() && sValue == nil && !check.hasCallOrRecv {
-		if t, ok := arrayPtrDeref(x.typ().Underlying()).(*Array); ok {
+	if isTypes2 && x.mode != invalid && sValue == nil && !check.hasCallOrRecv {
+		if t, ok := arrayPtrDeref(under(x.typ)).(*Array); ok {
 			for {
 				// Put constant info on the thing inside parentheses.
 				// That's where (*../noder/writer).expr expects it.
@@ -53,19 +54,19 @@ func (check *Checker) rangeStmt(inner stmtContext, rangeStmt *ast.RangeStmt, noN
 			// (and thus side-effects will not be computed
 			// by the backend).
 			check.record(&operand{
-				mode_: constant_,
-				expr:  rangeVar,
-				typ_:  Typ[Int],
-				val:   constant.MakeInt64(t.len),
-				id:    x.id,
+				mode: constant_,
+				expr: rangeVar,
+				typ:  Typ[Int],
+				val:  constant.MakeInt64(t.len),
+				id:   x.id,
 			})
 		}
 	}
 
 	// determine key/value types
 	var key, val Type
-	if x.isValid() {
-		k, v, cause, ok := rangeKeyVal(check, x.typ(), func(v goVersion) bool {
+	if x.mode != invalid {
+		k, v, cause, ok := rangeKeyVal(check, x.typ, func(v goVersion) bool {
 			return check.allowVersion(v)
 		})
 		switch {
@@ -95,7 +96,7 @@ func (check *Checker) rangeStmt(inner stmtContext, rangeStmt *ast.RangeStmt, noN
 	lhs := [2]ast.Expr{sKey, sValue} // sKey, sValue may be nil
 	rhs := [2]Type{key, val}         // key, val may be nil
 
-	rangeOverInt := isInteger(x.typ())
+	rangeOverInt := isInteger(x.typ)
 
 	if isDef {
 		// short variable declaration
@@ -136,9 +137,9 @@ func (check *Checker) rangeStmt(inner stmtContext, rangeStmt *ast.RangeStmt, noN
 				check.initVar(obj, &x, "range clause")
 			} else {
 				var y operand
-				y.mode_ = value
+				y.mode = value
 				y.expr = lhs // we don't have a better rhs expression to use here
-				y.typ_ = typ
+				y.typ = typ
 				check.initVar(obj, &y, "assignment") // error is on variable, use "assignment" not "range clause"
 			}
 			assert(obj.typ != nil)
@@ -172,14 +173,14 @@ func (check *Checker) rangeStmt(inner stmtContext, rangeStmt *ast.RangeStmt, noN
 				// If the assignment succeeded, if x was untyped before, it now
 				// has a type inferred via the assignment. It must be an integer.
 				// (go.dev/issues/67027)
-				if x.isValid() && !isInteger(x.typ()) {
-					check.softErrorf(lhs, InvalidRangeExpr, "cannot use iteration variable of type %s", x.typ())
+				if x.mode != invalid && !isInteger(x.typ) {
+					check.softErrorf(lhs, InvalidRangeExpr, "cannot use iteration variable of type %s", x.typ)
 				}
 			} else {
 				var y operand
-				y.mode_ = value
+				y.mode = value
 				y.expr = lhs // we don't have a better rhs expression to use here
-				y.typ_ = typ
+				y.typ = typ
 				check.assignVar(lhs, nil, &y, "assignment") // error is on variable, use "assignment" not "range clause"
 			}
 		}
@@ -239,11 +240,10 @@ func rangeKeyVal(check *Checker, orig Type, allowVersion func(goVersion) bool) (
 		assert(typ.dir != SendOnly)
 		return typ.elem, nil, "", true
 	case *Signature:
-		if allowVersion != nil && !allowVersion(go1_23) {
+		if !buildcfg.Experiment.RangeFunc && allowVersion != nil && !allowVersion(go1_23) {
 			return bad("requires go1.23 or later")
 		}
 		// check iterator arity
-		// TODO(gri) error messages could be less verbose (consider rangeStmt error and cause returned here)
 		switch {
 		case typ.Params().Len() != 1:
 			return bad("func must be func(yield func(...) bool): wrong argument count")
@@ -270,8 +270,6 @@ func rangeKeyVal(check *Checker, orig Type, allowVersion func(goVersion) bool) (
 			} else {
 				return bad("func must be func(yield func(...) bool): yield func does not return bool")
 			}
-		case cb.Variadic():
-			return bad(check.sprintf("yield func of type %s cannot be variadic", cb))
 		}
 		assert(cb.Recv() == nil)
 		// determine key and value types, if any

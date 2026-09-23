@@ -71,93 +71,29 @@ msa_large_loop:
 no_msa:
 	// if less than 8 bytes, do one byte at a time
 	SGTU	$8, R2, R3
-	BNE	R3, check4
+	BNE	R3, out
 
-	// Check alignment
+	// do one byte at a time until 8-aligned
 	AND	$7, R1, R3
-	BEQ	R3, aligned
-
-	// Zero one byte at a time until we reach 8 byte alignment.
-	MOVV	$8, R5
-	SUBV	R3, R5, R3
-	SUBV	R3, R2, R2
-align:
-	SUBV	$1, R3
+	BEQ	R3, words
 	MOVB	R0, (R1)
 	ADDV	$1, R1
-	BNE	R3, align
+	JMP	-4(PC)
 
-aligned:
-	SGTU	$8, R2, R3
-	BNE	R3, check4
-	SGTU	$16, R2, R3
-	BNE	R3, zero8
-	SGTU	$32, R2, R3
-	BNE	R3, zero16
-	SGTU	$64, R2, R3
-	BNE	R3, zero32
-loop64:
-	MOVV	R0, (R1)
-	MOVV	R0, 8(R1)
-	MOVV	R0, 16(R1)
-	MOVV	R0, 24(R1)
-	MOVV	R0, 32(R1)
-	MOVV	R0, 40(R1)
-	MOVV	R0, 48(R1)
-	MOVV	R0, 56(R1)
-	ADDV	$64, R1
-	SUBV	$64, R2
-	SGTU	$64, R2, R3
-	BEQ	R0, R3, loop64
-	BEQ	R2, done
+words:
+	// do 8 bytes at a time if there is room
+	ADDV	$-7, R4, R2
 
-check32:
-	SGTU	$32, R2, R3
-	BNE	R3, check16
-zero32:
-	MOVV	R0, (R1)
-	MOVV	R0, 8(R1)
-	MOVV	R0, 16(R1)
-	MOVV	R0, 24(R1)
-	ADDV	$32, R1
-	SUBV	$32, R2
-	BEQ	R2, done
-
-check16:
-	SGTU	$16, R2, R3
-	BNE	R3, check8
-zero16:
-	MOVV	R0, (R1)
-	MOVV	R0, 8(R1)
-	ADDV	$16, R1
-	SUBV	$16, R2
-	BEQ	R2, done
-
-check8:
-	SGTU	$8, R2, R3
-	BNE	R3, check4
-zero8:
+	SGTU	R2, R1, R3
+	BEQ	R3, out
 	MOVV	R0, (R1)
 	ADDV	$8, R1
-	SUBV	$8, R2
-	BEQ	R2, done
+	JMP	-4(PC)
 
-check4:
-	SGTU	$4, R2, R3
-	BNE	R3, loop1
-zero4:
-	MOVB	R0, (R1)
-	MOVB	R0, 1(R1)
-	MOVB	R0, 2(R1)
-	MOVB	R0, 3(R1)
-	ADDV	$4, R1
-	SUBV	$4, R2
-
-loop1:
+out:
 	BEQ	R1, R4, done
 	MOVB	R0, (R1)
 	ADDV	$1, R1
-	JMP	loop1
+	JMP	-3(PC)
 done:
 	RET
-

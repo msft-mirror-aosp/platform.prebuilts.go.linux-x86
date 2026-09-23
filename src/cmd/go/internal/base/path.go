@@ -55,7 +55,8 @@ func sameFile(path1, path2 string) bool {
 
 // ShortPathError rewrites the path in err using base.ShortPath, if err is a wrapped PathError.
 func ShortPathError(err error) error {
-	if pe, ok := errors.AsType[*fs.PathError](err); ok {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
 		pe.Path = ShortPath(pe.Path)
 	}
 	return err

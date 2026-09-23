@@ -6,6 +6,7 @@ package typecheck
 
 import (
 	"fmt"
+	"go/constant"
 	"internal/types/errors"
 	"strings"
 
@@ -312,19 +313,6 @@ func tcStructLitKey(typ *types.Type, kv *ir.KeyExpr) *ir.StructKeyExpr {
 		return ir.NewStructKeyExpr(kv.Pos(), f, kv.Value)
 	}
 
-	var f *types.Field
-	if p, ambig := dotpath(sym, typ, &f, false); p != nil {
-		if ambig {
-			base.Errorf("ambiguous promoted field '%v' in struct literal of type %v", sym, typ)
-			return nil
-		}
-		if f.IsMethod() {
-			base.Errorf("cannot use method '%v' in struct literal of type %v", sym, typ)
-			return nil
-		}
-		return ir.NewStructKeyExpr(kv.Pos(), f, kv.Value)
-	}
-
 	if ci := Lookdot1(nil, sym, typ, typ.Fields(), 2); ci != nil { // Case-insensitive lookup.
 		if visible(ci.Sym) {
 			base.Errorf("unknown field '%v' in struct literal of type %v (but does have %v)", sym, typ, ci.Sym)
@@ -336,6 +324,7 @@ func tcStructLitKey(typ *types.Type, kv *ir.KeyExpr) *ir.StructKeyExpr {
 		return nil
 	}
 
+	var f *types.Field
 	p, _ := dotpath(sym, typ, &f, true)
 	if p == nil || f.IsMethod() {
 		base.Errorf("unknown field '%v' in struct literal of type %v", sym, typ)
@@ -347,8 +336,8 @@ func tcStructLitKey(typ *types.Type, kv *ir.KeyExpr) *ir.StructKeyExpr {
 	for ei := len(p) - 1; ei >= 0; ei-- {
 		ep = append(ep, p[ei].field.Sym.Name)
 	}
-	ep = append(ep, f.Sym.Name)
-	base.Errorf("unknown field '%v' in struct literal of type %v (but does have %v)", sym, typ, strings.Join(ep, "."))
+	ep = append(ep, sym.Name)
+	base.Errorf("cannot use promoted field %v in struct literal of type %v", strings.Join(ep, "."), typ)
 	return nil
 }
 
@@ -856,6 +845,10 @@ func tcStringHeader(n *ir.StringHeaderExpr) ir.Node {
 
 	n.Ptr = Expr(n.Ptr)
 	n.Len = DefaultLit(Expr(n.Len), types.Types[types.TINT])
+
+	if ir.IsConst(n.Len, constant.Int) && ir.Int64Val(n.Len) < 0 {
+		base.Fatalf("len for OSTRINGHEADER must be non-negative")
+	}
 
 	return n
 }

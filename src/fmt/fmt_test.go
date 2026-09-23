@@ -1480,7 +1480,6 @@ func BenchmarkFprintIntNoAlloc(b *testing.B) {
 
 var mallocBuf bytes.Buffer
 var mallocPointer *int // A pointer so we know the interface value won't allocate.
-var sink any
 
 var mallocTest = []struct {
 	count int
@@ -1511,10 +1510,6 @@ var mallocTest = []struct {
 		mallocBuf.Reset()
 		Fprintf(&mallocBuf, "%x %x %x", mallocPointer, mallocPointer, mallocPointer)
 	}},
-	{0, `Errorf("hello")`, func() { _ = Errorf("hello") }},
-	{2, `Errorf("hello: %x")`, func() { _ = Errorf("hello: %x", mallocPointer) }},
-	{1, `sink = Errorf("hello")`, func() { sink = Errorf("hello") }},
-	{2, `sink = Errorf("hello: %x")`, func() { sink = Errorf("hello: %x", mallocPointer) }},
 }
 
 var _ bytes.Buffer

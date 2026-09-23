@@ -9,7 +9,6 @@ package os
 var Atime = atime
 var ErrWriteAtInAppendMode = errWriteAtInAppendMode
 var ErrPatternHasSeparator = errPatternHasSeparator
-var ErrPathEscapes = errPathEscapes
 
 func init() {
 	checkWrapErr = true

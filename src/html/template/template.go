@@ -25,8 +25,7 @@ type Template struct {
 	// we need to keep our version of the name space and the underlying
 	// template's in sync.
 	text *template.Template
-	// The underlying template's parse tree, updated to be HTML-safe
-	// after the first execution.
+	// The underlying template's parse tree, updated to be HTML-safe.
 	Tree       *parse.Tree
 	*nameSpace // common to all associated templates
 }
@@ -332,12 +331,10 @@ func (t *Template) Name() string {
 type FuncMap = template.FuncMap
 
 // Funcs adds the elements of the argument map to the template's function map.
-// Any function used in the template must be added before the template is
-// parsed. Funcs may be called more than once, including after parsing (for
-// example, after [Template.Clone]), to replace a function of the same name;
-// the replacement is used when the template is executed.
+// It must be called before the template is parsed.
 // It panics if a value in the map is not a function with appropriate return
-// type. The return value is the template, so calls can be chained.
+// type. However, it is legal to overwrite elements of the map. The return
+// value is the template, so calls can be chained.
 func (t *Template) Funcs(funcMap FuncMap) *Template {
 	t.text.Funcs(template.FuncMap(funcMap))
 	return t

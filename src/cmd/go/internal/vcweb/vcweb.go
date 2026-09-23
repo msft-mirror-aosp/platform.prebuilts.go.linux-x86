@@ -15,7 +15,7 @@
 // until the script is modified.
 //
 // The script engine includes all of the engine's default commands and
-// conditions, as well as commands for each supported VCS binary (fossil,
+// conditions, as well as commands for each supported VCS binary (bzr, fossil,
 // git, hg, and svn), a "handle" command that informs the script which protocol
 // or handler to use to serve the request, and utilities "at" (which sets
 // environment variables for Git timestamps) and "unquote" (which unquotes its
@@ -129,6 +129,7 @@ func NewServer(scriptDir, workDir string, logger *log.Logger) (*Server, error) {
 		vcsHandlers: map[string]vcsHandler{
 			"auth":     new(authHandler),
 			"dir":      new(dirHandler),
+			"bzr":      new(bzrHandler),
 			"fossil":   new(fossilHandler),
 			"git":      new(gitHandler),
 			"hg":       new(hgHandler),
@@ -198,10 +199,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	defer func() {
 		if v := recover(); v != nil {
-			if v == http.ErrAbortHandler {
-				panic(v)
-			}
-			s.logger.Fatalf("panic serving %s: %v\n%s", req.URL, v, debug.Stack())
+			debug.PrintStack()
+			s.logger.Fatal(v)
 		}
 	}()
 
@@ -225,7 +224,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// uniqueness: if a path exists as a directory, then it cannot exist as a
 	// ".txt" script (because the search would ignore that file).
 	scriptPath := "."
-	for part := range strings.SplitSeq(clean, "/") {
+	for _, part := range strings.Split(clean, "/") {
 		scriptPath = filepath.Join(scriptPath, part)
 		dir := filepath.Join(s.scriptDir, scriptPath)
 		if _, err := os.Stat(dir); err != nil {
@@ -245,9 +244,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	})
 	if err != nil {
 		s.logger.Print(err)
-		if _, ok := errors.AsType[ScriptNotFoundError](err); ok {
+		if notFound := (ScriptNotFoundError{}); errors.As(err, &notFound) {
 			http.NotFound(w, req)
-		} else if _, ok := errors.AsType[ServerNotInstalledError](err); ok || errors.Is(err, exec.ErrNotFound) {
+		} else if notInstalled := (ServerNotInstalledError{}); errors.As(err, &notInstalled) || errors.Is(err, exec.ErrNotFound) {
 			http.Error(w, err.Error(), http.StatusNotImplemented)
 		} else {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

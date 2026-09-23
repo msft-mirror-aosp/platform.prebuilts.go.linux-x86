@@ -107,29 +107,29 @@ func (s *_TypeSet) hasTerms() bool { return !s.terms.isEmpty() && !s.terms.isAll
 // subsetOf reports whether s1 ⊆ s2.
 func (s1 *_TypeSet) subsetOf(s2 *_TypeSet) bool { return s1.terms.subsetOf(s2.terms) }
 
-// all reports whether f(t, u) is true for each (type/underlying type) pairs in s.
-// If s has no specific terms, all calls f(nil, nil).
-// In any case, all is guaranteed to call f at least once.
-func (s *_TypeSet) all(f func(t, u Type) bool) bool {
+// typeset is an iterator over the (type/underlying type) pairs in s.
+// If s has no specific terms, typeset calls yield with (nil, nil).
+// In any case, typeset is guaranteed to call yield at least once.
+func (s *_TypeSet) typeset(yield func(t, u Type) bool) {
 	if !s.hasTerms() {
-		return f(nil, nil)
+		yield(nil, nil)
+		return
 	}
 
 	for _, t := range s.terms {
 		assert(t.typ != nil)
-		// Unalias(x) == x.Underlying() for ~x terms
+		// Unalias(x) == under(x) for ~x terms
 		u := Unalias(t.typ)
 		if !t.tilde {
-			u = u.Underlying()
+			u = under(u)
 		}
 		if debug {
-			assert(Identical(u, u.Underlying()))
+			assert(Identical(u, under(u)))
 		}
-		if !f(t.typ, u) {
-			return false
+		if !yield(t.typ, u) {
+			break
 		}
 	}
-	return true
 }
 
 // is calls f with the specific type terms of s and reports whether
@@ -267,7 +267,7 @@ func computeInterfaceTypeSet(check *Checker, pos token.Pos, ityp *Interface) *_T
 		}
 		var comparable bool
 		var terms termlist
-		switch u := typ.Underlying().(type) {
+		switch u := under(typ).(type) {
 		case *Interface:
 			// For now we don't permit type parameters as constraints.
 			assert(!isTypeParam(typ))
@@ -383,7 +383,7 @@ func computeUnionTypeSet(check *Checker, unionSets map[*Union]*_TypeSet, pos tok
 	var allTerms termlist
 	for _, t := range utyp.terms {
 		var terms termlist
-		u := t.typ.Underlying()
+		u := under(t.typ)
 		if ui, _ := u.(*Interface); ui != nil {
 			// For now we don't permit type parameters as constraints.
 			assert(!isTypeParam(t.typ))

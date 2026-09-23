@@ -6,7 +6,7 @@ package net
 
 import (
 	"context"
-	"internal/strconv"
+	"internal/itoa"
 	"net/netip"
 	"syscall"
 )
@@ -47,9 +47,9 @@ func (a *UDPAddr) String() string {
 	}
 	ip := ipEmptyString(a.IP)
 	if a.Zone != "" {
-		return JoinHostPort(ip+"%"+a.Zone, strconv.Itoa(a.Port))
+		return JoinHostPort(ip+"%"+a.Zone, itoa.Itoa(a.Port))
 	}
-	return JoinHostPort(ip, strconv.Itoa(a.Port))
+	return JoinHostPort(ip, itoa.Itoa(a.Port))
 }
 
 func (a *UDPAddr) isWildcard() bool {
@@ -285,10 +285,6 @@ func newUDPConn(fd *netFD) *UDPConn { return &UDPConn{conn{fd}} }
 // If the IP field of raddr is nil or an unspecified IP address, the
 // local system is assumed.
 func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
-	return dialUDP(context.Background(), nil, network, laddr, raddr)
-}
-
-func dialUDP(ctx context.Context, dialer *Dialer, network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 	switch network {
 	case "udp", "udp4", "udp6":
 	default:
@@ -298,10 +294,7 @@ func dialUDP(ctx context.Context, dialer *Dialer, network string, laddr, raddr *
 		return nil, &OpError{Op: "dial", Net: network, Source: laddr.opAddr(), Addr: nil, Err: errMissingAddress}
 	}
 	sd := &sysDialer{network: network, address: raddr.String()}
-	if dialer != nil {
-		sd.Dialer = *dialer
-	}
-	c, err := sd.dialUDP(ctx, laddr, raddr)
+	c, err := sd.dialUDP(context.Background(), laddr, raddr)
 	if err != nil {
 		return nil, &OpError{Op: "dial", Net: network, Source: laddr.opAddr(), Addr: raddr.opAddr(), Err: err}
 	}

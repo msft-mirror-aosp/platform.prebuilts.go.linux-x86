@@ -38,7 +38,7 @@ func uncommonSize(arch *sys.Arch) int    { return int(abi.UncommonSize()) }     
 
 // Type.commonType.kind
 func decodetypeKind(arch *sys.Arch, p []byte) abi.Kind {
-	return abi.Kind(p[2*arch.PtrSize+7]) //  0x13
+	return abi.Kind(p[2*arch.PtrSize+7]) & abi.KindMask //  0x13 / 0x1f
 }
 
 // Type.commonType.size
@@ -120,7 +120,10 @@ func decodetypeNameEmbedded(ldr *loader.Loader, symIdx loader.Sym, relocs *loade
 }
 
 func decodetypeFuncInType(ldr *loader.Loader, arch *sys.Arch, symIdx loader.Sym, relocs *loader.Relocs, i int) loader.Sym {
-	uadd := abi.RTypeSize(abi.Func, arch.PtrSize)
+	uadd := commonsize(arch) + 4
+	if arch.PtrSize == 8 {
+		uadd += 4
+	}
 	if decodetypeHasUncommon(arch, ldr.Data(symIdx)) {
 		uadd += uncommonSize(arch)
 	}
@@ -155,7 +158,7 @@ func decodetypeMapValue(ldr *loader.Loader, arch *sys.Arch, symIdx loader.Sym) l
 	return decodeRelocSym(ldr, symIdx, &relocs, int32(commonsize(arch))+int32(arch.PtrSize)) // 0x20 / 0x38
 }
 
-func decodetypeMapGroup(ldr *loader.Loader, arch *sys.Arch, symIdx loader.Sym) loader.Sym {
+func decodetypeMapSwissGroup(ldr *loader.Loader, arch *sys.Arch, symIdx loader.Sym) loader.Sym {
 	relocs := ldr.Relocs(symIdx)
 	return decodeRelocSym(ldr, symIdx, &relocs, int32(commonsize(arch))+2*int32(arch.PtrSize)) // 0x24 / 0x40
 }
@@ -172,7 +175,7 @@ func decodetypeStructFieldCount(ldr *loader.Loader, arch *sys.Arch, symIdx loade
 
 func decodetypeStructFieldArrayOff(ldr *loader.Loader, arch *sys.Arch, symIdx loader.Sym, i int) int {
 	data := ldr.Data(symIdx)
-	off := abi.RTypeSize(abi.Struct, arch.PtrSize)
+	off := commonsize(arch) + 4*arch.PtrSize
 	if decodetypeHasUncommon(arch, data) {
 		off += uncommonSize(arch)
 	}
@@ -239,6 +242,35 @@ func decodetypeGcmask(ctxt *Link, s loader.Sym) []byte {
 	relocs := ctxt.loader.Relocs(s)
 	mask := decodeRelocSym(ctxt.loader, s, &relocs, 2*int32(ctxt.Arch.PtrSize)+8+1*int32(ctxt.Arch.PtrSize))
 	return ctxt.loader.Data(mask)
+}
+
+// Type.commonType.gc
+func decodetypeGcprog(ctxt *Link, s loader.Sym) []byte {
+	if ctxt.loader.SymType(s) == sym.SDYNIMPORT {
+		symData := ctxt.loader.Data(s)
+		addr := decodetypeGcprogShlib(ctxt, symData)
+		sect := findShlibSection(ctxt, ctxt.loader.SymPkg(s), addr)
+		if sect != nil {
+			// A gcprog is a 4-byte uint32 indicating length, followed by
+			// the actual program.
+			progsize := make([]byte, 4)
+			_, err := sect.ReadAt(progsize, int64(addr-sect.Addr))
+			if err != nil {
+				log.Fatal(err)
+			}
+			progbytes := make([]byte, ctxt.Arch.ByteOrder.Uint32(progsize))
+			_, err = sect.ReadAt(progbytes, int64(addr-sect.Addr+4))
+			if err != nil {
+				log.Fatal(err)
+			}
+			return append(progsize, progbytes...)
+		}
+		Exitf("cannot find gcprog for %s", ctxt.loader.SymName(s))
+		return nil
+	}
+	relocs := ctxt.loader.Relocs(s)
+	rs := decodeRelocSym(ctxt.loader, s, &relocs, 2*int32(ctxt.Arch.PtrSize)+8+1*int32(ctxt.Arch.PtrSize))
+	return ctxt.loader.Data(rs)
 }
 
 // Find the elf.Section of a given shared library that contains a given address.

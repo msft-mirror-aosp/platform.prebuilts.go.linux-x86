@@ -18,7 +18,7 @@ import (
 )
 
 // TODO: This should be a distinguishable error (ErrMessageTooLarge)
-// to allow mime/multipart and net/http to detect it.
+// to allow mime/multipart to detect it.
 var errMessageTooLarge = errors.New("message too large")
 
 // A Reader implements convenience methods for reading requests
@@ -110,12 +110,11 @@ func trim(s []byte) []byte {
 	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 		i++
 	}
-	s = s[i:]
-	n := len(s) - 1
-	for n >= 0 && (s[n] == ' ' || s[n] == '\t') {
+	n := len(s)
+	for n > i && (s[n-1] == ' ' || s[n-1] == '\t') {
 		n--
 	}
-	return s[:n+1]
+	return s[i:n]
 }
 
 // ReadContinuedLineBytes is like [Reader.ReadContinuedLine] but
@@ -215,13 +214,13 @@ func (r *Reader) readCodeLine(expectCode int) (code int, continued bool, message
 
 func parseCodeLine(line string, expectCode int) (code int, continued bool, message string, err error) {
 	if len(line) < 4 || line[3] != ' ' && line[3] != '-' {
-		err = ProtocolError(fmt.Sprintf("short response: %q", line))
+		err = ProtocolError("short response: " + line)
 		return
 	}
 	continued = line[3] == '-'
 	code, err = strconv.Atoi(line[0:3])
 	if err != nil || code < 100 {
-		err = ProtocolError(fmt.Sprintf("invalid response code: %q", line))
+		err = ProtocolError("invalid response code: " + line)
 		return
 	}
 	message = line[4:]
@@ -253,7 +252,7 @@ func parseCodeLine(line string, expectCode int) (code int, continued bool, messa
 func (r *Reader) ReadCodeLine(expectCode int) (code int, message string, err error) {
 	code, continued, message, err := r.readCodeLine(expectCode)
 	if err == nil && continued {
-		err = ProtocolError(fmt.Sprintf("unexpected multi-line response: %q", message))
+		err = ProtocolError("unexpected multi-line response: " + message)
 	}
 	return
 }
@@ -508,18 +507,11 @@ func (r *Reader) ReadMIMEHeader() (MIMEHeader, error) {
 	return readMIMEHeader(r, math.MaxInt64, math.MaxInt64)
 }
 
-// readMIMEHeader should be an internal detail,
-// but widely used packages access it using linkname.
-// Notable members of the hall of shame include:
-//   - github.com/qtgolang/SunnyNet
-//
-// Do not remove or change the type signature.
-// See go.dev/issue/67401.
-//
+// readMIMEHeader is accessed from mime/multipart.
 //go:linkname readMIMEHeader
 
 // readMIMEHeader is a version of ReadMIMEHeader which takes a limit on the header size.
-// It is called by the mime/multipart and net/http package.
+// It is called by the mime/multipart package.
 func readMIMEHeader(r *Reader, maxMemory, maxHeaders int64) (MIMEHeader, error) {
 	// Avoid lots of small slice allocations later by allocating one
 	// large one ahead of time which we'll cut up into smaller
@@ -548,7 +540,7 @@ func readMIMEHeader(r *Reader, maxMemory, maxHeaders int64) (MIMEHeader, error) 
 		if err != nil {
 			return m, err
 		}
-		return m, ProtocolError(fmt.Sprintf("malformed MIME header initial line: %q", line))
+		return m, ProtocolError("malformed MIME header initial line: " + string(line))
 	}
 
 	for {
@@ -560,15 +552,15 @@ func readMIMEHeader(r *Reader, maxMemory, maxHeaders int64) (MIMEHeader, error) 
 		// Key ends at first colon.
 		k, v, ok := bytes.Cut(kv, colon)
 		if !ok {
-			return m, ProtocolError(fmt.Sprintf("malformed MIME header line: %q", kv))
+			return m, ProtocolError("malformed MIME header line: " + string(kv))
 		}
 		key, ok := canonicalMIMEHeaderKey(k)
 		if !ok {
-			return m, ProtocolError(fmt.Sprintf("malformed MIME header line: %q", kv))
+			return m, ProtocolError("malformed MIME header line: " + string(kv))
 		}
 		for _, c := range v {
 			if !validHeaderValueByte(c) {
-				return m, ProtocolError(fmt.Sprintf("malformed MIME header line: %q", kv))
+				return m, ProtocolError("malformed MIME header line: " + string(kv))
 			}
 		}
 
@@ -838,7 +830,6 @@ func initCommonHeader() {
 		"Mime-Version",
 		"Pragma",
 		"Received",
-		"Referer",
 		"Return-Path",
 		"Server",
 		"Set-Cookie",

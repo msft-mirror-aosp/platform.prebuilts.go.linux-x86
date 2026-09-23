@@ -18,20 +18,8 @@ const uintSize = 32 << (^uint(0) >> 63) // 32 or 64
 // bitset is a bit array for dense indexes.
 type bitset []uint
 
-func computeBitsetSize(n int) int {
-	return (n + uintSize - 1) / uintSize
-}
-
 func newBitset(n int) bitset {
-	return make(bitset, computeBitsetSize(n))
-}
-
-func (c *Cache) allocBitset(n int) bitset {
-	return bitset(c.allocUintSlice(computeBitsetSize(n)))
-}
-
-func (c *Cache) freeBitset(bs bitset) {
-	c.freeUintSlice([]uint(bs))
+	return make(bitset, (n+uintSize-1)/uintSize)
 }
 
 func (bs bitset) Reset() {

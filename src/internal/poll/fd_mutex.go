@@ -34,18 +34,11 @@ const (
 	mutexWMask   = (1<<20 - 1) << 43
 )
 
-const (
-	readlock  = true
-	writeLock = false
-	waitLock  = true
-	tryLock   = false
-)
-
 const overflowMsg = "too many concurrent operations on a single file or socket (max 1048575)"
 
-// Read operations must do rwlock(readlock, waitLock)/rwunlock(readlock).
+// Read operations must do rwlock(true)/rwunlock(true).
 //
-// Write operations must do rwlock(writeLock, waitLock)/rwunlock(writeLock).
+// Write operations must do rwlock(false)/rwunlock(false).
 //
 // Misc operations must do incref/decref.
 // Misc operations include functions like setsockopt and setDeadline.
@@ -121,8 +114,7 @@ func (mu *fdMutex) decref() bool {
 
 // lock adds a reference to mu and locks mu.
 // It reports whether mu is available for reading or writing.
-// If wait is false, lock fails immediately if mu is not available.
-func (mu *fdMutex) rwlock(read bool, wait bool) bool {
+func (mu *fdMutex) rwlock(read bool) bool {
 	var mutexBit, mutexWait, mutexMask uint64
 	var mutexSema *uint32
 	if read {
@@ -150,9 +142,6 @@ func (mu *fdMutex) rwlock(read bool, wait bool) bool {
 			}
 		} else {
 			// Wait for lock.
-			if !wait {
-				return false
-			}
 			new = old + mutexWait
 			if new&mutexMask == 0 {
 				panic(overflowMsg)
@@ -229,7 +218,7 @@ func (fd *FD) decref() error {
 // readLock adds a reference to fd and locks fd for reading.
 // It returns an error when fd cannot be used for reading.
 func (fd *FD) readLock() error {
-	if !fd.fdmu.rwlock(readlock, waitLock) {
+	if !fd.fdmu.rwlock(true) {
 		return errClosing(fd.isFile)
 	}
 	return nil
@@ -239,7 +228,7 @@ func (fd *FD) readLock() error {
 // It also closes fd when the state of fd is set to closed and there
 // is no remaining reference.
 func (fd *FD) readUnlock() {
-	if fd.fdmu.rwunlock(readlock) {
+	if fd.fdmu.rwunlock(true) {
 		fd.destroy()
 	}
 }
@@ -247,7 +236,7 @@ func (fd *FD) readUnlock() {
 // writeLock adds a reference to fd and locks fd for writing.
 // It returns an error when fd cannot be used for writing.
 func (fd *FD) writeLock() error {
-	if !fd.fdmu.rwlock(writeLock, waitLock) {
+	if !fd.fdmu.rwlock(false) {
 		return errClosing(fd.isFile)
 	}
 	return nil
@@ -257,54 +246,7 @@ func (fd *FD) writeLock() error {
 // It also closes fd when the state of fd is set to closed and there
 // is no remaining reference.
 func (fd *FD) writeUnlock() {
-	if fd.fdmu.rwunlock(writeLock) {
-		fd.destroy()
-	}
-}
-
-// readWriteLock adds a reference to fd and locks fd for reading and writing.
-// It returns an error when fd cannot be used for reading and writing.
-func (fd *FD) readWriteLock() error {
-	if !fd.fdmu.rwlock(readlock, waitLock) {
-		return errClosing(fd.isFile)
-	}
-	if !fd.fdmu.rwlock(writeLock, waitLock) {
-		if fd.fdmu.rwunlock(readlock) {
-			fd.destroy()
-		}
-		return errClosing(fd.isFile)
-	}
-	return nil
-}
-
-// tryReadWriteLock tries to add a reference to fd and lock fd for reading and writing.
-// It returns (false, nil) when fd is not available for reading and writing but is not closing.
-// It returns (false, errClosing) when fd is closing.
-func (fd *FD) tryReadWriteLock() (bool, error) {
-	if !fd.fdmu.rwlock(readlock, tryLock) {
-		if fd.closing() {
-			return false, errClosing(fd.isFile)
-		}
-		return false, nil
-	}
-	if !fd.fdmu.rwlock(writeLock, tryLock) {
-		if fd.fdmu.rwunlock(readlock) {
-			fd.destroy()
-		}
-		if fd.closing() {
-			return false, errClosing(fd.isFile)
-		}
-		return false, nil
-	}
-	return true, nil
-}
-
-// readWriteUnlock removes a reference from fd and unlocks fd for reading and writing.
-// It also closes fd when the state of fd is set to closed and there
-// is no remaining reference.
-func (fd *FD) readWriteUnlock() {
-	fd.fdmu.rwunlock(readlock)
-	if fd.fdmu.rwunlock(writeLock) {
+	if fd.fdmu.rwunlock(false) {
 		fd.destroy()
 	}
 }

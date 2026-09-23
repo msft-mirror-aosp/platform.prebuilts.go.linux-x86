@@ -6,7 +6,6 @@ package ir
 
 import (
 	"cmd/compile/internal/base"
-	"cmd/compile/internal/types"
 )
 
 // A ReassignOracle efficiently answers queries about whether local
@@ -22,15 +21,6 @@ type ReassignOracle struct {
 	// maps candidate name to its defining assignment (or
 	// for params, defining func).
 	singleDef map[*Name]Node
-
-	// funcAssigns tracks all known simple assignments (OAS) to
-	// func-typed PAUTO variables. Only func-typed variables are
-	// tracked because this data is used exclusively for callee
-	// resolution in escape analysis. Deletion means the candidate was
-	// invalidated (e.g., addr-taken, non-simple assignment form, or too
-	// many assignments). Assignments inside nested closures are accepted
-	// because the only alternative value is nil, which panics on call.
-	funcAssigns map[*Name][]*AssignStmt
 }
 
 // Init initializes the oracle based on the IR in function fn, laying
@@ -43,7 +33,6 @@ func (ro *ReassignOracle) Init(fn *Func) {
 	// Collect candidate map. Start by adding function parameters
 	// explicitly.
 	ro.singleDef = make(map[*Name]Node)
-	ro.funcAssigns = make(map[*Name][]*AssignStmt)
 	sig := fn.Type()
 	numParams := sig.NumRecvs() + sig.NumParams()
 	for _, param := range fn.Dcl[:numParams] {
@@ -59,21 +48,8 @@ func (ro *ReassignOracle) Init(fn *Func) {
 	var findLocals func(n Node) bool
 	findLocals = func(n Node) bool {
 		if nn, ok := n.(*Name); ok {
-			if nn.Class == PAUTO && !nn.Addrtaken() {
-				isFunc := nn.Type().Kind() == types.TFUNC
-				if nn.Defn == nil {
-					// Bare declaration (e.g., "var f func()").
-					if isFunc {
-						ro.funcAssigns[nn] = nil
-					}
-				} else if _, ok := nn.Defn.(*AssignStmt); ok {
-					ro.singleDef[nn] = nn.Defn
-					if isFunc {
-						ro.funcAssigns[nn] = nil
-					}
-				} else {
-					ro.singleDef[nn] = nn.Defn
-				}
+			if nn.Defn != nil && !nn.Addrtaken() && nn.Class == PAUTO {
+				ro.singleDef[nn] = nn.Defn
 			}
 		} else if nn, ok := n.(*ClosureExpr); ok {
 			Any(nn.Func, findLocals)
@@ -95,35 +71,26 @@ func (ro *ReassignOracle) Init(fn *Func) {
 
 	// pruneIfNeeded examines node nn appearing on the left hand side
 	// of assignment statement asn to see if it contains a reassignment
-	// to any nodes in our candidate maps; if a reassignment is found,
-	// the corresponding name is deleted.
+	// to any nodes in our candidate map ro.singleDef; if a reassignment
+	// is found, the corresponding name is deleted from singleDef.
 	pruneIfNeeded := func(nn Node, asn Node) {
 		oname := outerName(nn)
 		if oname == nil {
 			return
 		}
-		if defn, ok := ro.singleDef[oname]; ok {
-			// any assignment to a param invalidates the entry.
-			paramAssigned := oname.Class == PPARAM
-			// assignment to local ok iff assignment is its orig def.
-			localAssigned := (oname.Class == PAUTO && asn != defn)
-			if paramAssigned || localAssigned {
-				// We found an assignment to name N that doesn't
-				// correspond to its original definition; remove
-				// from candidates.
-				delete(ro.singleDef, oname)
-			}
+		defn, ok := ro.singleDef[oname]
+		if !ok {
+			return
 		}
-		if _, ok := ro.funcAssigns[oname]; ok {
-			as, isOAS := asn.(*AssignStmt)
-			if isOAS && isNilAssign(as) {
-				// Zero-value assignment (nil, bare decl), skip.
-			} else if !isOAS {
-				// Not a simple assignment: invalidate.
-				delete(ro.funcAssigns, oname)
-			} else {
-				ro.funcAssigns[oname] = append(ro.funcAssigns[oname], as)
-			}
+		// any assignment to a param invalidates the entry.
+		paramAssigned := oname.Class == PPARAM
+		// assignment to local ok iff assignment is its orig def.
+		localAssigned := (oname.Class == PAUTO && asn != defn)
+		if paramAssigned || localAssigned {
+			// We found an assignment to name N that doesn't
+			// correspond to its original definition; remove
+			// from candidates.
+			delete(ro.singleDef, oname)
 		}
 	}
 
@@ -172,11 +139,6 @@ func (ro *ReassignOracle) StaticValue(n Node) Node {
 			continue
 		}
 
-		if n.Op() == OPAREN {
-			n = n.(*ParenExpr).X
-			continue
-		}
-
 		n1 := ro.staticValue1(n)
 		if n1 == nil {
 			if consistencyCheckEnabled {
@@ -216,12 +178,12 @@ FindRHS:
 				break FindRHS
 			}
 		}
-		base.FatalfAt(defn.Pos(), "%v missing from LHS of %v", n, defn)
+		base.Fatalf("%v missing from LHS of %v", n, defn)
 	default:
 		return nil
 	}
 	if rhs == nil {
-		base.FatalfAt(defn.Pos(), "RHS is nil: %v", defn)
+		base.Fatalf("RHS is nil: %v", defn)
 	}
 
 	if _, ok := ro.singleDef[n]; !ok {
@@ -240,27 +202,4 @@ func (ro *ReassignOracle) Reassigned(n *Name) bool {
 		checkReassignedResult(n, result)
 	}
 	return result
-}
-
-// FuncAssignments returns all known simple assignments to a func-typed
-// variable. For variables defined with := and a non-zero value, the
-// defining assignment is included. Returns nil if the variable is not
-// func-typed, was invalidated (addr-taken, non-simple assignment,
-// too many assignments), or has no tracked assignments. Assignments
-// inside nested closures are accepted because the only alternative
-// value is nil, which panics on call.
-func (ro *ReassignOracle) FuncAssignments(name *Name) []*AssignStmt {
-	return ro.funcAssigns[name.Canonical()]
-}
-
-// isNilAssign reports whether as has a nil or absent RHS.
-func isNilAssign(as *AssignStmt) bool {
-	if as.Y == nil {
-		return true
-	}
-	y := as.Y
-	for y.Op() == OCONVNOP {
-		y = y.(*ConvExpr).X
-	}
-	return IsNil(y)
 }

@@ -457,12 +457,6 @@ func sysSigaction(sig uint32, new, old *sigactiont) {
 	}
 }
 
-// fixSigactionForCgo is needed for Linux.
-//
-//go:nosplit
-func fixSigactionForCgo(new *sigactiont) {
-}
-
 // asmSigaction is implemented in assembly.
 //
 //go:noescape

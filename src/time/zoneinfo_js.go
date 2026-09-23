@@ -7,7 +7,7 @@
 package time
 
 import (
-	"internal/strconv"
+	"internal/itoa"
 	"syscall/js"
 )
 
@@ -36,10 +36,10 @@ func initLocal() {
 	} else {
 		z.name += "+"
 	}
-	z.name += strconv.Itoa(offset / 60)
+	z.name += itoa.Itoa(offset / 60)
 	min := offset % 60
 	if min != 0 {
-		z.name += ":" + strconv.Itoa(min)
+		z.name += ":" + itoa.Itoa(min)
 	}
 	localLoc.zone = []zone{z}
 }

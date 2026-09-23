@@ -15,6 +15,7 @@ import (
 	"cmd/internal/pathcache"
 	"errors"
 	"fmt"
+	"internal/lazyregexp"
 	"io"
 	"io/fs"
 	"os"
@@ -122,11 +123,6 @@ func (sh *Shell) moveOrCopyFile(dst, src string, perm fs.FileMode, force bool) e
 		return nil
 	}
 
-	err := checkDstOverwrite(dst, force)
-	if err != nil {
-		return err
-	}
-
 	// If we can update the mode and rename to the dst, do it.
 	// Otherwise fall back to standard copy.
 
@@ -197,9 +193,16 @@ func (sh *Shell) CopyFile(dst, src string, perm fs.FileMode, force bool) error {
 	}
 	defer sf.Close()
 
-	err = checkDstOverwrite(dst, force)
-	if err != nil {
-		return err
+	// Be careful about removing/overwriting dst.
+	// Do not remove/overwrite if dst exists and is a directory
+	// or a non-empty non-object file.
+	if fi, err := os.Stat(dst); err == nil {
+		if fi.IsDir() {
+			return fmt.Errorf("build output %q already exists and is a directory", dst)
+		}
+		if !force && fi.Mode().IsRegular() && fi.Size() != 0 && !isObject(dst) {
+			return fmt.Errorf("build output %q already exists and is not an object file", dst)
+		}
 	}
 
 	// On Windows, remove lingering ~ file from last attempt.
@@ -242,21 +245,6 @@ func mayberemovefile(s string) {
 		return
 	}
 	os.Remove(s)
-}
-
-// Be careful about removing/overwriting dst.
-// Do not remove/overwrite if dst exists and is a directory
-// or a non-empty non-object file.
-func checkDstOverwrite(dst string, force bool) error {
-	if fi, err := os.Stat(dst); err == nil {
-		if fi.IsDir() {
-			return fmt.Errorf("build output %q already exists and is a directory", dst)
-		}
-		if !force && fi.Mode().IsRegular() && fi.Size() != 0 && !isObject(dst) {
-			return fmt.Errorf("build output %q already exists and is not an object file", dst)
-		}
-	}
-	return nil
 }
 
 // writeFile writes the text to file.
@@ -510,6 +498,15 @@ func (sh *Shell) reportCmd(desc, dir string, cmdOut []byte, cmdErr error) error 
 		dir = dirP
 	}
 
+	// Fix up output referring to cgo-generated code to be more readable.
+	// Replace x.go:19[/tmp/.../x.cgo1.go:18] with x.go:19.
+	// Replace *[100]_Ctype_foo with *[100]C.foo.
+	// If we're using -x, assume we're debugging and want the full dump, so disable the rewrite.
+	if !cfg.BuildX && cgoLine.MatchString(out) {
+		out = cgoLine.ReplaceAllString(out, "")
+		out = cgoTypeSigRe.ReplaceAllString(out, "C.")
+	}
+
 	// Usually desc is already p.Desc(), but if not, signal cmdError.Error to
 	// add a line explicitly mentioning the import path.
 	needsPath := importPath != "" && p != nil && desc != p.Desc()
@@ -569,6 +566,9 @@ func (e *cmdError) Error() string {
 func (e *cmdError) ImportPath() string {
 	return e.importPath
 }
+
+var cgoLine = lazyregexp.New(`\[[^\[\]]+\.(cgo1|cover)\.go:[0-9]+(:[0-9]+)?\]`)
+var cgoTypeSigRe = lazyregexp.New(`\b_C2?(type|func|var|macro)_\B`)
 
 // run runs the command given by cmdline in the directory dir.
 // If the command fails, run prints information about the failure

@@ -39,7 +39,6 @@ const (
 	ERROR_NOT_SUPPORTED          syscall.Errno = 50
 	ERROR_CALL_NOT_IMPLEMENTED   syscall.Errno = 120
 	ERROR_INVALID_NAME           syscall.Errno = 123
-	ERROR_NEGATIVE_SEEK          syscall.Errno = 131
 	ERROR_LOCK_FAILED            syscall.Errno = 167
 	ERROR_IO_INCOMPLETE          syscall.Errno = 996
 	ERROR_NO_TOKEN               syscall.Errno = 1008
@@ -196,7 +195,6 @@ const (
 //sys	SetFileInformationByHandle(handle syscall.Handle, fileInformationClass uint32, buf unsafe.Pointer, bufsize uint32) (err error) = kernel32.SetFileInformationByHandle
 //sys	VirtualQuery(address uintptr, buffer *MemoryBasicInformation, length uintptr) (err error) = kernel32.VirtualQuery
 //sys	GetTempPath2(buflen uint32, buf *uint16) (n uint32, err error) = GetTempPath2W
-//sys	GetFileSizeEx(handle syscall.Handle, size *int64) (err error) = kernel32.GetFileSizeEx
 
 const (
 	// flags for CreateToolhelp32Snapshot
@@ -261,7 +259,7 @@ var sendRecvMsgFunc struct {
 }
 
 type WSAMsg struct {
-	Name        *syscall.RawSockaddrAny
+	Name        syscall.Pointer
 	Namelen     int32
 	Buffers     *syscall.WSABuf
 	BufferCount uint32
@@ -572,8 +570,6 @@ const (
 type FILE_MODE_INFORMATION struct {
 	Mode uint32
 }
-
-//sys	IsProcessorFeaturePresent(ProcessorFeature uint32) (ret bool) = kernel32.IsProcessorFeaturePresent
 
 // NT Native APIs
 //sys   NtCreateFile(handle *syscall.Handle, access uint32, oa *OBJECT_ATTRIBUTES, iosb *IO_STATUS_BLOCK, allocationSize *int64, attributes uint32, share uint32, disposition uint32, options uint32, eabuffer unsafe.Pointer, ealength uint32) (ntstatus error) = ntdll.NtCreateFile

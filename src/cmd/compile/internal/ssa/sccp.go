@@ -4,6 +4,10 @@
 
 package ssa
 
+import (
+	"fmt"
+)
+
 // ----------------------------------------------------------------------------
 // Sparse Conditional Constant Propagation
 //
@@ -50,7 +54,6 @@ type lattice struct {
 type worklist struct {
 	f            *Func               // the target function to be optimized out
 	edges        []Edge              // propagate constant facts through edges
-	inUses       *sparseSet          // IDs already in uses, for duplicate check
 	uses         []*Value            // re-visiting set
 	visited      map[Edge]bool       // visited edges
 	latticeCells map[*Value]lattice  // constant lattices
@@ -72,8 +75,6 @@ func sccp(f *Func) {
 	t.defBlock = make(map[*Value][]*Block)
 	t.latticeCells = make(map[*Value]lattice)
 	t.visitedBlock = f.Cache.allocBoolSlice(f.NumBlocks())
-	t.inUses = f.newSparseSet(f.NumValues())
-	defer f.retSparseSet(t.inUses)
 	defer f.Cache.freeBoolSlice(t.visitedBlock)
 
 	// build it early since we rely heavily on the def-use chain later
@@ -107,7 +108,6 @@ func sccp(f *Func) {
 		if len(t.uses) > 0 {
 			use := t.uses[0]
 			t.uses = t.uses[1:]
-			t.inUses.remove(use.ID)
 			t.visitValue(use)
 			continue
 		}
@@ -118,7 +118,7 @@ func sccp(f *Func) {
 	constCnt, rewireCnt := t.replaceConst()
 	if f.pass.debug > 0 {
 		if constCnt > 0 || rewireCnt > 0 {
-			f.Warnl(f.Entry.Pos, "Phase SCCP for %v : %v constants, %v dce", f.Name, constCnt, rewireCnt)
+			fmt.Printf("Phase SCCP for %v : %v constants, %v dce\n", f.Name, constCnt, rewireCnt)
 		}
 	}
 }
@@ -255,10 +255,6 @@ func (t *worklist) buildDefUses() {
 			for _, arg := range val.Args {
 				// find its uses, only uses that can become constants take into account
 				if possibleConst(arg) && possibleConst(val) {
-					// Phi may refer to itself as uses, avoid duplicate visits
-					if arg == val {
-						continue
-					}
 					if _, exist := t.defUse[arg]; !exist {
 						t.defUse[arg] = make([]*Value, 0, arg.Uses)
 					}
@@ -278,16 +274,12 @@ func (t *worklist) buildDefUses() {
 // addUses finds all uses of value and appends them into work list for further process
 func (t *worklist) addUses(val *Value) {
 	for _, use := range t.defUse[val] {
-		// Provenly not a constant, ignore
-		useLt := t.getLatticeCell(use)
-		if useLt.tag == bottom {
+		if val == use {
+			// Phi may refer to itself as uses, ignore them to avoid re-visiting phi
+			// for performance reason
 			continue
 		}
-		// Avoid duplicate visits
-		if !t.inUses.contains(use.ID) {
-			t.inUses.add(use.ID)
-			t.uses = append(t.uses, use)
-		}
+		t.uses = append(t.uses, use)
 	}
 	for _, block := range t.defBlock[val] {
 		if t.visitedBlock[block.ID] {
@@ -374,22 +366,18 @@ func computeLattice(f *Func, val *Value, args ...*Value) lattice {
 }
 
 func (t *worklist) visitValue(val *Value) {
-	// Impossible to be a constant, fast fail
 	if !possibleConst(val) {
+		// fast fail for always worst Values, i.e. there is no lowering happen
+		// on them, their lattices must be initially worse Bottom.
 		return
 	}
 
-	// Provenly not a constant, fast fail
 	oldLt := t.getLatticeCell(val)
-	if oldLt.tag == bottom {
-		return
-	}
-
-	// Re-visit all uses of value if its lattice is changed
 	defer func() {
+		// re-visit all uses of value if its lattice is changed
 		newLt := t.getLatticeCell(val)
 		if !equals(newLt, oldLt) {
-			if oldLt.tag > newLt.tag {
+			if int8(oldLt.tag) > int8(newLt.tag) {
 				t.f.Fatalf("Must lower lattice\n")
 			}
 			t.addUses(val)
@@ -579,7 +567,7 @@ func (t *worklist) replaceConst() (int, int) {
 		if lt.tag == constant {
 			if !isConst(val) {
 				if t.f.pass.debug > 0 {
-					t.f.Warnl(val.Pos, "Replace %v with %v", val.LongString(), lt.val.LongString())
+					fmt.Printf("Replace %v with %v\n", val.LongString(), lt.val.LongString())
 				}
 				val.reset(lt.val.Op)
 				val.AuxInt = lt.val.AuxInt
@@ -591,7 +579,7 @@ func (t *worklist) replaceConst() (int, int) {
 				if rewireSuccessor(block, lt.val) {
 					rewireCnt++
 					if t.f.pass.debug > 0 {
-						t.f.Warnl(block.Pos, "Rewire %v %v successors", block.Kind, block)
+						fmt.Printf("Rewire %v %v successors\n", block.Kind, block)
 					}
 				}
 			}

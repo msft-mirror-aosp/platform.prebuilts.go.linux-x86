@@ -285,7 +285,6 @@ func (m *Matcher) ShouldEnable(id uint64) bool {
 	if m == nil {
 		return true
 	}
-	// Don't use slices.Backward here (no imports).
 	for i := len(m.list) - 1; i >= 0; i-- {
 		c := &m.list[i]
 		if id&c.mask == c.bits {
@@ -300,7 +299,6 @@ func (m *Matcher) ShouldReport(id uint64) bool {
 	if m == nil {
 		return false
 	}
-	// Don't use slices.Backward here (no imports).
 	for i := len(m.list) - 1; i >= 0; i-- {
 		c := &m.list[i]
 		if id&c.mask == c.bits {

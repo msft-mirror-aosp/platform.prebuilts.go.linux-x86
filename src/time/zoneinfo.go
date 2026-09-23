@@ -645,13 +645,12 @@ var errLocation = errors.New("time: invalid location name")
 var zoneinfo *string
 var zoneinfoOnce sync.Once
 
-// LoadLocation returns a [Location] with the given name.
+// LoadLocation returns the Location with the given name.
 //
-// If the name is "" or "UTC", LoadLocation returns [UTC].
-// If the name is "Local", LoadLocation returns [Local].
+// If the name is "" or "UTC", LoadLocation returns UTC.
+// If the name is "Local", LoadLocation returns Local.
 //
-// Otherwise, a new [Location] is created where the name is taken
-// to be a location name corresponding to a file
+// Otherwise, the name is taken to be a location name corresponding to a file
 // in the IANA Time Zone database, such as "America/New_York".
 //
 // LoadLocation looks for the IANA Time Zone database in the following

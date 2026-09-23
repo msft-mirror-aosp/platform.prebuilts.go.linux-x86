@@ -11,6 +11,7 @@ import (
 	"go/ast"
 	"go/token"
 	"internal/lazyregexp"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -73,9 +74,6 @@ func Examples(testFiles ...*ast.File) []*Example {
 			}
 			if params := f.Type.Params; len(params.List) != 0 {
 				continue // function has params; not a valid example
-			}
-			if results := f.Type.Results; results != nil && len(results.List) != 0 {
-				continue // function has results; not a valid example
 			}
 			if f.Body == nil { // ast.File.Body nil dereference (see issue 28044)
 				continue
@@ -223,7 +221,7 @@ func playExample(file *ast.File, f *ast.FuncDecl) *ast.File {
 			// because the package syscall/js is not available in the playground.
 			return nil
 		}
-		n := assumedPackageName(p)
+		n := path.Base(p)
 		if s.Name != nil {
 			n = s.Name.Name
 			switch n {
@@ -240,7 +238,7 @@ func playExample(file *ast.File, f *ast.FuncDecl) *ast.File {
 			spec := *s
 			path := *s.Path
 			spec.Path = &path
-			updateBasicLitPos(spec.Path, groupStart(&spec))
+			spec.Path.ValuePos = groupStart(&spec)
 			namedImports = append(namedImports, &spec)
 			delete(unresolved, n)
 		}
@@ -721,15 +719,4 @@ func splitExampleName(s string, i int) (prefix, suffix string, ok bool) {
 func isExampleSuffix(s string) bool {
 	r, size := utf8.DecodeRuneInString(s)
 	return size > 0 && unicode.IsLower(r)
-}
-
-// updateBasicLitPos updates lit.Pos,
-// ensuring that lit.End is displaced by the same amount.
-// (See https://go.dev/issue/76395.)
-func updateBasicLitPos(lit *ast.BasicLit, pos token.Pos) {
-	len := lit.End() - lit.Pos()
-	lit.ValuePos = pos
-	if lit.ValueEnd.IsValid() {
-		lit.ValueEnd = pos + len
-	}
 }

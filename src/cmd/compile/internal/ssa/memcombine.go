@@ -626,10 +626,11 @@ func combineStores(root *Value) {
 			loadMem = nil
 			break
 		}
-		if load.Type.HasPointers() {
+		if load.Type.IsPtr() {
 			// Don't combine stores containing a pointer, as we need
-			// a write barrier for those. This can happen on an
-			// 8-byte-reg/4-byte-ptr architecture like wasm32.
+			// a write barrier for those. This can't currently happen,
+			// but might in the future if we ever have another
+			// 8-byte-reg/4-byte-ptr architecture like amd64p32.
 			loadMem = nil
 			break
 		}
@@ -727,7 +728,7 @@ func combineStores(root *Value) {
 	if isLittleEndian && shift0 != 0 {
 		sv = rightShift(root.Block, root.Pos, sv, shift0)
 	}
-	shiftedSize = aTotalSize - a[0].size
+	shiftedSize = int64(aTotalSize - a[0].size)
 	if isBigEndian && shift0-shiftedSize*8 != 0 {
 		sv = rightShift(root.Block, root.Pos, sv, shift0-shiftedSize*8)
 	}

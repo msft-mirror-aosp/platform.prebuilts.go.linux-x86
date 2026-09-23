@@ -336,14 +336,11 @@ func tJS(c context, s []byte) (context, int) {
 		// We only care about tracking brace depth if we are inside of a
 		// template literal.
 		if len(c.jsBraceDepth) == 0 {
-			c.jsCtx = nextJSCtx(s[i:i+1], c.jsCtx)
 			return c, i + 1
 		}
 		c.jsBraceDepth[len(c.jsBraceDepth)-1]++
-		c.jsCtx = nextJSCtx(s[i:i+1], c.jsCtx)
 	case '}':
 		if len(c.jsBraceDepth) == 0 {
-			c.jsCtx = nextJSCtx(s[i:i+1], c.jsCtx)
 			return c, i + 1
 		}
 		// There are no cases where a brace can be escaped in the JS context
@@ -352,7 +349,6 @@ func tJS(c context, s []byte) (context, int) {
 		// fully fledged parsers will just fail anyway.
 		c.jsBraceDepth[len(c.jsBraceDepth)-1]--
 		if c.jsBraceDepth[len(c.jsBraceDepth)-1] >= 0 {
-			c.jsCtx = nextJSCtx(s[i:i+1], c.jsCtx)
 			return c, i + 1
 		}
 		c.jsBraceDepth = c.jsBraceDepth[:len(c.jsBraceDepth)-1]
@@ -430,7 +426,7 @@ func tJSDelimited(c context, s []byte) (context, int) {
 			// If "</script" appears in a regex literal, the '/' should not
 			// close the regex literal, and it will later be escaped to
 			// "\x3C/script" in escapeText.
-			if i > 0 && i+7 <= len(s) && bytes.EqualFold(s[i-1:i+7], []byte("</script")) {
+			if i > 0 && i+7 <= len(s) && bytes.Equal(bytes.ToLower(s[i-1:i+7]), []byte("</script")) {
 				i++
 			} else if !inCharset {
 				c.state, c.jsCtx = stateJS, jsCtxDivOp
@@ -630,12 +626,10 @@ func tError(c context, s []byte) (context, int) {
 
 // tMetaContent is the context transition function for the meta content attribute state.
 func tMetaContent(c context, s []byte) (context, int) {
-	for i := range len(s) {
-		if i+3 <= len(s)-1 && bytes.EqualFold(s[i:i+3], []byte("url")) {
-			if j := eatWhiteSpace(s, i+3); j < len(s) && s[j] == '=' {
-				c.state = stateMetaContentURL
-				return c, j + 1
-			}
+	for i := 0; i < len(s); i++ {
+		if i+3 <= len(s)-1 && bytes.Equal(bytes.ToLower(s[i:i+4]), []byte("url=")) {
+			c.state = stateMetaContentURL
+			return c, i + 4
 		}
 	}
 	return c, len(s)
@@ -643,7 +637,7 @@ func tMetaContent(c context, s []byte) (context, int) {
 
 // tMetaContentURL is the context transition function for the "url=" part of a meta content attribute state.
 func tMetaContentURL(c context, s []byte) (context, int) {
-	for i := range len(s) {
+	for i := 0; i < len(s); i++ {
 		if s[i] == ';' {
 			c.state = stateMetaContent
 			return c, i + 1

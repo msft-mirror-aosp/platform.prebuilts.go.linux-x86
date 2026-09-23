@@ -116,8 +116,11 @@ func testGoExec(t *testing.T, iscgo, isexternallinker bool) {
 		"runtime.erodata":   "R",
 		"runtime.epclntab":  "R",
 		"runtime.noptrdata": "D",
-		"runtime.bss":       "B",
-		"runtime.noptrbss":  "B",
+	}
+
+	if runtime.GOOS == "aix" && iscgo {
+		// pclntab is moved to .data section on AIX.
+		runtimeSyms["runtime.epclntab"] = "D"
 	}
 
 	out, err = testenv.Command(t, testenv.Executable(t), exe).CombinedOutput()

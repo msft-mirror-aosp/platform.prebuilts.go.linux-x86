@@ -448,11 +448,6 @@ func ForCapture(fn *ir.Func) []VarAndLoop {
 		}
 	}
 	ir.WithFunc(fn, forCapture)
-
-	if ir.MatchAstDump(fn, "loopvar") {
-		ir.AstDump(fn, "loopvar, "+ir.FuncName(fn))
-	}
-
 	return transformed
 }
 
@@ -562,7 +557,7 @@ func LogTransformations(transformed []VarAndLoop) {
 
 			if logopt.Enabled() {
 				// For automated checking of coverage of this transformation, include this in the JSON information.
-				var nString any = n
+				var nString interface{} = n
 				if inner != outer {
 					nString = fmt.Sprintf("%v (from inline)", n)
 				}

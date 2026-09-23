@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"internal/obscuretestdata"
 	"io"
 	"maps"
 	"math"
@@ -26,11 +25,10 @@ import (
 
 func TestReader(t *testing.T) {
 	vectors := []struct {
-		file     string    // Test input file
-		obscured bool      // Obscured with obscuretestdata package
-		headers  []*Header // Expected output headers
-		chksums  []string  // CRC32 checksum of files, leave as nil if not checked
-		err      error     // Expected error to occur
+		file    string    // Test input file
+		headers []*Header // Expected output headers
+		chksums []string  // CRC32 checksum of files, leave as nil if not checked
+		err     error     // Expected error to occur
 	}{{
 		file: "testdata/gnu.tar",
 		headers: []*Header{{
@@ -525,9 +523,8 @@ func TestReader(t *testing.T) {
 		file: "testdata/pax-nul-path.tar",
 		err:  ErrHeader,
 	}, {
-		file:     "testdata/neg-size.tar.base64",
-		obscured: true,
-		err:      ErrHeader,
+		file: "testdata/neg-size.tar",
+		err:  ErrHeader,
 	}, {
 		file: "testdata/issue10968.tar",
 		err:  ErrHeader,
@@ -632,24 +629,15 @@ func TestReader(t *testing.T) {
 	}}
 
 	for _, v := range vectors {
-		t.Run(strings.TrimSuffix(path.Base(v.file), ".base64"), func(t *testing.T) {
-			path := v.file
-			if v.obscured {
-				tf, err := obscuretestdata.DecodeToTempFile(path)
-				if err != nil {
-					t.Fatalf("obscuredtestdata.DecodeToTempFile(%s): %v", path, err)
-				}
-				path = tf
-			}
-
-			f, err := os.Open(path)
+		t.Run(path.Base(v.file), func(t *testing.T) {
+			f, err := os.Open(v.file)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			defer f.Close()
 
 			var fr io.Reader = f
-			if strings.HasSuffix(v.file, ".bz2") || strings.HasSuffix(v.file, ".bz2.base64") {
+			if strings.HasSuffix(v.file, ".bz2") {
 				fr = bzip2.NewReader(fr)
 			}
 
@@ -787,7 +775,7 @@ type readBadSeeker struct{ io.ReadSeeker }
 
 func (rbs *readBadSeeker) Seek(int64, int) (int64, error) { return 0, fmt.Errorf("illegal seek") }
 
-// TestReadTruncation tests the ending condition on various truncated files and
+// TestReadTruncation test the ending condition on various truncated files and
 // that truncated files are still detected even if the underlying io.Reader
 // satisfies io.Seeker.
 func TestReadTruncation(t *testing.T) {

@@ -838,6 +838,7 @@ func TestCause(t *testing.T) {
 			cause: parentCause,
 		},
 	} {
+		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := test.ctx()

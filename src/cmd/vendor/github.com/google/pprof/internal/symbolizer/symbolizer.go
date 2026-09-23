@@ -281,11 +281,14 @@ func demanglerModeToOptions(demanglerMode string) []demangle.Option {
 	panic(fmt.Sprintf("unknown demanglerMode %s", demanglerMode))
 }
 
-func demangleSingleFunction(fn *profile.Function, opts []demangle.Option) {
+func demangleSingleFunction(fn *profile.Function, options []demangle.Option) {
 	if fn.Name != "" && fn.SystemName != fn.Name {
 		return // Already demangled.
 	}
-	if demangled := demangle.Filter(fn.SystemName, opts...); demangled != fn.SystemName {
+	// Copy the options because they may be updated by the call.
+	o := make([]demangle.Option, len(options))
+	copy(o, options)
+	if demangled := demangle.Filter(fn.SystemName, o...); demangled != fn.SystemName {
 		fn.Name = demangled
 		return
 	}
@@ -293,7 +296,7 @@ func demangleSingleFunction(fn *profile.Function, opts []demangle.Option) {
 	// OSX has all the symbols prefixed with extra '_' so lets try
 	// once more without it
 	if strings.HasPrefix(fn.SystemName, "_") {
-		if demangled := demangle.Filter(fn.SystemName[1:], opts...); demangled != fn.SystemName[1:] {
+		if demangled := demangle.Filter(fn.SystemName[1:], o...); demangled != fn.SystemName {
 			fn.Name = demangled
 			return
 		}
@@ -303,7 +306,7 @@ func demangleSingleFunction(fn *profile.Function, opts []demangle.Option) {
 	// already demangled.
 	name := fn.SystemName
 	if looksLikeDemangledCPlusPlus(name) {
-		for _, o := range opts {
+		for _, o := range options {
 			switch o {
 			case demangle.NoParams:
 				name = removeMatching(name, '(', ')')

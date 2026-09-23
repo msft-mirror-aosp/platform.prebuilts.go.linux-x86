@@ -12,15 +12,18 @@ type loop struct {
 	header *Block // The header node of this (reducible) loop
 	outer  *loop  // loop containing this loop
 
+	// By default, children, exits, and depth are not initialized.
+	children []*loop  // loops nested directly within this loop. Initialized by assembleChildren().
+	exits    []*Block // exits records blocks reached by exits from this loop. Initialized by findExits().
+
 	// Next three fields used by regalloc and/or
 	// aid in computation of inner-ness and list of blocks.
 	nBlocks int32 // Number of blocks in this loop but not within inner loops
-	depth   int16 // Nesting depth of the loop; 1 is outermost.
+	depth   int16 // Nesting depth of the loop; 1 is outermost. Initialized by calculateDepths().
 	isInner bool  // True if never discovered to contain a loop
 
-	// True if all paths through the loop have a call.
-	// Computed and used by regalloc; stored here for convenience.
-	containsUnavoidableCall bool
+	// register allocation uses this.
+	containsUnavoidableCall bool // True if all paths through the loop have a call
 }
 
 // outerinner records that outer contains inner
@@ -46,6 +49,18 @@ func (sdom SparseTree) outerinner(outer, inner *loop) {
 	outer.isInner = false
 }
 
+func checkContainsCall(bb *Block) bool {
+	if bb.Kind == BlockDefer {
+		return true
+	}
+	for _, v := range bb.Values {
+		if opcodeTable[v.Op].call {
+			return true
+		}
+	}
+	return false
+}
+
 type loopnest struct {
 	f              *Func
 	b2l            []*loop
@@ -53,6 +68,9 @@ type loopnest struct {
 	sdom           SparseTree
 	loops          []*loop
 	hasIrreducible bool // TODO current treatment of irreducible loops is very flaky, if accurate loops are needed, must punt at function level.
+
+	// Record which of the lazily initialized fields have actually been initialized.
+	initializedChildren, initializedDepth, initializedExits bool
 }
 
 const (
@@ -337,59 +355,91 @@ func loopnestfor(f *Func) *loopnest {
 		visited[b.ID] = true
 	}
 
-	// Compute depths.
+	ln := &loopnest{f: f, b2l: b2l, po: po, sdom: sdom, loops: loops, hasIrreducible: sawIrred}
+
+	// Calculate containsUnavoidableCall for regalloc
+	dominatedByCall := f.Cache.allocBoolSlice(f.NumBlocks())
+	defer f.Cache.freeBoolSlice(dominatedByCall)
+	for _, b := range po {
+		if checkContainsCall(b) {
+			dominatedByCall[b.ID] = true
+		}
+	}
+	// Run dfs to find path through the loop that avoids all calls.
+	// Such path either escapes loop or return back to header.
+	// It isn't enough to have exit not dominated by any call, for example:
+	// ... some loop
+	// call1   call2
+	//   \      /
+	//     exit
+	// ...
+	// exit is not dominated by any call, but we don't have call-free path to it.
 	for _, l := range loops {
-		if l.depth != 0 {
-			// Already computed because it is an ancestor of
-			// a previous loop.
+		// Header contains call.
+		if dominatedByCall[l.header.ID] {
+			l.containsUnavoidableCall = true
 			continue
 		}
-		// Find depth by walking up the loop tree.
-		d := int16(0)
-		for x := l; x != nil; x = x.outer {
-			if x.depth != 0 {
-				d += x.depth
-				break
+		callfreepath := false
+		tovisit := make([]*Block, 0, len(l.header.Succs))
+		// Push all non-loop non-exit successors of header onto toVisit.
+		for _, s := range l.header.Succs {
+			nb := s.Block()
+			// This corresponds to loop with zero iterations.
+			if !l.iterationEnd(nb, b2l) {
+				tovisit = append(tovisit, nb)
 			}
-			d++
 		}
-		// Set depth for every ancestor.
-		for x := l; x != nil; x = x.outer {
-			if x.depth != 0 {
-				break
+		for len(tovisit) > 0 {
+			cur := tovisit[len(tovisit)-1]
+			tovisit = tovisit[:len(tovisit)-1]
+			if dominatedByCall[cur.ID] {
+				continue
 			}
-			x.depth = d
-			d--
-		}
-	}
-	// Double-check depths.
-	for _, l := range loops {
-		want := int16(1)
-		if l.outer != nil {
-			want = l.outer.depth + 1
-		}
-		if l.depth != want {
-			l.header.Fatalf("bad depth calculation for loop %s: got %d want %d", l.header, l.depth, want)
-		}
-	}
+			// Record visited in dominatedByCall.
+			dominatedByCall[cur.ID] = true
+			for _, s := range cur.Succs {
+				nb := s.Block()
+				if l.iterationEnd(nb, b2l) {
+					callfreepath = true
+				}
+				if !dominatedByCall[nb.ID] {
+					tovisit = append(tovisit, nb)
+				}
 
-	ln := &loopnest{f: f, b2l: b2l, po: po, sdom: sdom, loops: loops, hasIrreducible: sawIrred}
+			}
+			if callfreepath {
+				break
+			}
+		}
+		if !callfreepath {
+			l.containsUnavoidableCall = true
+		}
+	}
 
 	// Curious about the loopiness? "-d=ssa/likelyadjust/stats"
 	if f.pass != nil && f.pass.stats > 0 && len(loops) > 0 {
+		ln.assembleChildren()
+		ln.calculateDepths()
+		ln.findExits()
 
 		// Note stats for non-innermost loops are slightly flawed because
 		// they don't account for inner loop exits that span multiple levels.
 
 		for _, l := range loops {
+			x := len(l.exits)
+			cf := 0
+			if !l.containsUnavoidableCall {
+				cf = 1
+			}
 			inner := 0
 			if l.isInner {
 				inner++
 			}
 
-			f.LogStat("loopstats in "+f.Name+":",
-				l.depth, "depth",
-				inner, "is_inner", l.nBlocks, "n_blocks")
+			f.LogStat("loopstats:",
+				l.depth, "depth", x, "exits",
+				inner, "is_inner", cf, "always_calls", l.nBlocks, "n_blocks")
 		}
 	}
 
@@ -415,10 +465,102 @@ func loopnestfor(f *Func) *loopnest {
 	return ln
 }
 
+// assembleChildren initializes the children field of each
+// loop in the nest.  Loop A is a child of loop B if A is
+// directly nested within B (based on the reducible-loops
+// detection above)
+func (ln *loopnest) assembleChildren() {
+	if ln.initializedChildren {
+		return
+	}
+	for _, l := range ln.loops {
+		if l.outer != nil {
+			l.outer.children = append(l.outer.children, l)
+		}
+	}
+	ln.initializedChildren = true
+}
+
+// calculateDepths uses the children field of loops
+// to determine the nesting depth (outer=1) of each
+// loop.  This is helpful for finding exit edges.
+func (ln *loopnest) calculateDepths() {
+	if ln.initializedDepth {
+		return
+	}
+	ln.assembleChildren()
+	for _, l := range ln.loops {
+		if l.outer == nil {
+			l.setDepth(1)
+		}
+	}
+	ln.initializedDepth = true
+}
+
+// findExits uses loop depth information to find the
+// exits from a loop.
+func (ln *loopnest) findExits() {
+	if ln.initializedExits {
+		return
+	}
+	ln.calculateDepths()
+	b2l := ln.b2l
+	for _, b := range ln.po {
+		l := b2l[b.ID]
+		if l != nil && len(b.Succs) == 2 {
+			sl := b2l[b.Succs[0].b.ID]
+			if recordIfExit(l, sl, b.Succs[0].b) {
+				continue
+			}
+			sl = b2l[b.Succs[1].b.ID]
+			if recordIfExit(l, sl, b.Succs[1].b) {
+				continue
+			}
+		}
+	}
+	ln.initializedExits = true
+}
+
 // depth returns the loop nesting level of block b.
 func (ln *loopnest) depth(b ID) int16 {
 	if l := ln.b2l[b]; l != nil {
 		return l.depth
 	}
 	return 0
+}
+
+// recordIfExit checks sl (the loop containing b) to see if it
+// is outside of loop l, and if so, records b as an exit block
+// from l and returns true.
+func recordIfExit(l, sl *loop, b *Block) bool {
+	if sl != l {
+		if sl == nil || sl.depth <= l.depth {
+			l.exits = append(l.exits, b)
+			return true
+		}
+		// sl is not nil, and is deeper than l
+		// it's possible for this to be a goto into an irreducible loop made from gotos.
+		for sl.depth > l.depth {
+			sl = sl.outer
+		}
+		if sl != l {
+			l.exits = append(l.exits, b)
+			return true
+		}
+	}
+	return false
+}
+
+func (l *loop) setDepth(d int16) {
+	l.depth = d
+	for _, c := range l.children {
+		c.setDepth(d + 1)
+	}
+}
+
+// iterationEnd checks if block b ends iteration of loop l.
+// Ending iteration means either escaping to outer loop/code or
+// going back to header
+func (l *loop) iterationEnd(b *Block, b2l []*loop) bool {
+	return b == l.header || b2l[b.ID] == nil || (b2l[b.ID] != l && b2l[b.ID].depth <= l.depth)
 }

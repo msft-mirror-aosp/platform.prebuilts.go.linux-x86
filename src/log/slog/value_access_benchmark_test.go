@@ -100,7 +100,8 @@ func BenchmarkDispatch(b *testing.B) {
 
 	b.Run("Visit", func(b *testing.B) {
 		v := &setVisitor{}
-		for b.Loop() {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
 			for _, kv := range vs {
 				kv.Visit(v)
 			}

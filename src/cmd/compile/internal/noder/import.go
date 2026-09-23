@@ -192,10 +192,7 @@ func readImportFile(path string, target *ir.Package, env *types2.Context, packag
 	pkg1 = types.NewPkg(path, "")
 	if packages != nil {
 		pkg2 = packages[path]
-		if !(pkg1.Direct == (pkg2 != nil && pkg2.Complete())) {
-
-			base.Fatalf("pkg1.Direct == (pkg2 != nil && pkg2.Complete()), path=%s\npackages=%v", path, packages)
-		}
+		assert(pkg1.Direct == (pkg2 != nil && pkg2.Complete()))
 	}
 
 	if pkg1.Direct {

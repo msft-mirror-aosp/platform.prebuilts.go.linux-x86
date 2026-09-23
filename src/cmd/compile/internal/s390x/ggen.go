@@ -11,7 +11,7 @@ import (
 	"cmd/internal/obj/s390x"
 )
 
-// clearLoopCutoff is the (somewhat arbitrary) value above which it is better
+// clearLoopCutOff is the (somewhat arbitrary) value above which it is better
 // to have a loop of clear instructions (e.g. XCs) rather than just generating
 // multiple instructions (i.e. loop unrolling).
 // Must be between 256 and 4096.

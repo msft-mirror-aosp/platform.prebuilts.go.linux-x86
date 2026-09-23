@@ -251,7 +251,7 @@ func runFinalizers() {
 					// confusing the write barrier.
 					*(*[2]uintptr)(frame) = [2]uintptr{}
 				}
-				switch f.fint.Kind() {
+				switch f.fint.Kind_ & abi.KindMask {
 				case abi.Pointer:
 					// direct use of pointer
 					*(*unsafe.Pointer)(r) = f.arg
@@ -435,7 +435,7 @@ func SetFinalizer(obj any, finalizer any) {
 	if etyp == nil {
 		throw("runtime.SetFinalizer: first argument is nil")
 	}
-	if etyp.Kind() != abi.Pointer {
+	if etyp.Kind_&abi.KindMask != abi.Pointer {
 		throw("runtime.SetFinalizer: first argument is " + toRType(etyp).string() + ", not pointer")
 	}
 	ot := (*ptrtype)(unsafe.Pointer(etyp))
@@ -490,7 +490,7 @@ func SetFinalizer(obj any, finalizer any) {
 		return
 	}
 
-	if ftyp.Kind() != abi.Func {
+	if ftyp.Kind_&abi.KindMask != abi.Func {
 		throw("runtime.SetFinalizer: second argument is " + toRType(ftyp).string() + ", not a function")
 	}
 	ft := (*functype)(unsafe.Pointer(ftyp))
@@ -505,13 +505,13 @@ func SetFinalizer(obj any, finalizer any) {
 	case fint == etyp:
 		// ok - same type
 		goto okarg
-	case fint.Kind() == abi.Pointer:
+	case fint.Kind_&abi.KindMask == abi.Pointer:
 		if (fint.Uncommon() == nil || etyp.Uncommon() == nil) && (*ptrtype)(unsafe.Pointer(fint)).Elem == ot.Elem {
 			// ok - not same type, but both pointers,
 			// one or the other is unnamed, and same element type, so assignable.
 			goto okarg
 		}
-	case fint.Kind() == abi.Interface:
+	case fint.Kind_&abi.KindMask == abi.Interface:
 		ityp := (*interfacetype)(unsafe.Pointer(fint))
 		if len(ityp.Methods) == 0 {
 			// ok - satisfies empty interface

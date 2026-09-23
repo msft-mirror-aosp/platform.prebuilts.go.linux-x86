@@ -574,7 +574,7 @@ func exprFmt(n Node, s fmt.State, prec int) {
 		// Special case for rune constants.
 		if typ == types.RuneType || typ == types.UntypedRune {
 			if x, ok := constant.Uint64Val(val); ok && x <= utf8.MaxRune {
-				fmt.Fprintf(s, "%q", rune(x))
+				fmt.Fprintf(s, "%q", x)
 				return
 			}
 		}
@@ -897,19 +897,11 @@ func (l Nodes) Format(s fmt.State, verb rune) {
 // Dump
 
 // Dump prints the message s followed by a debug dump of n.
-// This includes all the recursive structure under n.
 func Dump(s string, n Node) {
 	fmt.Printf("%s%+v\n", s, n)
 }
 
-// FDump prints to w the message s followed by a debug dump of n.
-// This includes all the recursive structure under n.
-func FDump(w io.Writer, s string, n Node) {
-	fmt.Fprintf(w, "%s%+v\n", s, n)
-}
-
 // DumpList prints the message s followed by a debug dump of each node in the list.
-// This includes all the recursive structure under each node in the list.
 func DumpList(s string, list Nodes) {
 	var buf bytes.Buffer
 	FDumpList(&buf, s, list)
@@ -917,7 +909,6 @@ func DumpList(s string, list Nodes) {
 }
 
 // FDumpList prints to w the message s followed by a debug dump of each node in the list.
-// This includes all the recursive structure under each node in the list.
 func FDumpList(w io.Writer, s string, list Nodes) {
 	io.WriteString(w, s)
 	dumpNodes(w, list, 1)
@@ -1203,7 +1194,7 @@ func dumpNode(w io.Writer, n Node, depth int) {
 	}
 }
 
-var nodeType = reflect.TypeFor[Node]()
+var nodeType = reflect.TypeOf((*Node)(nil)).Elem()
 
 func dumpNodes(w io.Writer, list Nodes, depth int) {
 	if len(list) == 0 {

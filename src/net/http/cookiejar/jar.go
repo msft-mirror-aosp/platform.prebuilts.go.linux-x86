@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package cookiejar implements an in-memory [RFC 6265]-compliant [http.CookieJar].
-//
-// [RFC 6265]: https://www.rfc-editor.org/info/rfc6265
+// Package cookiejar implements an in-memory RFC 6265-compliant http.CookieJar.
 package cookiejar
 
 import (
@@ -14,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/internal/ascii"
-	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
@@ -35,7 +32,7 @@ import (
 // set a cookie for bar.com.
 //
 // A public suffix list implementation is in the package
-// [golang.org/x/net/publicsuffix].
+// golang.org/x/net/publicsuffix.
 type PublicSuffixList interface {
 	// PublicSuffix returns the public suffix of domain.
 	//
@@ -50,7 +47,7 @@ type PublicSuffixList interface {
 	String() string
 }
 
-// Options are the options for creating a new [Jar].
+// Options are the options for creating a new Jar.
 type Options struct {
 	// PublicSuffixList is the public suffix list that determines whether
 	// an HTTP server can set a cookie for a domain.
@@ -61,7 +58,7 @@ type Options struct {
 	PublicSuffixList PublicSuffixList
 }
 
-// Jar implements the [net/http.CookieJar] interface.
+// Jar implements the http.CookieJar interface from the net/http package.
 type Jar struct {
 	psList PublicSuffixList
 
@@ -123,7 +120,7 @@ func (e *entry) id() string {
 // request to host/path. It is the caller's responsibility to check if the
 // cookie is expired.
 func (e *entry) shouldSend(https bool, host, path string) bool {
-	return e.domainMatch(host) && e.pathMatch(path) && e.secureMatch(https)
+	return e.domainMatch(host) && e.pathMatch(path) && (https || !e.Secure)
 }
 
 // domainMatch checks whether e's Domain allows sending e back to host.
@@ -149,38 +146,6 @@ func (e *entry) pathMatch(requestPath string) bool {
 		}
 	}
 	return false
-}
-
-// secureMatch checks whether a cookie should be sent based on the protocol
-// and the Secure flag. Localhost is considered a secure origin regardless
-// of protocol, matching browser behavior.
-func (e *entry) secureMatch(https bool) bool {
-	if !e.Secure {
-		// Cookies not marked secure are always sent.
-		return true
-	}
-	// Everything below is about cookies marked secure.
-	if https {
-		// HTTPS request matches secure cookies.
-		return true
-	}
-	// Consider localhost to be secure like browsers.
-	if isLocalhost(e.Domain) {
-		return true
-	}
-	ip, err := netip.ParseAddr(e.Domain)
-	if err == nil && ip.IsLoopback() {
-		return true
-	}
-	return false
-}
-
-func isLocalhost(host string) bool {
-	host = strings.TrimSuffix(host, ".")
-	if idx := strings.LastIndex(host, "."); idx >= 0 {
-		host = host[idx+1:]
-	}
-	return ascii.EqualFold(host, "localhost")
 }
 
 // hasDotSuffix reports whether s ends in "."+suffix.

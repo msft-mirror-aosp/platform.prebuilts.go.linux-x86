@@ -59,7 +59,7 @@ func TestSplicePipePool(t *testing.T) {
 	// Exploit the timeout of "go test" as a timer for the subsequent verification.
 	timeout := 5 * time.Minute
 	if deadline, ok := t.Deadline(); ok {
-		timeout = time.Until(deadline)
+		timeout = deadline.Sub(time.Now())
 		timeout -= timeout / 10 // Leave 10% headroom for cleanup.
 	}
 	expiredTime := time.NewTimer(timeout)

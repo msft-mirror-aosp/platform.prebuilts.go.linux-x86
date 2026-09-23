@@ -25,7 +25,7 @@ func bar() {
 }`
 
 	// Parse src but stop after processing the imports.
-	f, err := parser.ParseFile(fset, "", src, parser.ImportsOnly|parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, "", src, parser.ImportsOnly)
 	if err != nil {
 		fmt.Println(err)
 		return

@@ -113,7 +113,7 @@ func futexsleep1(addr *uint32, val uint32, ns int64) {
 		// The timeout is specified in microseconds - ensure that we
 		// do not end up dividing to zero, which would put us to sleep
 		// indefinitely...
-		timeout = int32(ns / 1000)
+		timeout = timediv(ns, 1000, nil)
 		if timeout == 0 {
 			timeout = 1
 		}
@@ -348,14 +348,4 @@ const sigPerThreadSyscall = 1 << 31
 //go:nosplit
 func runPerThreadSyscall() {
 	throw("runPerThreadSyscall only valid on linux")
-}
-
-//go:nowritebarrierrec
-//go:nosplit
-func libpreinit() {}
-
-//go:nowritebarrierrec
-//go:nosplit
-func newosproc0(stacksize uintptr, fn unsafe.Pointer) {
-	throw("bad newosproc0")
 }

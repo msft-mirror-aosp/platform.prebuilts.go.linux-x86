@@ -18,11 +18,7 @@ func (T) M() {}
 var _ = rand.Int
 var _ = crand.Reader
 
-type G[T any] struct{ X T }
+type G[T any] struct{ x T }
 
-func (g G[T]) M1()  {}
+func (g G[T]) M1() {}
 func (g *G[T]) M2() {}
-
-type I interface {
-	F()
-}

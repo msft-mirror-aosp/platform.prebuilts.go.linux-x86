@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"crypto/internal/fips140/edwards25519/field"
 	"crypto/internal/fips140only"
-	"crypto/internal/rand"
+	"crypto/internal/randutil"
 	"errors"
 	"io"
 )
@@ -34,20 +34,20 @@ func (c *x25519Curve) String() string {
 	return "X25519"
 }
 
-func (c *x25519Curve) GenerateKey(r io.Reader) (*PrivateKey, error) {
-	if fips140only.Enforced() {
+func (c *x25519Curve) GenerateKey(rand io.Reader) (*PrivateKey, error) {
+	if fips140only.Enabled {
 		return nil, errors.New("crypto/ecdh: use of X25519 is not allowed in FIPS 140-only mode")
 	}
-	r = rand.CustomReader(r)
 	key := make([]byte, x25519PrivateKeySize)
-	if _, err := io.ReadFull(r, key); err != nil {
+	randutil.MaybeReadByte(rand)
+	if _, err := io.ReadFull(rand, key); err != nil {
 		return nil, err
 	}
 	return c.NewPrivateKey(key)
 }
 
 func (c *x25519Curve) NewPrivateKey(key []byte) (*PrivateKey, error) {
-	if fips140only.Enforced() {
+	if fips140only.Enabled {
 		return nil, errors.New("crypto/ecdh: use of X25519 is not allowed in FIPS 140-only mode")
 	}
 	if len(key) != x25519PrivateKeySize {
@@ -67,7 +67,7 @@ func (c *x25519Curve) NewPrivateKey(key []byte) (*PrivateKey, error) {
 }
 
 func (c *x25519Curve) NewPublicKey(key []byte) (*PublicKey, error) {
-	if fips140only.Enforced() {
+	if fips140only.Enabled {
 		return nil, errors.New("crypto/ecdh: use of X25519 is not allowed in FIPS 140-only mode")
 	}
 	if len(key) != x25519PublicKeySize {

@@ -22,18 +22,6 @@ func TestReadRandom(t *testing.T) {
 	}
 }
 
-func BenchmarkCheaprand(b *testing.B) {
-	for b.Loop() {
-		Cheaprand()
-	}
-}
-
-func BenchmarkCheaprand64(b *testing.B) {
-	for b.Loop() {
-		Cheaprand64()
-	}
-}
-
 func BenchmarkFastrand(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {

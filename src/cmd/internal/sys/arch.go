@@ -143,9 +143,8 @@ var ArchLoong64 = &Arch{
 	PtrSize:        8,
 	RegSize:        8,
 	MinLC:          4,
-	Alignment:      1,
+	Alignment:      8, // Unaligned accesses are not guaranteed to be fast
 	CanMergeLoads:  true,
-	CanJumpTable:   true,
 	HasLR:          true,
 	FixedFrameSize: 8, // LR
 }
@@ -236,7 +235,7 @@ var ArchRISCV64 = &Arch{
 	ByteOrder:      binary.LittleEndian,
 	PtrSize:        8,
 	RegSize:        8,
-	MinLC:          2,
+	MinLC:          4,
 	Alignment:      8, // riscv unaligned loads work, but are really slow (trap + simulated by OS)
 	CanMergeLoads:  false,
 	HasLR:          true,

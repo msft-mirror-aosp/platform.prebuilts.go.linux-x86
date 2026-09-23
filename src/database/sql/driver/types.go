@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strconv"
 	"time"
-	"uuid"
 )
 
 // ValueConverter is the interface providing the ConvertValue method.
@@ -258,9 +257,6 @@ func (defaultConverter) ConvertValue(v any) (Value, error) {
 	// For now, continue to prefer the Valuer interface over the decimal decompose interface.
 	case decimalDecompose:
 		return vr, nil
-
-	case uuid.UUID:
-		return vr.String(), nil
 	}
 
 	rv := reflect.ValueOf(v)

@@ -75,7 +75,6 @@ var (
 	procGetConsoleCP                      = modkernel32.NewProc("GetConsoleCP")
 	procGetCurrentThread                  = modkernel32.NewProc("GetCurrentThread")
 	procGetFileInformationByHandleEx      = modkernel32.NewProc("GetFileInformationByHandleEx")
-	procGetFileSizeEx                     = modkernel32.NewProc("GetFileSizeEx")
 	procGetFinalPathNameByHandleW         = modkernel32.NewProc("GetFinalPathNameByHandleW")
 	procGetModuleFileNameW                = modkernel32.NewProc("GetModuleFileNameW")
 	procGetModuleHandleW                  = modkernel32.NewProc("GetModuleHandleW")
@@ -83,7 +82,6 @@ var (
 	procGetTempPath2W                     = modkernel32.NewProc("GetTempPath2W")
 	procGetVolumeInformationByHandleW     = modkernel32.NewProc("GetVolumeInformationByHandleW")
 	procGetVolumeNameForVolumeMountPointW = modkernel32.NewProc("GetVolumeNameForVolumeMountPointW")
-	procIsProcessorFeaturePresent         = modkernel32.NewProc("IsProcessorFeaturePresent")
 	procLockFileEx                        = modkernel32.NewProc("LockFileEx")
 	procModule32FirstW                    = modkernel32.NewProc("Module32FirstW")
 	procModule32NextW                     = modkernel32.NewProc("Module32NextW")
@@ -356,14 +354,6 @@ func GetFileInformationByHandleEx(handle syscall.Handle, class uint32, info *byt
 	return
 }
 
-func GetFileSizeEx(handle syscall.Handle, size *int64) (err error) {
-	r1, _, e1 := syscall.SyscallN(procGetFileSizeEx.Addr(), uintptr(handle), uintptr(unsafe.Pointer(size)))
-	if r1 == 0 {
-		err = errnoErr(e1)
-	}
-	return
-}
-
 func GetFinalPathNameByHandle(file syscall.Handle, filePath *uint16, filePathSize uint32, flags uint32) (n uint32, err error) {
 	r0, _, e1 := syscall.SyscallN(procGetFinalPathNameByHandleW.Addr(), uintptr(file), uintptr(unsafe.Pointer(filePath)), uintptr(filePathSize), uintptr(flags))
 	n = uint32(r0)
@@ -425,12 +415,6 @@ func GetVolumeNameForVolumeMountPoint(volumeMountPoint *uint16, volumeName *uint
 	if r1 == 0 {
 		err = errnoErr(e1)
 	}
-	return
-}
-
-func IsProcessorFeaturePresent(ProcessorFeature uint32) (ret bool) {
-	r0, _, _ := syscall.SyscallN(procIsProcessorFeaturePresent.Addr(), uintptr(ProcessorFeature))
-	ret = r0 != 0
 	return
 }
 

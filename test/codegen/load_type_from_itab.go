@@ -19,6 +19,6 @@ func (*Impl) A() {}
 
 func main() {
 	var a M = &Impl{}
-	// amd64:`LEAQ type:.*Impl`
+	// amd64:`LEAQ\ttype:.*Impl`
 	a.(A).A()
 }

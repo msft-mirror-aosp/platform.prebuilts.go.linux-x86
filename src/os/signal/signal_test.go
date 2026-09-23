@@ -9,7 +9,6 @@ package signal
 import (
 	"bytes"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"internal/testenv"
@@ -348,6 +347,7 @@ func TestStop(t *testing.T) {
 	}
 
 	for _, sig := range sigs {
+		sig := sig
 		t.Run(fmt.Sprint(sig), func(t *testing.T) {
 			// When calling Notify with a specific signal,
 			// independent signals should not interfere with each other,
@@ -441,6 +441,7 @@ func TestNohup(t *testing.T) {
 			subTimeout -= subTimeout / 10 // Leave 10% headroom for propagating output.
 		}
 		for i := 1; i <= 2; i++ {
+			i := i
 			t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 				t.Parallel()
 
@@ -483,6 +484,7 @@ func TestNohup(t *testing.T) {
 			subTimeout -= subTimeout / 10 // Leave 10% headroom for propagating output.
 		}
 		for i := 1; i <= 2; i++ {
+			i := i
 			t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 				t.Parallel()
 
@@ -724,9 +726,6 @@ func TestNotifyContextNotifications(t *testing.T) {
 		}
 		wg.Wait()
 		<-ctx.Done()
-		if got, want := context.Cause(ctx).Error(), "interrupt signal received"; got != want {
-			t.Errorf("context.Cause(ctx) = %q, want %q", got, want)
-		}
 		fmt.Println("received SIGINT")
 		// Sleep to give time to simultaneous signals to reach the process.
 		// These signals must be ignored given stop() is not called on this code.
@@ -744,6 +743,7 @@ func TestNotifyContextNotifications(t *testing.T) {
 		{"multiple", 10},
 	}
 	for _, tc := range testCases {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -801,15 +801,11 @@ func TestNotifyContextStop(t *testing.T) {
 	if got := c.Err(); got != context.Canceled {
 		t.Errorf("c.Err() = %q, want %q", got, context.Canceled)
 	}
-	if got := context.Cause(c); got != context.Canceled {
-		t.Errorf("context.Cause(c.Err()) = %q, want %q", got, context.Canceled)
-	}
 }
 
 func TestNotifyContextCancelParent(t *testing.T) {
-	parent, cancelParent := context.WithCancelCause(context.Background())
-	parentCause := errors.New("parent canceled")
-	defer cancelParent(parentCause)
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
 	c, stop := NotifyContext(parent, syscall.SIGINT)
 	defer stop()
 
@@ -817,22 +813,18 @@ func TestNotifyContextCancelParent(t *testing.T) {
 		t.Errorf("c.String() = %q, want %q", got, want)
 	}
 
-	cancelParent(parentCause)
+	cancelParent()
 	<-c.Done()
 	if got := c.Err(); got != context.Canceled {
 		t.Errorf("c.Err() = %q, want %q", got, context.Canceled)
-	}
-	if got := context.Cause(c); got != parentCause {
-		t.Errorf("context.Cause(c) = %q, want %q", got, parentCause)
 	}
 }
 
 func TestNotifyContextPrematureCancelParent(t *testing.T) {
-	parent, cancelParent := context.WithCancelCause(context.Background())
-	parentCause := errors.New("parent canceled")
-	defer cancelParent(parentCause)
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
 
-	cancelParent(parentCause) // Prematurely cancel context before calling NotifyContext.
+	cancelParent() // Prematurely cancel context before calling NotifyContext.
 	c, stop := NotifyContext(parent, syscall.SIGINT)
 	defer stop()
 
@@ -843,9 +835,6 @@ func TestNotifyContextPrematureCancelParent(t *testing.T) {
 	<-c.Done()
 	if got := c.Err(); got != context.Canceled {
 		t.Errorf("c.Err() = %q, want %q", got, context.Canceled)
-	}
-	if got := context.Cause(c); got != parentCause {
-		t.Errorf("context.Cause(c) = %q, want %q", got, parentCause)
 	}
 }
 
@@ -923,26 +912,4 @@ func TestSignalTrace(t *testing.T) {
 	}
 	close(quit)
 	<-done
-}
-
-// #77639.
-func TestNotifyContextCause(t *testing.T) {
-	ctx, stop := NotifyContext(t.Context(), syscall.SIGINT)
-	defer stop()
-	syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-	<-ctx.Done()
-
-	err := ctx.Err()
-	if err == nil {
-		t.Error("ctx.Err returned nil")
-	} else if !errors.Is(err, context.Canceled) {
-		t.Errorf("error %v is not context.Canceled", err)
-	}
-
-	err = context.Cause(ctx)
-	if err == nil {
-		t.Error("context.Cause returned nil")
-	} else if !errors.Is(err, context.Canceled) {
-		t.Errorf("cause %v is not context.Canceled", err)
-	}
 }

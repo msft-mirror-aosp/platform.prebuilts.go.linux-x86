@@ -20,18 +20,12 @@ func TestEncodeArgs(t *testing.T) {
 	tests := []struct {
 		arg, want string
 	}{
-		{"", `""`},
+		{"", ""},
 		{"hello", "hello"},
-		{"hello\n", "\"hello\n\""},
-		{"hello\\", `"hello\\"`},
-		{"hello\nthere", "\"hello\nthere\""},
-		{"\\\n", "\"\\\\\n\""},
-		{"hello world", `"hello world"`},
-		{"hello\tthere", "\"hello\tthere\""},
-		{`hello"there`, `"hello\"there"`},
-		{"hello$there", `"hello\$there"`},
-		{"hello`there", "\"hello\\`there\""},
-		{"simple", "simple"},
+		{"hello\n", "hello\\n"},
+		{"hello\\", "hello\\\\"},
+		{"hello\nthere", "hello\\nthere"},
+		{"\\\n", "\\\\\\n"},
 	}
 	for _, test := range tests {
 		if got := encodeArg(test.arg); got != test.want {
@@ -49,15 +43,10 @@ func TestEncodeDecode(t *testing.T) {
 		"hello\nthere",
 		"hello 中国",
 		"hello \n中\\国",
-		"hello$world",
-		"hello`world",
-		`hello"world`,
 	}
 	for _, arg := range tests {
-		encoded := encodeArg(arg)
-		args := objabi.ParseArgs([]byte(encoded))
-		if len(args) != 1 || args[0] != arg {
-			t.Errorf("ParseArgs(encodeArg(%q)) = %q (encoded: %q)", arg, args, encoded)
+		if got := objabi.DecodeArg(encodeArg(arg)); got != arg {
+			t.Errorf("objabi.DecodeArg(encodeArg(%q)) = %q", arg, got)
 		}
 	}
 }
@@ -91,10 +80,8 @@ func TestEncodeDecodeFuzz(t *testing.T) {
 		}
 		arg := buf.String()
 
-		encoded := encodeArg(arg)
-		args := objabi.ParseArgs([]byte(encoded))
-		if len(args) != 1 || args[0] != arg {
-			t.Errorf("[%d] ParseArgs(encodeArg(%q)) = %q [seed: %v]", i, arg, args, seed)
+		if got := objabi.DecodeArg(encodeArg(arg)); got != arg {
+			t.Errorf("[%d] objabi.DecodeArg(encodeArg(%q)) = %q [seed: %v]", i, arg, got, seed)
 		}
 	}
 }

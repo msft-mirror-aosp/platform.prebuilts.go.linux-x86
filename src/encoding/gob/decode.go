@@ -594,13 +594,7 @@ func decodeIntoValue(state *decoderState, op decOp, isPtr bool, value reflect.Va
 func (dec *Decoder) decodeMap(mtyp reflect.Type, state *decoderState, value reflect.Value, keyOp, elemOp decOp, ovfl error) {
 	n := int(state.decodeUint())
 	if value.IsNil() {
-		// This is a map, not a slice, but capping the
-		// size works either way.
-		safe := saferio.SliceCapWithSize(uint64(mtyp.Elem().Size()), uint64(n))
-		if safe < 0 {
-			safe = 1
-		}
-		value.Set(reflect.MakeMapWithSize(mtyp, safe))
+		value.Set(reflect.MakeMapWithSize(mtyp, n))
 	}
 	keyIsPtr := mtyp.Key().Kind() == reflect.Pointer
 	elemIsPtr := mtyp.Elem().Kind() == reflect.Pointer
@@ -774,14 +768,11 @@ func (dec *Decoder) decodeGobDecoder(ut *userTypeInfo, state *decoderState, valu
 	// We know it's one of these.
 	switch ut.externalDec {
 	case xGob:
-		gobDecoder, _ := reflect.TypeAssert[GobDecoder](value)
-		err = gobDecoder.GobDecode(b)
+		err = value.Interface().(GobDecoder).GobDecode(b)
 	case xBinary:
-		binaryUnmarshaler, _ := reflect.TypeAssert[encoding.BinaryUnmarshaler](value)
-		err = binaryUnmarshaler.UnmarshalBinary(b)
+		err = value.Interface().(encoding.BinaryUnmarshaler).UnmarshalBinary(b)
 	case xText:
-		textUnmarshaler, _ := reflect.TypeAssert[encoding.TextUnmarshaler](value)
-		err = textUnmarshaler.UnmarshalText(b)
+		err = value.Interface().(encoding.TextUnmarshaler).UnmarshalText(b)
 	}
 	if err != nil {
 		error_(err)

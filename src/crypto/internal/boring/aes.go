@@ -48,7 +48,6 @@ import (
 	"crypto/cipher"
 	"errors"
 	"runtime"
-	"slices"
 	"strconv"
 	"unsafe"
 )
@@ -324,7 +323,9 @@ func (g *aesGCM) Seal(dst, nonce, plaintext, additionalData []byte) []byte {
 
 	// Make room in dst to append plaintext+overhead.
 	n := len(dst)
-	dst = slices.Grow(dst, len(plaintext)+gcmTagSize)
+	for cap(dst) < n+len(plaintext)+gcmTagSize {
+		dst = append(dst[:cap(dst)], 0)
+	}
 	dst = dst[:n+len(plaintext)+gcmTagSize]
 
 	// Check delayed until now to make sure len(dst) is accurate.

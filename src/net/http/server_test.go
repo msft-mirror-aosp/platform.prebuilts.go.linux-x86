@@ -91,13 +91,12 @@ func TestFindHandler(t *testing.T) {
 		wantHandler string
 	}{
 		{"GET", "/", "&http.handler{i:1}"},
-		{"GET", "//", `&http.redirectHandler{url:"/", code:307}`},
-		{"GET", "/foo/../bar/./..//baz", `&http.redirectHandler{url:"/baz", code:307}`},
+		{"GET", "//", `&http.redirectHandler{url:"/", code:301}`},
+		{"GET", "/foo/../bar/./..//baz", `&http.redirectHandler{url:"/baz", code:301}`},
 		{"GET", "/foo", "&http.handler{i:3}"},
 		{"GET", "/foo/x", "&http.handler{i:2}"},
 		{"GET", "/bar/x", "&http.handler{i:4}"},
-		{"GET", "/bar", `&http.redirectHandler{url:"/bar/", code:307}`},
-		{"CONNECT", "", "(http.HandlerFunc)(.*)"},
+		{"GET", "/bar", `&http.redirectHandler{url:"/bar/", code:301}`},
 		{"CONNECT", "/", "&http.handler{i:1}"},
 		{"CONNECT", "//", "&http.handler{i:1}"},
 		{"CONNECT", "//foo", "&http.handler{i:5}"},
@@ -105,7 +104,7 @@ func TestFindHandler(t *testing.T) {
 		{"CONNECT", "/foo", "&http.handler{i:3}"},
 		{"CONNECT", "/foo/x", "&http.handler{i:2}"},
 		{"CONNECT", "/bar/x", "&http.handler{i:4}"},
-		{"CONNECT", "/bar", `&http.redirectHandler{url:"/bar/", code:307}`},
+		{"CONNECT", "/bar", `&http.redirectHandler{url:"/bar/", code:301}`},
 	} {
 		var r Request
 		r.Method = test.method
@@ -113,7 +112,7 @@ func TestFindHandler(t *testing.T) {
 		r.URL = &url.URL{Path: test.path}
 		gotH, _, _, _ := mux.findHandler(&r)
 		got := fmt.Sprintf("%#v", gotH)
-		if !regexp.MustCompile(test.wantHandler).MatchString(got) {
+		if got != test.wantHandler {
 			t.Errorf("%s %q: got %q, want %q", test.method, test.path, got, test.wantHandler)
 		}
 	}

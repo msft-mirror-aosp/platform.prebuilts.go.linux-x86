@@ -70,7 +70,6 @@ const (
 // corresponding types inferred for each type parameter.
 // A unifier is created by calling newUnifier.
 type unifier struct {
-	check *Checker
 	// handles maps each type parameter to its inferred type through
 	// an indirection *Type called (inferred type) "handle".
 	// Initially, each type parameter has its own, separate handle,
@@ -89,7 +88,7 @@ type unifier struct {
 // and corresponding type argument lists. The type argument list may be shorter
 // than the type parameter list, and it may contain nil types. Matching type
 // parameters and arguments must have the same index.
-func newUnifier(check *Checker, tparams []*TypeParam, targs []Type, enableInterfaceInference bool) *unifier {
+func newUnifier(tparams []*TypeParam, targs []Type, enableInterfaceInference bool) *unifier {
 	assert(len(tparams) >= len(targs))
 	handles := make(map[*TypeParam]*Type, len(tparams))
 	// Allocate all handles up-front: in a correct program, all type parameters
@@ -103,7 +102,7 @@ func newUnifier(check *Checker, tparams []*TypeParam, targs []Type, enableInterf
 		}
 		handles[x] = &t
 	}
-	return &unifier{check, handles, 0, enableInterfaceInference}
+	return &unifier{handles, 0, enableInterfaceInference}
 }
 
 // unifyMode controls the behavior of the unifier.
@@ -145,8 +144,7 @@ func (u *unifier) unify(x, y Type, mode unifyMode) bool {
 	return u.nify(x, y, mode, nil)
 }
 
-func (u *unifier) tracef(format string, args ...any) {
-	// TODO(gri) consider adjusting this to use Checker.trace
+func (u *unifier) tracef(format string, args ...interface{}) {
 	fmt.Println(strings.Repeat(".  ", u.depth) + sprintf(nil, nil, true, format, args...))
 }
 
@@ -275,7 +273,7 @@ func (u *unifier) inferred(tparams []*TypeParam) []Type {
 // it is a non-type parameter interface. Otherwise it returns nil.
 func asInterface(x Type) (i *Interface) {
 	if _, ok := Unalias(x).(*TypeParam); !ok {
-		i, _ = x.Underlying().(*Interface)
+		i, _ = under(x).(*Interface)
 	}
 	return i
 }
@@ -344,7 +342,7 @@ func (u *unifier) nify(x, y Type, mode unifyMode, p *ifacePair) (result bool) {
 		if traceInference {
 			u.tracef("%s ≡ under %s", x, ny)
 		}
-		y = ny.Underlying()
+		y = ny.under()
 		// Per the spec, a defined type cannot have an underlying type
 		// that is a type parameter.
 		assert(!isTypeParam(y))
@@ -435,7 +433,7 @@ func (u *unifier) nify(x, y Type, mode unifyMode, p *ifacePair) (result bool) {
 						u.set(px, y)
 					default:
 						// Neither x nor y are defined types.
-						if yc, _ := y.Underlying().(*Chan); yc != nil && yc.dir != SendRecv {
+						if yc, _ := under(y).(*Chan); yc != nil && yc.dir != SendRecv {
 							// y is a directed channel type: select y.
 							u.set(px, y)
 						}
@@ -539,17 +537,10 @@ func (u *unifier) nify(x, y Type, mode unifyMode, p *ifacePair) (result bool) {
 		// the non-interface type, otherwise unification fails.
 		if xi != nil {
 			// All xi methods must exist in y and corresponding signatures must unify.
-			// A generic method never satisfies an interface method, so fail rather
-			// than unify ym's own type parameter into an inference variable.
 			xmethods := xi.typeSet().methods
 			for _, xm := range xmethods {
 				obj, _, _ := LookupFieldOrMethod(y, false, xm.pkg, xm.name)
-				ym, _ := obj.(*Func)
-				if ym == nil {
-					return false
-				}
-				u.check.objDecl(ym) // ensure fully set-up signature
-				if ym.Signature().TypeParams() != nil || !u.nify(xm.typ, ym.typ, exact, p) {
+				if ym, _ := obj.(*Func); ym == nil || !u.nify(xm.typ, ym.typ, exact, p) {
 					return false
 				}
 			}
@@ -791,7 +782,7 @@ func (u *unifier) nify(x, y Type, mode unifyMode, p *ifacePair) (result bool) {
 				}
 				// If y is a defined type, it may not match against cx which
 				// is an underlying type (incl. int, string, etc.). Use assign
-				// mode here so that the unifier automatically uses y.Underlying()
+				// mode here so that the unifier automatically takes under(y)
 				// if necessary.
 				return u.nify(cx, yorig, assign, p)
 			}

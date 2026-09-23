@@ -10,8 +10,9 @@ import (
 	"crypto"
 	"crypto/hkdf"
 	"crypto/hmac"
-	"crypto/hpke"
+	"crypto/internal/fips140/mlkem"
 	"crypto/internal/fips140/tls13"
+	"crypto/internal/hpke"
 	"crypto/rsa"
 	"crypto/tls/internal/fips140tls"
 	"crypto/x509"
@@ -35,7 +36,7 @@ type echServerContext struct {
 	configID    uint8
 	ciphersuite echCipher
 	transcript  hash.Hash
-	// inner indicates that the initial client_hello we received contained an
+	// inner indicates that the initial client_hello we recieved contained an
 	// encrypted_client_hello extension that indicated it was an "inner" hello.
 	// We don't do any additional processing of the hello in this case, so all
 	// fields above are unset.
@@ -132,7 +133,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		if id == TLS_FALLBACK_SCSV {
 			// Use c.vers instead of max(supported_versions) because an attacker
 			// could defeat this by adding an arbitrary high version otherwise.
-			if c.vers < c.config.maxSupportedVersion(roleServer, c.quic != nil) {
+			if c.vers < c.config.maxSupportedVersion(roleServer) {
 				c.sendAlert(alertInappropriateFallback)
 				return errors.New("tls: client using inappropriate protocol fallback")
 			}
@@ -246,15 +247,54 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	}
 	c.curveID = selectedGroup
 
-	ke, err := keyExchangeForCurveID(selectedGroup)
+	ecdhGroup := selectedGroup
+	ecdhData := clientKeyShare.data
+	if selectedGroup == X25519MLKEM768 {
+		ecdhGroup = X25519
+		if len(ecdhData) != mlkem.EncapsulationKeySize768+x25519PublicKeySize {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid X25519MLKEM768 client key share")
+		}
+		ecdhData = ecdhData[mlkem.EncapsulationKeySize768:]
+	}
+	if _, ok := curveForCurveID(ecdhGroup); !ok {
+		c.sendAlert(alertInternalError)
+		return errors.New("tls: CurvePreferences includes unsupported curve")
+	}
+	key, err := generateECDHEKey(c.config.rand(), ecdhGroup)
 	if err != nil {
 		c.sendAlert(alertInternalError)
-		return errors.New("tls: internal error: supportsCurve accepted unimplemented curve")
+		return err
 	}
-	hs.sharedKey, hs.hello.serverShare, err = ke.serverSharedSecret(c.config.rand(), clientKeyShare.data)
+	hs.hello.serverShare = keyShare{group: selectedGroup, data: key.PublicKey().Bytes()}
+	peerKey, err := key.Curve().NewPublicKey(ecdhData)
 	if err != nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: invalid client key share")
+	}
+	hs.sharedKey, err = key.ECDH(peerKey)
+	if err != nil {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: invalid client key share")
+	}
+	if selectedGroup == X25519MLKEM768 {
+		k, err := mlkem.NewEncapsulationKey768(clientKeyShare.data[:mlkem.EncapsulationKeySize768])
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid X25519MLKEM768 client key share")
+		}
+		mlkemSharedSecret, ciphertext := k.Encapsulate()
+		// draft-kwiatkowski-tls-ecdhe-mlkem-02, Section 3.1.3: "For
+		// X25519MLKEM768, the shared secret is the concatenation of the ML-KEM
+		// shared secret and the X25519 shared secret. The shared secret is 64
+		// bytes (32 bytes for each part)."
+		hs.sharedKey = append(mlkemSharedSecret, hs.sharedKey...)
+		// draft-kwiatkowski-tls-ecdhe-mlkem-02, Section 3.1.2: "When the
+		// X25519MLKEM768 group is negotiated, the server's key exchange value
+		// is the concatenation of an ML-KEM ciphertext returned from
+		// encapsulation to the client's encapsulation key, and the server's
+		// ephemeral X25519 share."
+		hs.hello.serverShare.data = append(ciphertext, hs.hello.serverShare.data...)
 	}
 
 	selectedProto, err := negotiateALPN(c.config.NextProtos, hs.clientHello.alpnProtocols, c.quic != nil)
@@ -436,17 +476,10 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 	return nil
 }
 
-// cloneHash uses [hash.Cloner] to clone in. If [hash.Cloner]
-// is not implemented or not supported, then it falls back to the
-// [encoding.BinaryMarshaler] and [encoding.BinaryUnmarshaler]
+// cloneHash uses the encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
 // interfaces implemented by standard library hashes to clone the state of in
 // to a new instance of h. It returns nil if the operation fails.
 func cloneHash(in hash.Hash, h crypto.Hash) hash.Hash {
-	if cloner, ok := in.(hash.Cloner); ok {
-		if out, err := cloner.Clone(); err == nil {
-			return out
-		}
-	}
 	// Recreate the interface to avoid importing encoding.
 	type binaryMarshaler interface {
 		MarshalBinary() (data []byte, err error)
@@ -492,9 +525,6 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 			c.sendAlert(alertInternalError)
 		}
 		return err
-	}
-	if certificate != nil {
-		hs.c.localCertificate = certificate.Certificate
 	}
 	hs.sigAlg, err = selectSignatureScheme(c.vers, certificate, hs.clientHello.supportedSignatureAlgorithms)
 	if err != nil {
@@ -835,8 +865,8 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 		certReq := new(certificateRequestMsgTLS13)
 		certReq.ocspStapling = true
 		certReq.scts = true
-		certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms(c.vers, c.vers)
-		certReq.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert(c.vers, c.vers)
+		certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms(c.vers)
+		certReq.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert()
 		if c.config.ClientCAs != nil {
 			certReq.certificateAuthorities = c.config.ClientCAs.Subjects()
 		}
@@ -865,12 +895,12 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 		return c.sendAlert(alertInternalError)
 	}
 
-	signed := signedMessage(serverSignatureContext, hs.transcript)
+	signed := signedMessage(sigHash, serverSignatureContext, hs.transcript)
 	signOpts := crypto.SignerOpts(sigHash)
 	if sigType == signatureRSAPSS {
 		signOpts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: sigHash}
 	}
-	sig, err := crypto.SignMessage(hs.cert.PrivateKey.(crypto.Signer), c.config.rand(), signed, signOpts)
+	sig, err := hs.cert.PrivateKey.(crypto.Signer).Sign(c.config.rand(), signed, signOpts)
 	if err != nil {
 		public := hs.cert.PrivateKey.(crypto.Signer).Public()
 		if rsaKey, ok := public.(*rsa.PublicKey); ok && sigType == signatureRSAPSS &&
@@ -1085,7 +1115,7 @@ func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
 		// See RFC 8446, Section 4.4.3.
 		// We don't use certReq.supportedSignatureAlgorithms because it would
 		// require keeping the certificateRequestMsgTLS13 around in the hs.
-		if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms(c.vers, c.vers)) ||
+		if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms(c.vers)) ||
 			!isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, signatureSchemesForPublicKey(c.vers, c.peerCertificates[0].PublicKey)) {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: client certificate used with invalid signature algorithm")
@@ -1097,7 +1127,7 @@ func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
 		if sigType == signaturePKCS1v15 || sigHash == crypto.SHA1 {
 			return c.sendAlert(alertInternalError)
 		}
-		signed := signedMessage(clientSignatureContext, hs.transcript)
+		signed := signedMessage(sigHash, clientSignatureContext, hs.transcript)
 		if err := verifyHandshakeSignature(sigType, c.peerCertificates[0].PublicKey,
 			sigHash, signed, certVerify.signature); err != nil {
 			c.sendAlert(alertDecryptError)

@@ -455,6 +455,7 @@ func callOrChan(n ir.Node) bool {
 		ir.OPRINTLN,
 		ir.OREAL,
 		ir.ORECOVER,
+		ir.ORECOVERFP,
 		ir.ORECV,
 		ir.OUNSAFEADD,
 		ir.OUNSAFESLICE,

@@ -21,6 +21,9 @@ var worldIsStopped atomic.Uint32
 type lockRankStruct struct {
 	// static lock ranking of the lock
 	rank lockRank
+	// pad field to make sure lockRankStruct is a multiple of 8 bytes, even on
+	// 32-bit systems.
+	pad int
 }
 
 // lockInit(l *mutex, rank int) sets the rank of lock before it is used.
@@ -102,16 +105,14 @@ func printHeldLocks(gp *g) {
 }
 
 // acquireLockRankAndM acquires a rank which is not associated with a mutex
-// lock. To maintain the invariant that an M which holds lock-like resources
-// will have m.locks/mutexMLocksDelta > 0, it also acquires the M and adjusts
-// m.locks by mutexMLocksDelta.
+// lock. To maintain the invariant that an M with m.locks==0 does not hold any
+// lock-like resources, it also acquires the M.
 //
 // This function may be called in nosplit context and thus must be nosplit.
 //
 //go:nosplit
 func acquireLockRankAndM(rank lockRank) {
-	mp := acquirem()
-	mp.locks += mutexMLocksDelta // not safe to profile right now
+	acquirem()
 
 	gp := getg()
 	// Log the new class. See comment on lockWithRank.
@@ -217,9 +218,7 @@ func releaseLockRankAndM(rank lockRank) {
 		}
 	})
 
-	mp := getg().m
-	mp.locks -= mutexMLocksDelta
-	releasem(mp)
+	releasem(getg().m)
 }
 
 // nosplit because it may be called from nosplit contexts.

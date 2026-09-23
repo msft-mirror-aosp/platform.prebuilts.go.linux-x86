@@ -214,6 +214,14 @@ func (w *typeWriter) typ(typ Type) {
 
 	case *Interface:
 		if w.ctxt == nil {
+			if t == universeAnyAlias.Type().Underlying() {
+				// When not hashing, we can try to improve type strings by writing "any"
+				// for a type that is pointer-identical to universeAny.
+				// TODO(rfindley): this logic should not be necessary with
+				// gotypesalias=1. Remove once that is always the case.
+				w.string("any")
+				break
+			}
 			if t == asNamed(universeComparable.Type()).underlying {
 				w.string("interface{comparable}")
 				break
@@ -339,11 +347,7 @@ func (w *typeWriter) typ(typ Type) {
 		}
 		if w.ctxt != nil {
 			// TODO(gri) do we need to print the alias type name, too?
-			typ := Unalias(t.obj.typ)
-			if typ == nil {
-				panic("known implementation limitation: encountered an incomplete alias (see go.dev/issue/78296)")
-			}
-			w.typ(typ)
+			w.typ(Unalias(t.obj.typ))
 		}
 
 	default:
@@ -448,25 +452,22 @@ func (w *typeWriter) tuple(tup *Tuple, variadic bool) {
 			}
 			typ := v.typ
 			if variadic && i == len(tup.vars)-1 {
-				if slice, ok := typ.(*Slice); ok {
+				if s, ok := typ.(*Slice); ok {
 					w.string("...")
-					w.typ(slice.elem)
+					typ = s.elem
 				} else {
-					// append(slice, str...) entails various special
-					// cases, especially in conjunction with generics.
-					// str may be:
-					// - a string,
-					// - a TypeParam whose typeset includes string, or
-					// - a named []byte slice type B resulting from
-					//   a client instantiating append([]byte, T) at T=B.
-					// For such cases we use the irregular notation
-					// func([]byte, T...), with the dots after the type.
+					// special case:
+					// append(s, "foo"...) leads to signature func([]byte, string...)
+					if t, _ := under(typ).(*Basic); t == nil || t.kind != String {
+						w.error("expected string type")
+						continue
+					}
 					w.typ(typ)
 					w.string("...")
+					continue
 				}
-			} else {
-				w.typ(typ)
 			}
+			w.typ(typ)
 		}
 	}
 	w.byte(')')

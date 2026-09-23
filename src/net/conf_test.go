@@ -142,7 +142,7 @@ func TestConfHostLookupOrder(t *testing.T) {
 			c: &conf{
 				goos: "openbsd",
 			},
-			resolv: &dnsConfig{servers: defaultNS, lookup: []string{"bind", "file"}},
+			resolv: &dnsConfig{lookup: []string{"bind", "file"}},
 			hostTests: []nssHostTest{
 				{"google.com", "myhostname", hostLookupDNSFiles},
 				{"foo.local", "myhostname", hostLookupDNSFiles},
@@ -153,7 +153,7 @@ func TestConfHostLookupOrder(t *testing.T) {
 			c: &conf{
 				goos: "openbsd",
 			},
-			resolv:    &dnsConfig{servers: defaultNS, lookup: []string{"file", "bind"}},
+			resolv:    &dnsConfig{lookup: []string{"file", "bind"}},
 			hostTests: []nssHostTest{{"google.com", "myhostname", hostLookupFilesDNS}},
 		},
 		{
@@ -161,7 +161,7 @@ func TestConfHostLookupOrder(t *testing.T) {
 			c: &conf{
 				goos: "openbsd",
 			},
-			resolv:    &dnsConfig{servers: defaultNS, lookup: []string{"bind"}},
+			resolv:    &dnsConfig{lookup: []string{"bind"}},
 			hostTests: []nssHostTest{{"google.com", "myhostname", hostLookupDNS}},
 		},
 		{
@@ -169,7 +169,7 @@ func TestConfHostLookupOrder(t *testing.T) {
 			c: &conf{
 				goos: "openbsd",
 			},
-			resolv:    &dnsConfig{servers: defaultNS, lookup: []string{"file"}},
+			resolv:    &dnsConfig{lookup: []string{"file"}},
 			hostTests: []nssHostTest{{"google.com", "myhostname", hostLookupFiles}},
 		},
 		{
@@ -177,7 +177,7 @@ func TestConfHostLookupOrder(t *testing.T) {
 			c: &conf{
 				goos: "openbsd",
 			},
-			resolv:    &dnsConfig{servers: defaultNS, lookup: []string{"file", "bind", "yp"}},
+			resolv:    &dnsConfig{lookup: []string{"file", "bind", "yp"}},
 			hostTests: []nssHostTest{{"google.com", "myhostname", hostLookupCgo}},
 		},
 		{
@@ -185,7 +185,7 @@ func TestConfHostLookupOrder(t *testing.T) {
 			c: &conf{
 				goos: "openbsd",
 			},
-			resolv:    &dnsConfig{servers: defaultNS, lookup: []string{"file", "foo"}},
+			resolv:    &dnsConfig{lookup: []string{"file", "foo"}},
 			hostTests: []nssHostTest{{"google.com", "myhostname", hostLookupCgo}},
 		},
 		{
@@ -193,7 +193,7 @@ func TestConfHostLookupOrder(t *testing.T) {
 			c: &conf{
 				goos: "openbsd",
 			},
-			resolv:    &dnsConfig{servers: defaultNS, lookup: nil},
+			resolv:    &dnsConfig{lookup: nil},
 			hostTests: []nssHostTest{{"google.com", "myhostname", hostLookupDNSFiles}},
 		},
 		{
@@ -396,7 +396,7 @@ func TestConfHostLookupOrder(t *testing.T) {
 	defer conf.teardown()
 
 	for _, tt := range tests {
-		if !conf.forceUpdateConf(tt.resolv, distantFuture) {
+		if !conf.forceUpdateConf(tt.resolv, time.Now().Add(time.Hour)) {
 			t.Errorf("%s: failed to change resolv config", tt.name)
 		}
 		for _, ht := range tt.hostTests {

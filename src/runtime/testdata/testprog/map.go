@@ -14,8 +14,6 @@ func init() {
 
 func concurrentMapWrites() {
 	m := map[int]int{}
-	m[5] = 0
-	m[6] = 0
 	c := make(chan struct{})
 	go func() {
 		for i := 0; i < 10000; i++ {
@@ -37,8 +35,6 @@ func concurrentMapWrites() {
 
 func concurrentMapReadWrite() {
 	m := map[int]int{}
-	m[5] = 0
-	m[6] = 0
 	c := make(chan struct{})
 	go func() {
 		for i := 0; i < 10000; i++ {
@@ -60,8 +56,6 @@ func concurrentMapReadWrite() {
 
 func concurrentMapIterateWrite() {
 	m := map[int]int{}
-	m[5] = 0
-	m[6] = 0
 	c := make(chan struct{})
 	go func() {
 		for i := 0; i < 10000; i++ {

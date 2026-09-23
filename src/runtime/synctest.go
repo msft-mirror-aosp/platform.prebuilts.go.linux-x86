@@ -52,7 +52,7 @@ func (bubble *synctestBubble) changegstatus(gp *g, oldval, newval uint32) {
 	totalDelta := 0
 	wasRunning := true
 	switch oldval {
-	case _Gdead, _Gdeadextra:
+	case _Gdead:
 		wasRunning = false
 		totalDelta++
 	case _Gwaiting:
@@ -62,7 +62,7 @@ func (bubble *synctestBubble) changegstatus(gp *g, oldval, newval uint32) {
 	}
 	isRunning := true
 	switch newval {
-	case _Gdead, _Gdeadextra:
+	case _Gdead:
 		isRunning = false
 		totalDelta--
 		if gp == bubble.main {
@@ -86,7 +86,7 @@ func (bubble *synctestBubble) changegstatus(gp *g, oldval, newval uint32) {
 			bubble.running++
 		} else {
 			bubble.running--
-			if raceenabled && newval != _Gdead && newval != _Gdeadextra {
+			if raceenabled && newval != _Gdead {
 				// Record that this goroutine parking happens before
 				// any subsequent Wait.
 				racereleasemergeg(gp, bubble.raceaddr())
@@ -169,6 +169,10 @@ var bubbleGen atomic.Uint64 // bubble ID counter
 
 //go:linkname synctestRun internal/synctest.Run
 func synctestRun(f func()) {
+	if debug.asynctimerchan.Load() != 0 {
+		panic("synctest.Run not supported with asynctimerchan!=0")
+	}
+
 	gp := getg()
 	if gp.bubble != nil {
 		panic("synctest.Run called from within a synctest bubble")
@@ -257,8 +261,6 @@ type synctestDeadlockError struct {
 	reason string
 	bubble *synctestBubble
 }
-
-var _ error = synctestDeadlockError{}
 
 func (e synctestDeadlockError) Error() string {
 	return e.reason
