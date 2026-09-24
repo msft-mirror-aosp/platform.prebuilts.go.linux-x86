@@ -7,7 +7,7 @@
 package unix
 
 import (
-	"internal/itoa"
+	"internal/strconv"
 	"syscall"
 )
 
@@ -29,7 +29,7 @@ func Fchmodat(dirfd int, path string, mode uint32, flags int) error {
 		return err
 	}
 	defer syscall.Close(fd)
-	procPath := "/proc/self/fd/" + itoa.Itoa(fd)
+	procPath := "/proc/self/fd/" + strconv.Itoa(fd)
 
 	// Check to see if this file is a symlink.
 	// (We passed O_NOFOLLOW above, but O_PATH|O_NOFOLLOW will open a symlink.)
